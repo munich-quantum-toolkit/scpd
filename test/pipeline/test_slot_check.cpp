@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -726,6 +727,100 @@ TEST(SlotCheck, KeepsTheWiresInTheirRingOrderAtAGateBetweenWireEnds) {
   EXPECT_TRUE(through(free, "9", "g0"));
 }
 
+/// A fan of three gates from the tip of a wall up to a far wall, as the
+/// chamber raster cuts it (33q_dense, chain 3: g240 to g243): a chip of 60
+/// by 40 cells, the far wall along rows 0 to 5, the tip wall down column
+/// 30 from row 30, and the gates g0, g1 and g2 from the tip at (30, 30) to
+/// (28, 6), (30, 6) and (32, 6). Left of g0 lies chamber 0, between g0 and
+/// g1 the sliver chamber 1, between g1 and g2 chamber 2 and right of g2
+/// chamber 3. Each gate holds one wire; g0 and g2 see every chamber of the
+/// fan beside them and have no clear sides, as the raster leaves them.
+Drawing fanChip() {
+  Drawing chip(60, 40, 4.0);
+  chip.fill(0, 0, 59, 5, ARTWORK);
+  chip.fill(0, 30, 29, 39, CHAMBER);
+  chip.fill(30, 30, 30, 39, ARTWORK);
+  chip.fill(31, 30, 59, 39, CHAMBER + 3);
+  for (int y = 6; y < 30; ++y) {
+    const auto spread = 2.0 * (29.0 - y) / 23.0;
+    const auto left = static_cast<std::int64_t>(std::lround(30.0 - spread));
+    const auto right = static_cast<std::int64_t>(std::lround(30.0 + spread));
+    chip.fill(0, y, left - 1, y, CHAMBER);
+    chip.fill(left + 1, y, 29, y, CHAMBER + 1);
+    chip.fill(31, y, right - 1, y, CHAMBER + 2);
+    chip.fill(right + 1, y, 59, y, CHAMBER + 3);
+    chip.fill(left, y, left, y, FREE);
+    chip.fill(30, y, 30, y, FREE);
+    chip.fill(right, y, right, y, FREE);
+  }
+  const auto gate = [&](const std::string& name, const int x,
+                        const json& chambers) {
+    chip.edges.push_back({{"kind", "bottleneck"},
+                          {"name", name},
+                          {"line", {{30, 30}, {x, 6}}},
+                          {"ends", {"tip", "far"}},
+                          {"chambers", chambers},
+                          {"capacity", 1},
+                          {"users", nullptr},
+                          {"length", std::hypot(30.0 - x, 24.0)},
+                          {"mouth", false},
+                          {"slot", false},
+                          {"terminal", false}});
+  };
+  gate("g0", 28, {0, 1, 2, 3});
+  gate("g1", 30, {1, 2});
+  gate("g2", 32, {0, 1, 2, 3});
+  chip.wire("1", {10, 20}, 0, {50, 20}, 3, {});
+  chip.wire("2", {10, 22}, 0, {50, 22}, 3, {});
+  return chip;
+}
+
+/// The graph of a drawing with four chambers, and with the fans merged or
+/// not.
+[[nodiscard]] std::string fanText(const Drawing& chip, const bool merge) {
+  auto graph = json::parse(chip.text());
+  graph["nodes"] = {{{"chamber", 0}}, {{"chamber", 1}}, {{"chamber", 2}},
+                    {{"chamber", 3}}};
+  graph["mergeFans"] = merge;
+  return graph.dump();
+}
+
+/// Without the merge each wire passes the fan at a gate that sees all of
+/// its chambers, the one at g0 and the other at g2, and skips the rest.
+TEST(SlotCheck, AFanOfGatesUnmergedLetsTheWiresSkipItsGates) {
+  const auto result = slotCheck(fanText(fanChip(), false));
+
+  EXPECT_EQ(result.verdict, "SAT");
+}
+
+/// Merged, the fan is its shortest gate g1, and both wires pass it
+/// (user, 2026-10-31).
+TEST(SlotCheck, AFanOfGatesIsItsShortestGate) {
+  const auto result = slotCheck(fanText(fanChip(), true));
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.over, std::vector<std::string>{"g1"});
+  const auto graph = json::parse(result.graph);
+  EXPECT_EQ(graph.at("mergedGates").size(), 2U);
+  const auto kept = edgeNamed(graph, "g1");
+  EXPECT_EQ(kept.at("load"), 2);
+  EXPECT_EQ(kept.at("merged"), (json{"g0", "g2"}));
+  EXPECT_TRUE(edgeNamed(graph, "g0").is_null());
+}
+
+/// A crossing slot or a port between two gates of a fan keeps them apart:
+/// here wire 3 ends between g0 and g1.
+TEST(SlotCheck, AFanWithAPortBetweenItsGatesStaysApart) {
+  auto chip = fanChip();
+  chip.wire("3", {29, 10}, 1, {50, 24}, 3, {});
+
+  const auto graph = json::parse(slotCheck(fanText(chip, true)).graph);
+
+  for (const auto& merged : graph.at("mergedGates")) {
+    EXPECT_NE(merged.at("name"), "g0");
+  }
+}
+
 TEST(SlotCheck, GateOverCapacityIsUnsat) {
   auto chip = gateChip(1);
   chip.wire("1", {20, 5}, 0, {20, 35}, 1, {});
@@ -870,6 +965,63 @@ TEST(SlotCheck, ARasterViewIsJudgedAsTheCodes) {
 TEST(SlotCheck, RejectsAGraphWithoutRaster) {
   EXPECT_THROW((void)slotCheck(R"({"width": 2, "height": 2})"),
                std::invalid_argument);
+}
+
+/// `feedlineChip` with a gate g0 of two wires across the whole chip along
+/// row 196, a few cells beyond the way out of the slot's exit at (80, 183):
+/// chamber 1 below it, chamber 2 above. Wire 1 crosses f1 at the slot and
+/// ends in chamber 1, or passes g0 into chamber 2; wire 2 (and 3) pass g0.
+[[nodiscard]] std::string touchText(const bool touch,
+                                    const bool crossingPassesTheGate) {
+  auto chip = feedlineChip();
+  chip.fill(0, 196, 259, 196, FREE);
+  chip.fill(0, 197, 259, 239, CHAMBER + 2);
+  chip.edges.push_back({{"kind", "bottleneck"},
+                        {"name", "g0"},
+                        {"line", {{0, 196}, {259, 196}}},
+                        {"ends", {"border", "border"}},
+                        {"chambers", {1, 2}},
+                        {"capacity", 2},
+                        {"users", nullptr},
+                        {"length", 259.0},
+                        {"mouth", false},
+                        {"slot", false},
+                        {"terminal", false}});
+  if (crossingPassesTheGate) {
+    chip.wire("1", {80, 100}, 0, {200, 220}, 2, {"f1"});
+    chip.wire("2", {20, 185}, 1, {20, 220}, 2, {});
+  } else {
+    chip.wire("1", {80, 100}, 0, {200, 188}, 1, {"f1"});
+    chip.wire("2", {20, 185}, 1, {20, 220}, 2, {});
+    chip.wire("3", {24, 185}, 1, {24, 220}, 2, {});
+  }
+  auto graph = json::parse(chip.text());
+  graph["nodes"] = {{{"chamber", 0}}, {{"chamber", 1}}, {{"chamber", 2}}};
+  graph["escapeRounds"] = 1;
+  graph["escapeCells"] = 0.001;
+  graph["escapeTouch"] = touch;
+  return graph.dump();
+}
+
+/// The way out of the slot wire 1 takes touches g0, inflated like a wall,
+/// so g0 holds one wire less, and wires 2 and 3 no longer fit (user,
+/// 2026-10-31: 45q_dense chain 6, the way out of 136's slot along g65).
+TEST(SlotCheck, AWayOutTakesAWireOfEveryGateItTouches) {
+  EXPECT_EQ(slotCheck(touchText(false, false)).verdict, "SAT");
+
+  const auto result = slotCheck(touchText(true, false));
+
+  EXPECT_EQ(result.verdict, "UNSAT");
+  EXPECT_EQ(result.over.front().substr(0, 2), "g0");
+}
+
+/// A wire whose way out touches a gate that it passes itself counts there
+/// as its load and takes nothing more: g0 holds wires 1 and 2.
+TEST(SlotCheck, AWayOutTakesNothingOfAGateItsWirePasses) {
+  const auto result = slotCheck(touchText(true, true));
+
+  EXPECT_EQ(result.verdict, "SAT");
+  EXPECT_TRUE(result.escapeCaps.empty());
 }
 
 } // namespace

@@ -25,10 +25,12 @@
 #include <bit>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <deque>
 #include <format>
 #include <functional>
@@ -36,6 +38,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numeric>
 #include <numbers>
 #include <optional>
 #include <set>
@@ -264,6 +267,9 @@ struct Grid {
   std::size_t size = 0;
   /// The cells of the stubs' walls, row by row (`SlotGraph::stubCells`).
   const std::vector<std::size_t>* stubCells = nullptr;
+  /// Per chamber: the chamber it joined when a fan of gates was merged
+  /// (`Checker::mergeFans`), or nothing when none was.
+  const std::vector<std::int64_t>* alias = nullptr;
 
   [[nodiscard]] bool inside(const std::int64_t x, const std::int64_t y) const {
     return x >= 0 && x < width && y >= 0 && y < height;
@@ -278,6 +284,17 @@ struct Grid {
   }
   [[nodiscard]] int at(const std::int64_t x, const std::int64_t y) const {
     return codeAt(cell(x, y));
+  }
+  /// The chamber a code names, after the merged fans, or -1 for a code of
+  /// no chamber.
+  [[nodiscard]] std::int64_t chamberOf(const int value) const {
+    if (value < CHAMBER) {
+      return -1;
+    }
+    const auto chamber = static_cast<std::int64_t>(value - CHAMBER);
+    return alias != nullptr && std::cmp_less(chamber, alias->size())
+               ? (*alias)[static_cast<std::size_t>(chamber)]
+               : chamber;
   }
   /// Whether a wire may pass the cell: a chamber or a cut line.
   [[nodiscard]] bool open(const std::int64_t x, const std::int64_t y) const {
@@ -391,6 +408,9 @@ struct Edge {
   std::vector<EscapeWay> ways;
   /// Every way out of a slot's two ends.
   EscapeOptions options;
+  /// The capacity an escape round started from, or -1 before any narrowed
+  /// the gate (`SlotGraph::Edge::capacityBefore`).
+  std::int64_t before = -1;
   json out;
 };
 
@@ -1309,8 +1329,7 @@ sideChamber(const Grid& grid, const Point& at, const double nx, const double ny,
     const auto x = rounded(at.x + (static_cast<double>(step) * nx));
     const auto y = rounded(at.y + (static_cast<double>(step) * ny));
     if (grid.inside(x, y) && grid.at(x, y) >= CHAMBER) {
-      return std::pair{static_cast<std::int64_t>(grid.at(x, y) - CHAMBER),
-                       std::array{x, y}};
+      return std::pair{grid.chamberOf(grid.at(x, y)), std::array{x, y}};
     }
   }
   return std::nullopt;
@@ -1350,7 +1369,7 @@ lineSides(const Grid& grid, const Edge& edge,
         continue;
       }
       if (grid.inside(x, y) && grid.at(x, y) >= CHAMBER) {
-        found[which].insert(grid.at(x, y) - CHAMBER);
+        found[which].insert(grid.chamberOf(grid.at(x, y)));
       }
     }
   }
@@ -1585,6 +1604,13 @@ struct SlotPlacer {
   /// the edges placed so far take.
   std::optional<EscapeWays> escapes;
   EscapeWays::TakenList taken;
+  /// Under `slotRoom`: the lines a wire keeps more than a clearance from
+  /// once past its crossing — every feedline edge by its corners and every
+  /// coupler run — and by square of `ROOM_SQUARE` cells the lines within a
+  /// clearance of it.
+  static constexpr std::int64_t ROOM_SQUARE = 32;
+  std::vector<std::array<Point, 2>> roomLines;
+  std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> roomSquares;
 
   SlotPlacer(const SlotGraph& graphIn, const Grid& gridIn, const bool explainIn)
       : graph(graphIn), grid(gridIn), explain(explainIn),
@@ -1610,6 +1636,117 @@ struct SlotPlacer {
       }
     }
     bits.emplace(grid, stubCode, feedlineCode, graph.portSlots);
+    if (graph.slotRoom) {
+      buildRoomLines();
+    }
+  }
+
+  [[nodiscard]] static std::uint64_t roomKey(const std::int64_t x,
+                                             const std::int64_t y) {
+    return (static_cast<std::uint64_t>(x) << 32U) ^
+           static_cast<std::uint64_t>(y & 0xFFFFFFFF);
+  }
+
+  void buildRoomLines() {
+    for (const auto& stroke : graph.strokes) {
+      if ((stroke.kind != "feedline" && stroke.kind != "terminal") ||
+          stroke.points.size() < 2) {
+        continue;
+      }
+      // The edge by its corners: a step that turns ends a line.
+      Point from{stroke.points.front()[0], stroke.points.front()[1]};
+      for (std::size_t k = 1; k < stroke.points.size(); ++k) {
+        const Point here{stroke.points[k][0], stroke.points[k][1]};
+        const bool last = k + 1 == stroke.points.size();
+        const bool turns =
+            !last && (stroke.points[k + 1][0] - here.x != here.x - stroke.points[k - 1][0] ||
+                      stroke.points[k + 1][1] - here.y != here.y - stroke.points[k - 1][1]);
+        if (last || turns) {
+          roomLines.push_back({from, here});
+          from = here;
+        }
+      }
+    }
+    for (const auto& run : couplerRunsOf(graph)) {
+      roomLines.push_back(run);
+    }
+    const auto grow = clearance + 1.0;
+    for (std::uint32_t i = 0; i < roomLines.size(); ++i) {
+      const auto& [a, b] = roomLines[i];
+      const auto x0 = static_cast<std::int64_t>(std::floor((std::min(a.x, b.x) - grow) / ROOM_SQUARE));
+      const auto x1 = static_cast<std::int64_t>(std::floor((std::max(a.x, b.x) + grow) / ROOM_SQUARE));
+      const auto y0 = static_cast<std::int64_t>(std::floor((std::min(a.y, b.y) - grow) / ROOM_SQUARE));
+      const auto y1 = static_cast<std::int64_t>(std::floor((std::max(a.y, b.y) + grow) / ROOM_SQUARE));
+      for (auto y = y0; y <= y1; ++y) {
+        for (auto x = x0; x <= x1; ++x) {
+          roomSquares[roomKey(x, y)].push_back(i);
+        }
+      }
+    }
+  }
+
+  /// Whether a wire's centre at `at` keeps more than a clearance from every
+  /// line of `roomLines`.
+  [[nodiscard]] bool clearOfLines(const Point& at) const {
+    const auto found = roomSquares.find(
+        roomKey(static_cast<std::int64_t>(std::floor(at.x / ROOM_SQUARE)),
+                static_cast<std::int64_t>(std::floor(at.y / ROOM_SQUARE))));
+    if (found == roomSquares.end()) {
+      return true;
+    }
+    return std::ranges::none_of(found->second, [&](const std::uint32_t i) {
+      return distanceToSegment(at, roomLines[i][0], roomLines[i][1]) <= clearance;
+    });
+  }
+
+  [[nodiscard]] bool freeCell(const std::int64_t x, const std::int64_t y) const {
+    if (!grid.inside(x, y)) {
+      return false;
+    }
+    const auto value = grid.at(x, y);
+    return value == 0 || value >= CHAMBER;
+  }
+
+  /// Whether a slot at `at` across an edge running along (`ux`, `uy`) has
+  /// room past the crossing on `side` (0 left of the edge's direction, 1
+  /// right, as `EscapeWays::endOf`): a free cell more than a clearance from
+  /// every line of `roomLines`, reached straight and free from the slot's
+  /// end, straight out from the slot or half or a whole crossing reach
+  /// along the edge to either side, at most two clearances out.
+  [[nodiscard]] bool roomPast(const Point& at, const double ux, const double uy,
+                              const std::size_t side) const {
+    const auto sign = side == 0 ? 1.0 : -1.0;
+    const Point normal{-uy * sign, ux * sign};
+    const Point end{at.x + (normal.x * reach), at.y + (normal.y * reach)};
+    const auto first = static_cast<std::int64_t>(std::floor(clearance)) + 1;
+    const auto last = static_cast<std::int64_t>(std::ceil(2.0 * clearance));
+    const auto half = std::round(reach / 2.0);
+    for (const auto shift : {0.0, -half, half, -reach, reach}) {
+      for (auto t = first; t <= last; ++t) {
+        const auto x = static_cast<std::int64_t>(
+            std::lround(at.x + (normal.x * static_cast<double>(t)) + (ux * shift)));
+        const auto y = static_cast<std::int64_t>(
+            std::lround(at.y + (normal.y * static_cast<double>(t)) + (uy * shift)));
+        if (!freeCell(x, y)) {
+          break;
+        }
+        const Point cell{static_cast<double>(x), static_cast<double>(y)};
+        const auto steps = static_cast<std::int64_t>(std::ceil(2.0 * distance(end, cell)));
+        bool open = true;
+        for (std::int64_t s = 1; open && s < steps; ++s) {
+          const auto f = static_cast<double>(s) / static_cast<double>(steps);
+          open = freeCell(std::lround(end.x + (f * (cell.x - end.x))),
+                          std::lround(end.y + (f * (cell.y - end.y))));
+        }
+        if (!open) {
+          break;
+        }
+        if (clearOfLines(cell)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /// Whether a slot with `footprint` from `origin` on fits, row by row of 64
@@ -1880,6 +2017,11 @@ struct SlotPlacer {
     out.kind = Examined::Kind::Refused;
     if (!rule.empty() && !crossable(cx, cy, *step)) {
       out.why = "crossing rule";
+      return out;
+    }
+    if (graph.slotRoom && (!roomPast(line[here], ux, uy, 0) ||
+                           !roomPast(line[here], ux, uy, 1))) {
+      out.why = "no room past the crossing";
       return out;
     }
     const auto [footprint, origin] = footprintOf(line[here], *step, ux, uy);
@@ -3368,8 +3510,38 @@ private:
   /// side of the edge to the other lies across it instead.
   std::vector<std::optional<std::string>> alongRun_;
   std::unordered_map<std::string, std::pair<Point, Point>> ends_;
+  /// Per chamber of the graph: the chamber it joined when a fan of gates was
+  /// merged (`mergeFans`); empty when none was.
+  std::vector<std::int64_t> alias_;
+  /// The gates a merged fan drops, by their index in the graph's edges, and
+  /// the index of the gate the fan keeps.
+  std::map<std::size_t, std::size_t> dropped_;
+  /// The fans `mergeFans` left as they were: merged, they would have joined
+  /// the two sides of a gate.
+  std::vector<std::string> rejectedFans_;
+  /// The chords the wires cross, for the page.
+  json chordLines_ = json::array();
+  /// Chambers as the merged fans join them (`alias_`), sorted and once each.
+  [[nodiscard]] std::vector<std::int64_t>
+  aliased(const std::vector<std::int64_t>& chambers) const {
+    if (alias_.empty()) {
+      return chambers;
+    }
+    std::vector<std::int64_t> out;
+    out.reserve(chambers.size());
+    for (const auto chamber : chambers) {
+      out.push_back(chamber >= 0 && std::cmp_less(chamber, alias_.size())
+                        ? alias_[static_cast<std::size_t>(chamber)]
+                        : chamber);
+    }
+    std::ranges::sort(out);
+    const auto repeated = std::ranges::unique(out);
+    out.erase(repeated.begin(), repeated.end());
+    return out;
+  }
 
   void readStrokesAndWires();
+  void mergeFans(const std::vector<EdgeSlots>& slots);
   void addSides();
   void addSlots(const std::vector<EdgeSlots>& slots);
   void findOwners();
@@ -3390,7 +3562,878 @@ private:
   [[nodiscard]] std::int64_t limitFor(std::size_t k, std::int64_t own) const;
   [[nodiscard]] Way shortest(const Demand& demand,
                              const std::vector<double>& weight) const;
+  /// The escape round of a SAT check (`SlotGraph::escapeRounds`): the gates
+  /// the ways out of the slots the wires took narrow past their load.
+  template <typename Ways>
+  void escapeCapsOf(const Ways& ways, const std::vector<std::int64_t>& load,
+                    const std::vector<std::int64_t>& limits,
+                    SlotCheckResult& result) const;
+  /// The chords of the chambers (`SlotGraph::chords`, `buildChords`): a
+  /// line between two corner points of a chamber that parts no chambers but
+  /// bounds the wires that come into the chamber on one side of it and leave
+  /// or end on the other. The SAT routing counts and prices them as it does
+  /// the gates.
+  struct Chord {
+    std::int64_t chamber = -1;
+    Point a;
+    Point b;
+    std::int64_t capacity = 0;
+    /// Per edge: the side of the chord the edge comes into the chamber on,
+    /// 0 or 1, or -1 for an edge not beside the chamber.
+    std::vector<std::int8_t> side;
+    /// Per wire with an end in the chamber: the side of its source and of
+    /// its target, or -1.
+    std::unordered_map<std::string, std::array<std::int8_t, 2>> ends;
+    /// The slots whose ways out touch the chord, inflated like walls.
+    std::vector<std::size_t> touchSlots;
+    /// The walls its two corners lie on, by name.
+    std::array<std::vector<std::string>, 2> walls;
+  };
+  std::vector<Chord> chords_;
+  /// The chords of every chamber, by chamber.
+  std::vector<std::vector<std::uint32_t>> chordsIn_;
+  /// What crossing a chord costs a way now, by chord, in cells.
+  std::vector<double> chordCost_;
+  void buildChords(
+      const std::vector<std::tuple<std::int64_t, std::size_t, std::int64_t>>&
+          moves);
+  /// Whether a way that comes into a chord's chamber by `from` and leaves it
+  /// by `to` crosses the chord: an edge's index, or -1 for the wire's source
+  /// and -2 for its target.
+  [[nodiscard]] bool crossesChord(const Chord& chord, const std::string& wire,
+                                  std::int64_t from, std::int64_t to) const;
+  /// What the chords of a chamber that a piece of a way crosses cost it.
+  [[nodiscard]] double chordCostOf(std::int64_t chamber, const std::string& wire,
+                                   std::int64_t from, std::int64_t to) const;
 };
+
+/// Every way out of a slot that a wire took counts as a wall: its curve,
+/// inflated like a wall. A gate from A to B of length L (times its heading
+/// share) keeps L1 from A to the way out and L2 from it to B, so the way out
+/// covers L - L1 - L2 of it, (L - L1 - L2) / (clearance * margin) wires,
+/// which the gate loses. The wires through the gate still count one each,
+/// those that cross at the slot too: they still have to pass the narrowed
+/// gate (user, 2026-10-30). A gate whose load passes floor(L / (clearance *
+/// margin) - lost) is over, and that is the capacity the next round gives
+/// it. A gate at the own run of a wire that crosses at the slot is left
+/// alone: that way out is its port.
+template <typename Ways>
+void Checker::escapeCapsOf(const Ways& ways,
+                           const std::vector<std::int64_t>& load,
+                           const std::vector<std::int64_t>& limits,
+                           SlotCheckResult& result) const {
+  const auto ne = edges_.size();
+  std::vector<std::vector<std::string>> through(ne);
+  for (const auto& [name, path] : ways) {
+    if (path.has_value()) {
+      for (const auto k : *path) {
+        through[k].push_back(name);
+      }
+    }
+  }
+  struct Out {
+    std::vector<Point> curve;
+    std::size_t slot;
+  };
+  std::vector<Out> outs;
+  for (std::size_t k = 0; k < ne; ++k) {
+    if (!edges_[k].stretch || edges_[k].corners.empty() || through[k].empty()) {
+      continue;
+    }
+    for (const auto& way : edges_[k].ways) {
+      outs.push_back({.curve = EscapeWays::curveOf(way), .slot = k});
+    }
+  }
+  // The wires that start or end at a launcher: their ends there.
+  std::unordered_map<std::string, std::array<bool, 2>> atLauncher;
+  if (graph_.launcherEscapeCells > 0.0) {
+    for (const auto& wire : graph_.wires) {
+      atLauncher[wire.name] = {wire.source.label.starts_with("Chip.port"),
+                               wire.target.label.starts_with("Chip.port")};
+    }
+  }
+  if (outs.empty() && atLauncher.empty()) {
+    return;
+  }
+  // Whether the gate ends on the stub of the launcher of a wire through it:
+  // that wire turns out of its launcher's straight run in the gate.
+  const auto launcherTurns = [&](const Edge& edge, const std::string& wire) {
+    const auto found = atLauncher.find(wire);
+    return std::ranges::any_of(edge.ends, [&](const std::string& end) {
+      return end.starts_with(wire + " at its launcher") ||
+             (found != atLauncher.end() &&
+              ((found->second[0] && end.starts_with(wire + " at its source")) ||
+               (found->second[1] && end.starts_with(wire + " at its target"))));
+    });
+  };
+  const auto inflation = graph_.inflation;
+  // Whether a way out, inflated like a wall, touches a gate's line.
+  const auto touches = [&](const Edge& edge, const std::vector<Point>& curve) {
+    return std::ranges::any_of(curve, [&](const Point& p) {
+      return distanceToSegment(p, edge.from, edge.to) <= inflation;
+    });
+  };
+  const auto nearest = [](const Point& p, const std::vector<Point>& curve) {
+    auto best = std::numeric_limits<double>::infinity();
+    for (const auto& q : curve) {
+      best = std::min(best, distance(p, q));
+    }
+    return best;
+  };
+  for (std::size_t k = 0; k < ne; ++k) {
+    const auto& edge = edges_[k];
+    if (edge.stretch || edge.mouth || load[k] < 1 ||
+        (edge.users.has_value() && !edge.users->empty())) {
+      continue;
+    }
+    const auto length = edge.length * headingShare(edge.from, edge.to);
+    // A gate of fewer than `capacityMarginFromWires` wires is measured
+    // without the margin, as `wiresIn` does.
+    const auto unit =
+        wiresIn(length, clear_, 1.0) < marginFrom() ? clear_ : clear_ * margin_;
+    double extra = 0.0;
+    // A wire through the gate out of the launcher whose stub the gate ends
+    // on turns there: a flat share (`launcherEscapeCells`, user,
+    // 2026-10-31).
+    std::int64_t turning = 0;
+    if (graph_.launcherEscapeCells > 0.0) {
+      for (const auto& wire : through[k]) {
+        if (launcherTurns(edge, wire)) {
+          extra += graph_.launcherEscapeCells / unit;
+          ++turning;
+        }
+      }
+    }
+    // Under `escapeTouch` (user, 2026-10-31): the wires whose ways out
+    // touch the gate, each once, but none that passes the gate itself: it
+    // counts there as its load already.
+    std::set<std::string> touching;
+    for (const auto& out : outs) {
+      const auto& crossing = through[out.slot];
+      const bool ownRun = std::ranges::any_of(crossing, [&](const auto& wire) {
+        return std::ranges::any_of(edge.ends, [&](const std::string& end) {
+          return end.starts_with(wire + " at its");
+        });
+      });
+      if (ownRun) {
+        continue;
+      }
+      if (graph_.escapeTouch) {
+        // Under `escapeTouchRouting` the routing has counted the touches.
+        if (!graph_.escapeTouchRouting && touches(edge, out.curve)) {
+          for (const auto& wire : crossing) {
+            if (std::ranges::find(through[k], wire) == through[k].end()) {
+              touching.insert(wire);
+            }
+          }
+        }
+        continue;
+      }
+      const auto d1 = std::max(0.0, nearest(edge.from, out.curve) - inflation);
+      const auto d2 = std::max(0.0, nearest(edge.to, out.curve) - inflation);
+      const auto covered = length - d1 - d2;
+      if (covered <= 0.5) {
+        continue;
+      }
+      // A flat share per way out (`escapeCells`), or the cells it covers.
+      extra += (graph_.escapeCells > 0.0 ? graph_.escapeCells : covered) / unit;
+    }
+    if (extra <= 0.0 && touching.empty()) {
+      continue;
+    }
+    auto left = extra <= 0.0
+                    ? std::numeric_limits<std::int64_t>::max()
+                    : std::max<std::int64_t>(
+                          0, static_cast<std::int64_t>(std::floor(
+                                 (length / unit) - extra + 1e-9)));
+    // The turns out of the launchers take room from the other wires, not
+    // from the turning wires themselves: a gate keeps at least those. A
+    // gate of one wire at a launcher's stub, which only that launcher's
+    // wire passes, lost it to its own turn (17q chain 1: g78, 20 cells,
+    // at the stub of 31; user, 2026-11-01).
+    left = std::max(left, std::min(turning, limits[k]));
+    if (!touching.empty()) {
+      // One wire less per touching wire, of the capacity the gate had before
+      // the escape rounds narrowed it, so that no round takes it twice.
+      const auto base = edge.before >= 0 ? edge.before : limits[k];
+      left = std::min(left, std::max<std::int64_t>(
+                                0, base - static_cast<std::int64_t>(
+                                              touching.size())));
+      extra += static_cast<double>(touching.size());
+    }
+    // Every gate the ways out narrow below what this round gave it takes the
+    // narrowed capacity in the next round, whether or not it runs over.
+    if (left < limits[k]) {
+      result.escapeCaps[edge.name] = left;
+      result.escapeShares[edge.name] = extra;
+      result.escapeBefore[edge.name] = limits[k];
+      result.escapeThrough[edge.name] = through[k];
+      if (load[k] > left) {
+        result.escapeOver.push_back(edge.name);
+      }
+    }
+  }
+}
+
+/// The most cells of a chamber whose chords the check weighs: the outer
+/// room of a chip has millions, and its chords hold more wires than pass it.
+constexpr std::size_t CHORD_CHAMBER_CELLS = 60000;
+
+/// How near its ends a chord may run over the walls and the gate lines that
+/// meet there.
+constexpr double CHORD_END_CELLS = 3.0;
+
+/// How near a chord a gate may lie all along and still take its side from
+/// the cells beside it: nearer, the votes, which read 3 cells around, see
+/// only the far side, and the gate takes its side by the line.
+constexpr double CHORD_SIDE_NEAR_CELLS = 3.0;
+/// How far from a chord a gate along it must reach to have a side at all.
+constexpr double CHORD_SIDE_ON_CELLS = 0.5;
+
+/// What crossing a chord costs a way, in clearances per unit of its price
+/// over one: a way's step across a gate costs its length times the gate's
+/// price, a chord has no length of its own.
+constexpr double CHORD_PRICE_CLEARANCES = 4.0;
+
+/// The chords of the chambers (user, 2026-10-31). A line between two corner
+/// points of a chamber, the ends of the gates beside it (those a fan merged
+/// away among them), on different obstacles and through the chamber alone,
+/// parts no chambers, but the wires that come into the chamber on one side
+/// of it and leave or end on the other must cross it. It holds what a gate
+/// of its length holds, one wire less per wire whose way out of a slot
+/// touches it, inflated like a wall, and does not cross it; no wire keeps a
+/// bonus at its own run there. On 45q_dense chain 6 the line from f42 to the
+/// target run of 138 that a fan had merged into a gate beside it held 137
+/// and 138, and the way out of 136's slot ran along it: one wire for two.
+/// Only the chords that hold fewer wires than the smaller of their two
+/// sides can let in are kept: the gates beside that side and the wire ends
+/// on it. The SAT routing counts and prices the chords as it does the gates
+/// (`chordCostOf`).
+void Checker::buildChords(
+    const std::vector<std::tuple<std::int64_t, std::size_t, std::int64_t>>&
+        moves) {
+  // Diagnosis (SCPD_CHORD_DEBUG=<chamber>): every candidate chord of that
+  // chamber and why it is kept or not, on stderr.
+  static const std::int64_t debugChamber = [] {
+    const char* text = std::getenv("SCPD_CHORD_DEBUG");
+    return text == nullptr ? std::int64_t{-1} : std::atoll(text);
+  }();
+  chords_.clear();
+  chordsIn_.assign(around_.size(), {});
+  if (!graph_.chords) {
+    return;
+  }
+  const auto ne = edges_.size();
+  const auto width = graph_.width;
+  // The edges beside every chamber, as the moves lead out of it and into
+  // it, and the wire ends in it.
+  std::map<std::int64_t, std::set<std::size_t>> beside;
+  for (const auto& [x, k, y] : moves) {
+    beside[x].insert(k);
+    beside[y].insert(k);
+  }
+  struct EndIn {
+    const std::string* wire;
+    std::size_t which;
+    Point at;
+  };
+  std::map<std::int64_t, std::vector<EndIn>> endsIn;
+  for (const auto& wire : wires_) {
+    if (wire.standing) {
+      continue;
+    }
+    const auto found = ends_.find(wire.name);
+    if (found == ends_.end()) {
+      continue;
+    }
+    for (const auto chamber : wire.source.chambers) {
+      endsIn[chamber].push_back({&wire.name, 0, found->second.first});
+    }
+    for (const auto chamber : wire.target.chambers) {
+      endsIn[chamber].push_back({&wire.name, 1, found->second.second});
+    }
+  }
+  // The ways out of every slot.
+  struct Out {
+    std::vector<Point> curve;
+    std::size_t slot;
+    double minX;
+    double maxX;
+    double minY;
+    double maxY;
+  };
+  std::vector<Out> outs;
+  for (std::size_t k = 0; k < ne; ++k) {
+    if (!edges_[k].stretch || edges_[k].corners.empty()) {
+      continue;
+    }
+    for (const auto& way : edges_[k].ways) {
+      Out out{EscapeWays::curveOf(way), k,
+              std::numeric_limits<double>::max(),
+              std::numeric_limits<double>::lowest(),
+              std::numeric_limits<double>::max(),
+              std::numeric_limits<double>::lowest()};
+      for (const auto& p : out.curve) {
+        out.minX = std::min(out.minX, p.x);
+        out.maxX = std::max(out.maxX, p.x);
+        out.minY = std::min(out.minY, p.y);
+        out.maxY = std::max(out.maxY, p.y);
+      }
+      outs.push_back(std::move(out));
+    }
+  }
+  // The corner points of every chamber: the ends of the gates beside it. A
+  // self-bottleneck (`S …`) names the feedline edge at both its ends, also
+  // at the end on a stub: no corner comes from it.
+  struct Corner {
+    Point at;
+    const std::string* on;
+  };
+  std::map<std::int64_t, std::vector<Corner>> corners;
+  std::map<std::int64_t, std::vector<std::array<Point, 2>>> gatesOf;
+  const auto addGate = [&](const Point& a, const Point& b,
+                           const std::vector<std::string>& ends,
+                           const std::vector<std::int64_t>& chambers,
+                           const bool kept) {
+    if (ends.size() != 2) {
+      return;
+    }
+    for (const auto chamber : chambers) {
+      corners[chamber].push_back({a, &ends[0]});
+      corners[chamber].push_back({b, &ends[1]});
+      if (kept) {
+        gatesOf[chamber].push_back({a, b});
+      }
+    }
+  };
+  for (const auto& edge : edges_) {
+    if (!edge.stretch && !edge.name.starts_with("S ")) {
+      addGate(edge.from, edge.to, edge.ends, edge.chambers, true);
+    }
+  }
+  for (const auto& [gone, kept] : dropped_) {
+    const auto& edge = graph_.edges[gone];
+    addGate({edge.from[0], edge.from[1]}, {edge.to[0], edge.to[1]}, edge.ends,
+            aliased(edge.chambers), false);
+  }
+  // The obstacle a corner lies on: the two flanks of a port run are one,
+  // and a line across the run's mouth is no chord.
+  const auto obstacle = [](const std::string& name) {
+    for (const std::string_view side : {", left", ", right"}) {
+      if (name.ends_with(side)) {
+        return std::string_view(name).substr(0, name.size() - side.size());
+      }
+    }
+    return std::string_view(name);
+  };
+  // The cells of a line, every quarter cell along it rounded, once each.
+  const auto lineCells = [&](const Point& a, const Point& b) {
+    std::vector<std::size_t> out;
+    const auto steps = static_cast<std::int64_t>(
+        std::ceil(4.0 * std::max(std::abs(b.x - a.x), std::abs(b.y - a.y))));
+    for (std::int64_t s = 0; s <= steps; ++s) {
+      const auto t = steps == 0
+                         ? 0.0
+                         : static_cast<double>(s) / static_cast<double>(steps);
+      const auto x =
+          static_cast<std::int64_t>(std::lround(a.x + (t * (b.x - a.x))));
+      const auto y =
+          static_cast<std::int64_t>(std::lround(a.y + (t * (b.y - a.y))));
+      if (!grid_.inside(x, y)) {
+        continue;
+      }
+      const auto cell = grid_.cell(x, y);
+      if (out.empty() || out.back() != cell) {
+        out.push_back(cell);
+      }
+    }
+    return out;
+  };
+  // Whether a cell lies in a chamber: a cell of it, or a free cell of a line
+  // inside it, all of whose neighbours in chambers lie in it (the line of a
+  // gate a fan merged away), which no gate between two chambers is.
+  const auto inChamber = [&](const std::size_t cell,
+                             const std::int64_t chamber) {
+    const auto code = grid_.codeAt(cell);
+    if (code >= CHAMBER) {
+      return grid_.chamberOf(code) == chamber;
+    }
+    if (code != 0) {
+      return false;
+    }
+    const auto x = static_cast<std::int64_t>(cell) % width;
+    const auto y = static_cast<std::int64_t>(cell) / width;
+    bool any = false;
+    for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0},
+                                 std::pair{0, 1}, std::pair{0, -1}}) {
+      if (!grid_.inside(x + dx, y + dy)) {
+        continue;
+      }
+      const auto other = grid_.chamberOf(grid_.at(x + dx, y + dy));
+      if (other >= 0 && other != chamber) {
+        return false;
+      }
+      any = any || other == chamber;
+    }
+    return any;
+  };
+  // Whether a chord may run over a cell: a cell of the chamber, or a free
+  // cell of a cut line beside it — of a gate merged away inside it, or of a
+  // gate on its border that the chord runs along. A chord from the end of
+  // one gate to the far end of the gate beside it runs a few cells along
+  // that gate's line, whose other side is another chamber; it is still a
+  // line through this chamber (45q_dense chain 6: the chord along g82 in
+  // c235, which the way out of slot f42 1 touches and g82 does not, and
+  // which 137 and 138 cross, was refused as not inside, 2026-11-01). Walls
+  // and the cells of other chambers stay refused.
+  const auto alongChamber = [&](const std::size_t cell,
+                                const std::int64_t chamber) {
+    const auto code = grid_.codeAt(cell);
+    if (code >= CHAMBER) {
+      return grid_.chamberOf(code) == chamber;
+    }
+    if (code != 0) {
+      return false;
+    }
+    const auto x = static_cast<std::int64_t>(cell) % width;
+    const auto y = static_cast<std::int64_t>(cell) / width;
+    for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0},
+                                 std::pair{0, 1}, std::pair{0, -1}}) {
+      if (grid_.inside(x + dx, y + dy) &&
+          grid_.chamberOf(grid_.at(x + dx, y + dy)) == chamber) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (auto& [chamber, list] : corners) {
+    if (chamber < 0 || std::cmp_greater_equal(chamber, around_.size())) {
+      continue;
+    }
+    const auto& edgesHere = beside[chamber];
+    const auto& endsHere = endsIn[chamber];
+    // What can come into the chamber at all: no chord can bind that holds
+    // half of it.
+    std::int64_t total = static_cast<std::int64_t>(endsHere.size());
+    for (const auto k : edgesHere) {
+      total += std::max<std::int64_t>(0, capacity_[k]);
+    }
+    // Once each, a cell and a half apart, with every obstacle that meets
+    // there.
+    struct Place {
+      Point at;
+      std::set<std::string_view> on;
+    };
+    std::vector<Place> points;
+    for (const auto& corner : list) {
+      const auto known = std::ranges::find_if(points, [&](const Place& place) {
+        return distance(place.at, corner.at) <= 1.5;
+      });
+      if (known == points.end()) {
+        points.push_back({corner.at, {obstacle(*corner.on)}});
+      } else {
+        known->on.insert(obstacle(*corner.on));
+      }
+    }
+    const auto isGate = [&](const Point& a, const Point& b) {
+      return std::ranges::any_of(gatesOf[chamber], [&](const auto& gate) {
+        return (distance(gate[0], a) <= 1.5 && distance(gate[1], b) <= 1.5) ||
+               (distance(gate[0], b) <= 1.5 && distance(gate[1], a) <= 1.5);
+      });
+    };
+    struct Candidate {
+      Point a;
+      Point b;
+      std::int64_t capacity;
+      std::vector<std::size_t> cells;
+      std::vector<std::size_t> touch;
+      std::array<std::vector<std::string>, 2> walls;
+    };
+    std::vector<Candidate> candidates;
+    const bool debug = chamber == debugChamber;
+    if (debug) {
+      std::fprintf(stderr, "chord debug c%lld: %zu corners, %zu points, total %lld\n",
+                   static_cast<long long>(chamber), list.size(), points.size(),
+                   static_cast<long long>(total));
+      for (const auto& place : points) {
+        std::string on;
+        for (const auto name : place.on) {
+          on += std::string(name) + " | ";
+        }
+        std::fprintf(stderr, "  point (%.0f,%.0f) on %s\n", place.at.x, place.at.y, on.c_str());
+      }
+    }
+    for (std::size_t i = 0; i < points.size(); ++i) {
+      for (std::size_t j = i + 1; j < points.size(); ++j) {
+        const auto& a = points[i].at;
+        const auto& b = points[j].at;
+        const bool shared = std::ranges::any_of(
+            points[i].on, [&](const std::string_view name) {
+              return points[j].on.contains(name);
+            });
+        if (shared || distance(a, b) < 2.0 || isGate(a, b)) {
+          if (debug) {
+            std::fprintf(stderr, "  (%.0f,%.0f)-(%.0f,%.0f): %s\n", a.x, a.y, b.x, b.y,
+                         shared ? "same obstacle" : isGate(a, b) ? "is a gate" : "too close");
+          }
+          continue;
+        }
+        const auto capacity =
+            wiresIn(distance(a, b) * headingShare(a, b), clear_, margin_);
+        std::vector<std::size_t> touch;
+        const auto reach = graph_.inflation;
+        for (const auto& out : outs) {
+          if (out.maxX < std::min(a.x, b.x) - reach ||
+              out.minX > std::max(a.x, b.x) + reach ||
+              out.maxY < std::min(a.y, b.y) - reach ||
+              out.minY > std::max(a.y, b.y) + reach) {
+            continue;
+          }
+          if (std::ranges::find(touch, out.slot) == touch.end() &&
+              std::ranges::any_of(out.curve, [&](const Point& p) {
+                return distanceToSegment(p, a, b) <= reach;
+              })) {
+            touch.push_back(out.slot);
+          }
+        }
+        if (2 * (capacity - static_cast<std::int64_t>(touch.size())) >= total) {
+          if (debug) {
+            std::fprintf(stderr, "  (%.0f,%.0f)-(%.0f,%.0f): cap %lld touch %zu, holds half of total %lld\n",
+                         a.x, a.y, b.x, b.y, static_cast<long long>(capacity), touch.size(),
+                         static_cast<long long>(total));
+          }
+          continue;
+        }
+        auto cells = lineCells(a, b);
+        // Its ends lie on walls, at the apex of the gates there; a few
+        // cells off them, only cells of this chamber.
+        bool inside = cells.size() > 6;
+        for (std::size_t m = 0; inside && m < cells.size(); ++m) {
+          const Point p{
+              static_cast<double>(static_cast<std::int64_t>(cells[m]) % width),
+              static_cast<double>(static_cast<std::int64_t>(cells[m]) / width)};
+          if (distance(p, a) > CHORD_END_CELLS &&
+              distance(p, b) > CHORD_END_CELLS) {
+            // A cell of the next chamber a cell or so off a gate of this
+            // one: the chord grazes that gate where the two meet at a
+            // corner, rounded onto its far side, and does not pass through
+            // the next chamber.
+            inside = alongChamber(cells[m], chamber) ||
+                     std::ranges::any_of(gatesOf[chamber], [&](const auto& gate) {
+                       return distanceToSegment(p, gate[0], gate[1]) <= 1.5;
+                     });
+            if (!inside && debug) {
+              const auto code = grid_.codeAt(cells[m]);
+              std::string around;
+              const auto cx = static_cast<std::int64_t>(cells[m]) % width;
+              const auto cy = static_cast<std::int64_t>(cells[m]) / width;
+              for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0},
+                                           std::pair{0, 1}, std::pair{0, -1}}) {
+                const auto v = grid_.at(cx + dx, cy + dy);
+                around += std::to_string(v) + "/" +
+                          std::to_string(grid_.chamberOf(v)) + " ";
+              }
+              std::fprintf(stderr, "    refused at (%.0f,%.0f) code %d chamber %lld, around %s\n",
+                           p.x, p.y, code,
+                           static_cast<long long>(grid_.chamberOf(code)), around.c_str());
+            }
+          }
+        }
+        if (debug) {
+          std::fprintf(stderr, "  (%.0f,%.0f)-(%.0f,%.0f): cap %lld touch %zu, %s\n", a.x, a.y, b.x,
+                       b.y, static_cast<long long>(capacity), touch.size(),
+                       inside ? "inside: candidate" : "NOT inside the chamber");
+        }
+        if (inside) {
+          candidates.push_back(
+              {a, b, capacity, std::move(cells), std::move(touch),
+               {std::vector<std::string>(points[i].on.begin(), points[i].on.end()),
+                std::vector<std::string>(points[j].on.begin(), points[j].on.end())}});
+        }
+      }
+    }
+    if (candidates.empty()) {
+      continue;
+    }
+    // The cells of the chamber, flooded from a chord; a chamber too large
+    // to weigh keeps no chords. The index of a cell among them is kept in a
+    // raster of the thread, stamped per chamber, not in a map.
+    thread_local std::vector<std::uint32_t> stampOf;
+    thread_local std::vector<std::uint32_t> slotOf;
+    thread_local std::uint32_t stamp = 0;
+    const auto cellsAll = static_cast<std::size_t>(graph_.width * graph_.height);
+    if (stampOf.size() != cellsAll) {
+      stampOf.assign(cellsAll, 0);
+      slotOf.assign(cellsAll, 0);
+      stamp = 0;
+    }
+    if (++stamp == 0) {
+      std::ranges::fill(stampOf, 0);
+      stamp = 1;
+    }
+    const auto indexOf = [&](const std::size_t cell) -> std::int64_t {
+      return stampOf[cell] == stamp ? static_cast<std::int64_t>(slotOf[cell])
+                                    : -1;
+    };
+    std::vector<std::size_t> cellsOf;
+    {
+      std::vector<std::size_t> queue;
+      const auto& first = candidates.front().cells;
+      const auto seed = first[first.size() / 2];
+      stampOf[seed] = stamp;
+      slotOf[seed] = 0;
+      cellsOf.push_back(seed);
+      queue.push_back(seed);
+      for (std::size_t q = 0;
+           q < queue.size() && cellsOf.size() <= CHORD_CHAMBER_CELLS; ++q) {
+        const auto cell = queue[q];
+        const auto x = static_cast<std::int64_t>(cell) % width;
+        const auto y = static_cast<std::int64_t>(cell) / width;
+        for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0},
+                                     std::pair{0, 1}, std::pair{0, -1}}) {
+          if (!grid_.inside(x + dx, y + dy)) {
+            continue;
+          }
+          const auto next = grid_.cell(x + dx, y + dy);
+          if (stampOf[next] == stamp || !inChamber(next, chamber)) {
+            continue;
+          }
+          stampOf[next] = stamp;
+          slotOf[next] = static_cast<std::uint32_t>(cellsOf.size());
+          cellsOf.push_back(next);
+          queue.push_back(next);
+        }
+      }
+      if (cellsOf.size() > CHORD_CHAMBER_CELLS) {
+        if (debug) {
+          std::fprintf(stderr, "  chamber too large (> %zu cells)\n", CHORD_CHAMBER_CELLS);
+        }
+        continue;
+      }
+    }
+    for (auto& candidate : candidates) {
+      // The parts of the chamber the chord leaves, 4-connected, so that no
+      // part passes a diagonal step of the line; its two largest are its
+      // sides, slivers at its ends none.
+      std::vector<std::int64_t> part(cellsOf.size(), -1);
+      for (const auto cell : candidate.cells) {
+        if (const auto found = indexOf(cell); found >= 0) {
+          part[static_cast<std::size_t>(found)] = -2;
+        }
+      }
+      std::vector<std::size_t> sizes;
+      for (std::size_t s = 0; s < cellsOf.size(); ++s) {
+        if (part[s] != -1) {
+          continue;
+        }
+        const auto id = static_cast<std::int64_t>(sizes.size());
+        sizes.push_back(0);
+        std::vector<std::size_t> queue{s};
+        part[s] = id;
+        for (std::size_t q = 0; q < queue.size(); ++q) {
+          const auto at = queue[q];
+          ++sizes.back();
+          const auto x = static_cast<std::int64_t>(cellsOf[at]) % width;
+          const auto y = static_cast<std::int64_t>(cellsOf[at]) / width;
+          for (const auto& [dx, dy] : {std::pair{1, 0}, std::pair{-1, 0},
+                                       std::pair{0, 1}, std::pair{0, -1}}) {
+            if (!grid_.inside(x + dx, y + dy)) {
+              continue;
+            }
+            const auto found = indexOf(grid_.cell(x + dx, y + dy));
+            if (found >= 0 && part[static_cast<std::size_t>(found)] == -1) {
+              part[static_cast<std::size_t>(found)] = id;
+              queue.push_back(static_cast<std::size_t>(found));
+            }
+          }
+        }
+      }
+      if (sizes.size() < 2) {
+        continue;
+      }
+      std::vector<std::int64_t> order(sizes.size());
+      std::iota(order.begin(), order.end(), std::int64_t{0});
+      std::ranges::sort(order, [&](const auto p, const auto q) {
+        return sizes[static_cast<std::size_t>(p)] >
+               sizes[static_cast<std::size_t>(q)];
+      });
+      const auto sideOfPart = [&](const std::int64_t p) -> std::int8_t {
+        return p == order[0] ? 0 : p == order[1] ? 1 : -1;
+      };
+      // The side an element lies on: the most cells near it, near the
+      // points of the gate it comes by or near its end.
+      const auto vote = [&](const Point& p, std::array<int, 2>& votes) {
+        const auto px = static_cast<std::int64_t>(std::lround(p.x));
+        const auto py = static_cast<std::int64_t>(std::lround(p.y));
+        for (std::int64_t dy = -3; dy <= 3; ++dy) {
+          for (std::int64_t dx = -3; dx <= 3; ++dx) {
+            if (!grid_.inside(px + dx, py + dy)) {
+              continue;
+            }
+            const auto found = indexOf(grid_.cell(px + dx, py + dy));
+            if (found >= 0 && part[static_cast<std::size_t>(found)] >= 0) {
+              const auto side = sideOfPart(part[static_cast<std::size_t>(found)]);
+              if (side >= 0) {
+                ++votes[static_cast<std::size_t>(side)];
+              }
+            }
+          }
+        }
+      };
+      const auto decide = [](const std::array<int, 2>& votes) -> std::int8_t {
+        if (votes[0] == 0 && votes[1] == 0) {
+          return -1;
+        }
+        return votes[0] >= votes[1] ? 0 : 1;
+      };
+      Chord chord{.chamber = chamber,
+                  .a = candidate.a,
+                  .b = candidate.b,
+                  .capacity = candidate.capacity,
+                  .side = std::vector<std::int8_t>(ne, -1),
+                  .ends = {},
+                  .touchSlots = std::move(candidate.touch),
+                  .walls = std::move(candidate.walls)};
+      // A gate that runs along the chord, within the cells a vote reads,
+      // has no cells of its own side to vote with when that side is a
+      // sliver thinner than the lines (45q_dense chain 6, step 6: in c118
+      // the chord from the artwork end of g2 to the coupler stub at g1 runs
+      // within 2.2 cells of g2 and g97, so all three gates voted the large
+      // side and the chord, which 126, 127 and f38 cross at a capacity of
+      // 2, was dropped as not binding, user, 2026-11-02). Such a gate takes
+      // its side by the line: the side of its point farthest from the
+      // chord, against the side the largest part lies on.
+      const auto a = chord.a;
+      const auto b = chord.b;
+      const auto across = [&](const Point& p) {
+        return ((b.x - a.x) * (p.y - a.y)) - ((b.y - a.y) * (p.x - a.x));
+      };
+      std::int64_t largestSign = 0;
+      for (std::size_t s = 0; s < cellsOf.size(); ++s) {
+        if (part[s] != order[0]) {
+          continue;
+        }
+        const auto turn =
+            across({static_cast<double>(static_cast<std::int64_t>(cellsOf[s]) % width),
+                    static_cast<double>(static_cast<std::int64_t>(cellsOf[s]) / width)});
+        largestSign += turn > 0.0 ? 1 : turn < 0.0 ? -1 : 0;
+      }
+      const auto alongSide = [&](const Edge& edge) -> std::optional<std::int8_t> {
+        if (largestSign == 0) {
+          return std::nullopt;
+        }
+        Point farthest = edge.from;
+        double most = -1.0;
+        for (int s = 0; s <= 10; ++s) {
+          const auto t = static_cast<double>(s) / 10.0;
+          const Point p{edge.from.x + (t * (edge.to.x - edge.from.x)),
+                        edge.from.y + (t * (edge.to.y - edge.from.y))};
+          const auto off = distanceToSegment(p, a, b);
+          if (off > CHORD_SIDE_NEAR_CELLS) {
+            return std::nullopt;
+          }
+          if (off > most) {
+            most = off;
+            farthest = p;
+          }
+        }
+        if (most < CHORD_SIDE_ON_CELLS) {
+          return std::int8_t{-1};
+        }
+        return (across(farthest) > 0.0) == (largestSign > 0) ? std::int8_t{0}
+                                                             : std::int8_t{1};
+      };
+      std::array<std::int64_t, 2> room{0, 0};
+      for (const auto k : edgesHere) {
+        std::array<int, 2> votes{0, 0};
+        const auto& edge = edges_[k];
+        if (const auto along = alongSide(edge); along.has_value()) {
+          chord.side[k] = *along;
+          if (debug) {
+            std::fprintf(stderr, "    %s lies along the chord: side %d by the line\n",
+                         edge.name.c_str(), static_cast<int>(*along));
+          }
+          if (chord.side[k] >= 0) {
+            room[static_cast<std::size_t>(chord.side[k])] +=
+                std::max<std::int64_t>(0, capacity_[k]);
+          }
+          continue;
+        }
+        for (int s = 1; s < 10; ++s) {
+          const auto t = static_cast<double>(s) / 10.0;
+          vote({edge.from.x + (t * (edge.to.x - edge.from.x)),
+                edge.from.y + (t * (edge.to.y - edge.from.y))},
+               votes);
+        }
+        chord.side[k] = decide(votes);
+        if (chord.side[k] >= 0) {
+          room[static_cast<std::size_t>(chord.side[k])] +=
+              std::max<std::int64_t>(0, capacity_[k]);
+        }
+      }
+      for (const auto& end : endsHere) {
+        std::array<int, 2> votes{0, 0};
+        vote(end.at, votes);
+        auto& sides = chord.ends.try_emplace(*end.wire, std::array<std::int8_t, 2>{-1, -1})
+                          .first->second;
+        sides[end.which] = decide(votes);
+        if (sides[end.which] >= 0) {
+          ++room[static_cast<std::size_t>(sides[end.which])];
+        }
+      }
+      // Only a chord that holds fewer wires than its smaller side lets in
+      // can bind.
+      const auto least = chord.capacity -
+                         static_cast<std::int64_t>(chord.touchSlots.size());
+      if (debug) {
+        std::fprintf(stderr, "  chord (%.0f,%.0f)-(%.0f,%.0f): cap %lld touch %zu, rooms %lld/%lld -> %s\n",
+                     chord.a.x, chord.a.y, chord.b.x, chord.b.y,
+                     static_cast<long long>(chord.capacity), chord.touchSlots.size(),
+                     static_cast<long long>(room[0]), static_cast<long long>(room[1]),
+                     least >= std::min(room[0], room[1]) ? "dropped (does not bind)" : "KEPT");
+      }
+      if (least >= std::min(room[0], room[1])) {
+        continue;
+      }
+      chordsIn_[static_cast<std::size_t>(chamber)].push_back(
+          static_cast<std::uint32_t>(chords_.size()));
+      chords_.push_back(std::move(chord));
+    }
+  }
+  chordCost_.assign(chords_.size(), 0.0);
+}
+
+bool Checker::crossesChord(const Chord& chord, const std::string& wire,
+                           const std::int64_t from,
+                           const std::int64_t to) const {
+  const auto sideOf = [&](const std::int64_t element) -> std::int8_t {
+    if (element >= 0) {
+      return chord.side[static_cast<std::size_t>(element)];
+    }
+    const auto found = chord.ends.find(wire);
+    return found == chord.ends.end() ? std::int8_t{-1}
+                                     : found->second[element == -1 ? 0 : 1];
+  };
+  const auto a = sideOf(from);
+  const auto b = sideOf(to);
+  return a >= 0 && b >= 0 && a != b;
+}
+
+double Checker::chordCostOf(const std::int64_t chamber, const std::string& wire,
+                            const std::int64_t from,
+                            const std::int64_t to) const {
+  if (!graph_.chordsRouting || chords_.empty() || chamber < 0 ||
+      std::cmp_greater_equal(chamber, chordsIn_.size())) {
+    return 0.0;
+  }
+  double cost = 0.0;
+  for (const auto j : chordsIn_[static_cast<std::size_t>(chamber)]) {
+    if (chordCost_[j] > 0.0 && crossesChord(chords_[j], wire, from, to)) {
+      cost += chordCost_[j];
+    }
+  }
+  return cost;
+}
 
 void Checker::readStrokesAndWires() {
   for (const auto& stroke : graph_.strokes) {
@@ -3421,10 +4464,422 @@ void Checker::readStrokesAndWires() {
   }
 }
 
+/// How far apart the ends of two gates on one obstacle may lie for the
+/// gates to fan out of one point (`Checker::mergeFans`).
+constexpr double FAN_APEX_CELLS = 2.0;
+/// How near the apex of a fan a cell may lie and still be placed on a side
+/// of the gate the fan keeps: nearer, the lines are one.
+constexpr double FAN_APEX_SIDE_CELLS = 3.0;
+/// How near a gate outside the fan a cell beside a dropped gate may lie and
+/// still be placed on a side of the kept gate: nearer, it may lie beyond
+/// that gate.
+constexpr double FAN_FOREIGN_CELLS = 1.5;
+
+/// A fan of gates (user, 2026-10-31): gates whose ends lie on one obstacle
+/// within `FAN_APEX_CELLS` of each other on one side and on one obstacle on
+/// the other, with no crossing slot, port, port slot, wall or other gate
+/// between them, are one gate, the shortest of them. Such gates cut one
+/// narrow place several times, a cell or two apart (33q_dense, chain 3:
+/// g240 to g243 from wire 58's stub to f21), and the chamber raster sees
+/// the slivers between them as chambers beside each, so that a gate with no
+/// clear sides joined every two of its chambers and a wire passed the fan
+/// there and skipped the gates beside it. The gates the fan drops are no
+/// edges; the chambers beside them join the side of the kept gate they lie
+/// on.
+void Checker::mergeFans(const std::vector<EdgeSlots>& slots) {
+  struct Gate {
+    std::size_t index;
+    std::array<Point, 2> at;
+    std::array<const std::string*, 2> end;
+    double length;
+  };
+  std::vector<Gate> gates;
+  for (std::size_t index = 0; index < graph_.edges.size(); ++index) {
+    const auto& edge = graph_.edges[index];
+    if (edge.stretch || edge.mouth || edge.fixed || edge.users.has_value() ||
+        edge.ends.size() != 2) {
+      continue;
+    }
+    gates.push_back({.index = index,
+                     .at = {Point{edge.from[0], edge.from[1]},
+                            Point{edge.to[0], edge.to[1]}},
+                     .end = {&edge.ends[0], &edge.ends[1]},
+                     .length = edge.length});
+  }
+  // The end of g and the end of h at the apex, when the two fan out of one.
+  const auto apexOf = [](const Gate& g, const Gate& h)
+      -> std::optional<std::array<std::size_t, 2>> {
+    for (std::size_t s = 0; s < 2; ++s) {
+      for (std::size_t t = 0; t < 2; ++t) {
+        if (*g.end[s] == *h.end[t] && *g.end[1 - s] == *h.end[1 - t] &&
+            distance(g.at[s], h.at[t]) <= FAN_APEX_CELLS) {
+          return std::array{s, t};
+        }
+      }
+    }
+    return std::nullopt;
+  };
+  const auto nearPolygon = [](const Point& p, const std::vector<Point>& polygon,
+                              const double reach) {
+    if (inPolygon(p, polygon)) {
+      return true;
+    }
+    for (std::size_t m = 0; m < polygon.size(); ++m) {
+      if (distanceToSegment(p, polygon[m], polygon[(m + 1) % polygon.size()]) <=
+          reach) {
+        return true;
+      }
+    }
+    return false;
+  };
+  // Whether nothing lies between g and h: no crossing slot on the far
+  // obstacle between their far ends, no port, no port slot, no wall and no
+  // gate that leaves the room between them.
+  // The chambers the wire of each crossing slot comes out into, on either
+  // side of its feedline edge, as `addSlots` finds them.
+  std::vector<std::int64_t> slotChambers;
+  {
+    const auto reach = graph_.crossingReach + slotReachMargin() + 2;
+    for (const auto& edge : slots) {
+      for (const auto& slot : edge.slots) {
+        const auto ux = slot.direction.x;
+        const auto uy = slot.direction.y;
+        for (const auto& found : {sideChamber(grid_, slot.at, -uy, ux, reach),
+                                  sideChamber(grid_, slot.at, uy, -ux, reach)}) {
+          if (found.has_value()) {
+            slotChambers.push_back(found->first);
+          }
+        }
+      }
+    }
+  }
+  const auto clean = [&](const Gate& g, const Gate& h,
+                         const std::array<std::size_t, 2>& apex) {
+    const auto& a = g.at[apex[0]];
+    const auto& b = h.at[apex[1]];
+    const auto& c = g.at[1 - apex[0]];
+    const auto& d = h.at[1 - apex[1]];
+    const std::vector<Point> room{a, c, d, b};
+    const auto atApex = [&](const Point& p) {
+      return distance(p, a) <= FAN_APEX_SIDE_CELLS ||
+             distance(p, b) <= FAN_APEX_SIDE_CELLS;
+    };
+    const auto atEnd = [&](const Point& p) {
+      return atApex(p) || distance(p, c) <= 1.5 || distance(p, d) <= 1.5;
+    };
+    const auto minX = std::min({a.x, b.x, c.x, d.x});
+    const auto maxX = std::max({a.x, b.x, c.x, d.x});
+    const auto minY = std::min({a.y, b.y, c.y, d.y});
+    const auto maxY = std::max({a.y, b.y, c.y, d.y});
+    // The cells inside the room between the two gates, a cell or more off
+    // its sides: a wall there parts the room, and their chambers are the
+    // ones between the gates.
+    std::set<std::int64_t> inner;
+    for (auto y = static_cast<std::int64_t>(std::floor(minY));
+         y <= static_cast<std::int64_t>(std::ceil(maxY)); ++y) {
+      for (auto x = static_cast<std::int64_t>(std::floor(minX));
+           x <= static_cast<std::int64_t>(std::ceil(maxX)); ++x) {
+        const Point p{static_cast<double>(x), static_cast<double>(y)};
+        if (!grid_.inside(x, y) || !inPolygon(p, room) || atApex(p)) {
+          continue;
+        }
+        double off = std::numeric_limits<double>::max();
+        for (std::size_t m = 0; m < room.size(); ++m) {
+          off = std::min(off, distanceToSegment(p, room[m],
+                                                room[(m + 1) % room.size()]));
+        }
+        const auto value = grid_.at(x, y);
+        if (off > 2.0 && value != 0 && value < CHAMBER) {
+          return false;
+        }
+        if (off >= 1.0 && value >= CHAMBER) {
+          inner.insert(value - CHAMBER);
+        }
+      }
+    }
+    // A crossing slot whose wire comes out between the gates.
+    if (std::ranges::any_of(slotChambers, [&](const std::int64_t chamber) {
+          return inner.contains(chamber);
+        })) {
+      return false;
+    }
+    for (const auto& wire : wires_) {
+      for (const auto* end : {&wire.source, &wire.target}) {
+        if (std::ranges::any_of(end->chambers, [&](const std::int64_t chamber) {
+              return inner.contains(chamber);
+            }) ||
+            (!atApex(end->cell) && nearPolygon(end->cell, room, 2.0))) {
+          return false;
+        }
+      }
+    }
+    for (const auto& [x, y] : graph_.portSlots) {
+      const Point p{static_cast<double>(x), static_cast<double>(y)};
+      if (p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY &&
+          inPolygon(p, room)) {
+        return false;
+      }
+    }
+    for (const auto& edge : graph_.edges) {
+      if (edge.stretch || edge.name == graph_.edges[g.index].name ||
+          edge.name == graph_.edges[h.index].name) {
+        continue;
+      }
+      const Point p{edge.from[0], edge.from[1]};
+      const Point q{edge.to[0], edge.to[1]};
+      const auto pIn = !atEnd(p) && nearPolygon(p, room, 1.5);
+      const auto qIn = !atEnd(q) && nearPolygon(q, room, 1.5);
+      const auto pAt = atEnd(p) || nearPolygon(p, room, 1.5);
+      const auto qAt = atEnd(q) || nearPolygon(q, room, 1.5);
+      if ((pIn || qIn) && !(pAt && qAt)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // The fans: the gates two of which fan out of one point with nothing
+  // between them, joined.
+  std::vector<std::size_t> up(gates.size());
+  std::iota(up.begin(), up.end(), std::size_t{0});
+  const auto find = [&](std::size_t at) {
+    while (up[at] != at) {
+      up[at] = up[up[at]];
+      at = up[at];
+    }
+    return at;
+  };
+  std::vector<std::size_t> byX(gates.size());
+  std::iota(byX.begin(), byX.end(), std::size_t{0});
+  const auto left = [&](const std::size_t i) {
+    return std::min(gates[i].at[0].x, gates[i].at[1].x);
+  };
+  std::ranges::sort(byX, [&](const std::size_t i, const std::size_t j) {
+    return left(i) < left(j);
+  });
+  bool any = false;
+  for (std::size_t m = 0; m < byX.size(); ++m) {
+    const auto& g = gates[byX[m]];
+    const auto right = std::max(g.at[0].x, g.at[1].x) + FAN_APEX_CELLS;
+    for (std::size_t n = m + 1; n < byX.size() && left(byX[n]) <= right; ++n) {
+      const auto& h = gates[byX[n]];
+      if (const auto apex = apexOf(g, h);
+          apex.has_value() && find(byX[m]) != find(byX[n]) &&
+          clean(g, h, *apex)) {
+        up[find(byX[m])] = find(byX[n]);
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return;
+  }
+  std::map<std::size_t, std::vector<std::size_t>> fans;
+  for (std::size_t i = 0; i < gates.size(); ++i) {
+    fans[find(i)].push_back(i);
+  }
+
+  // The chambers: each beside a dropped gate joins the side of the kept
+  // gate it lies on.
+  const auto count = graph_.chambers;
+  std::vector<std::size_t> joined(count);
+  std::iota(joined.begin(), joined.end(), std::size_t{0});
+  const auto root = [&](std::size_t at) {
+    while (joined[at] != at) {
+      joined[at] = joined[joined[at]];
+      at = joined[at];
+    }
+    return at;
+  };
+  // The two sides of every kept gate, which must stay apart, and those of
+  // every gate whose sides the graph knows.
+  std::vector<std::array<std::size_t, 2>> apart;
+  std::vector<std::pair<std::size_t, std::array<std::size_t, 2>>> sided;
+  for (std::size_t index = 0; index < graph_.edges.size(); ++index) {
+    const auto& edge = graph_.edges[index];
+    if (edge.stretch || !edge.sides.has_value()) {
+      continue;
+    }
+    for (const auto x : (*edge.sides)[0]) {
+      for (const auto y : (*edge.sides)[1]) {
+        if (x >= 0 && y >= 0 && std::cmp_less(x, count) &&
+            std::cmp_less(y, count) && x != y) {
+          sided.push_back({index, {static_cast<std::size_t>(x),
+                                   static_cast<std::size_t>(y)}});
+        }
+      }
+    }
+  }
+  for (const auto& [_, members] : fans) {
+    if (members.size() < 2) {
+      continue;
+    }
+    const auto kept = *std::ranges::min_element(
+        members, [&](const std::size_t i, const std::size_t j) {
+          return gates[i].length != gates[j].length
+                     ? gates[i].length < gates[j].length
+                     : gates[i].index < gates[j].index;
+        });
+    const auto& k = gates[kept];
+    // A fan that would join a side of a kept gate to its other side is
+    // taken back.
+    const auto joinedBefore = joined;
+    const auto droppedBefore = dropped_;
+    const auto apartBefore = apart.size();
+    // The side of each chamber met, per side of the kept gate: -1 or 1.
+    std::map<std::size_t, int> sideOf;
+    std::array<std::optional<std::size_t>, 2> rep;
+    for (const auto member : members) {
+      if (member == kept) {
+        continue;
+      }
+      const auto& g = gates[member];
+      const auto apex = apexOf(k, g);
+      if (!apex.has_value() || !clean(k, g, *apex)) {
+        continue;
+      }
+      // The sides of the kept gate from its first end to its second, the
+      // same for every gate of the fan whichever end it shares.
+      const auto& a = k.at[0];
+      const auto& b = k.at[1];
+      const auto& tip = k.at[(*apex)[0]];
+      const auto length = std::max(1e-9, distance(a, b));
+      const auto signedOff = [&](const Point& p) {
+        return (((b.x - a.x) * (p.y - a.y)) - ((b.y - a.y) * (p.x - a.x))) /
+               length;
+      };
+      // The lines of the gates outside the fan near the dropped one: a cell
+      // nearer one than `FAN_FOREIGN_CELLS` may lie beyond it.
+      std::vector<std::pair<Point, Point>> foreign;
+      {
+        const auto minX = std::min(g.at[0].x, g.at[1].x) - 3.0;
+        const auto maxX = std::max(g.at[0].x, g.at[1].x) + 3.0;
+        const auto minY = std::min(g.at[0].y, g.at[1].y) - 3.0;
+        const auto maxY = std::max(g.at[0].y, g.at[1].y) + 3.0;
+        for (std::size_t index = 0; index < graph_.edges.size(); ++index) {
+          const auto& edge = graph_.edges[index];
+          if (edge.stretch ||
+              std::ranges::any_of(members, [&](const std::size_t m) {
+                return gates[m].index == index;
+              })) {
+            continue;
+          }
+          if (std::max(edge.from[0], edge.to[0]) >= minX &&
+              std::min(edge.from[0], edge.to[0]) <= maxX &&
+              std::max(edge.from[1], edge.to[1]) >= minY &&
+              std::min(edge.from[1], edge.to[1]) <= maxY) {
+            foreign.emplace_back(Point{edge.from[0], edge.from[1]},
+                                 Point{edge.to[0], edge.to[1]});
+          }
+        }
+      }
+      // The chambers beside the dropped gate's line, by side.
+      std::map<std::size_t, int> met;
+      bool torn = false;
+      const auto& p0 = g.at[0];
+      const auto& p1 = g.at[1];
+      const auto steps = static_cast<std::int64_t>(
+          std::ceil(2.0 * std::max(1.0, distance(p0, p1))));
+      for (std::int64_t step = 0; step <= steps && !torn; ++step) {
+        const auto t = static_cast<double>(step) / static_cast<double>(steps);
+        const auto cx = rounded(p0.x + (t * (p1.x - p0.x)));
+        const auto cy = rounded(p0.y + (t * (p1.y - p0.y)));
+        for (const auto& [dx, dy] :
+             std::array<std::array<std::int64_t, 2>, 5>{
+                 {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}}) {
+          const auto x = cx + dx;
+          const auto y = cy + dy;
+          if (!grid_.inside(x, y) || grid_.at(x, y) < CHAMBER) {
+            continue;
+          }
+          const Point q{static_cast<double>(x), static_cast<double>(y)};
+          const auto off = signedOff(q);
+          if (distance(q, tip) < FAN_APEX_SIDE_CELLS || std::abs(off) < 1.0 ||
+              std::ranges::any_of(foreign, [&](const auto& line) {
+                return distanceToSegment(q, line.first, line.second) <
+                       FAN_FOREIGN_CELLS;
+              })) {
+            continue;
+          }
+          const auto chamber = static_cast<std::size_t>(grid_.at(x, y) - CHAMBER);
+          if (chamber >= count) {
+            continue;
+          }
+          const int side = off > 0.0 ? 1 : -1;
+          const auto [at, fresh] = met.try_emplace(chamber, side);
+          const auto before = sideOf.find(chamber);
+          if (at->second != side ||
+              (before != sideOf.end() && before->second != side)) {
+            torn = true;
+            break;
+          }
+        }
+      }
+      if (torn) {
+        continue;
+      }
+      for (const auto& [chamber, side] : met) {
+        sideOf[chamber] = side;
+        auto& first = rep[side > 0 ? 1 : 0];
+        if (!first.has_value()) {
+          first = chamber;
+        } else {
+          joined[root(chamber)] = root(*first);
+        }
+      }
+      dropped_[g.index] = k.index;
+    }
+    if (rep[0].has_value() && rep[1].has_value()) {
+      apart.push_back({*rep[0], *rep[1]});
+    }
+    if (std::ranges::any_of(apart,
+                            [&](const auto& pair) {
+                              return root(pair[0]) == root(pair[1]);
+                            }) ||
+        std::ranges::any_of(sided, [&](const auto& one) {
+          return !dropped_.contains(one.first) &&
+                 root(one.second[0]) == root(one.second[1]);
+        })) {
+      joined = joinedBefore;
+      dropped_ = droppedBefore;
+      apart.resize(apartBefore);
+      std::string names;
+      for (const auto member : members) {
+        names += (names.empty() ? "" : " ") + graph_.edges[gates[member].index].name;
+      }
+      rejectedFans_.push_back(std::move(names));
+    }
+  }
+  if (dropped_.empty()) {
+    return;
+  }
+  alias_.resize(count);
+  for (std::size_t c = 0; c < count; ++c) {
+    alias_[c] = static_cast<std::int64_t>(root(c));
+  }
+  grid_.alias = &alias_;
+  for (auto& wire : wires_) {
+    for (auto* end : {&wire.source, &wire.target}) {
+      std::vector<std::int64_t> chambers;
+      for (const auto chamber : end->chambers) {
+        const auto joins =
+            chamber >= 0 && std::cmp_less(chamber, alias_.size())
+                ? alias_[static_cast<std::size_t>(chamber)]
+                : chamber;
+        if (std::ranges::find(chambers, joins) == chambers.end()) {
+          chambers.push_back(joins);
+        }
+      }
+      end->chambers = std::move(chambers);
+    }
+  }
+}
+
 void Checker::addSides() {
   std::vector<std::pair<std::string, std::pair<Point, Point>>> gateLines;
-  for (const auto& edge : graph_.edges) {
-    if (!edge.stretch) {
+  for (std::size_t index = 0; index < graph_.edges.size(); ++index) {
+    const auto& edge = graph_.edges[index];
+    if (!edge.stretch && !dropped_.contains(index)) {
       gateLines.emplace_back(edge.name,
                              std::pair{Point{edge.from[0], edge.from[1]},
                                        Point{edge.to[0], edge.to[1]}});
@@ -3438,16 +4893,30 @@ void Checker::addSides() {
   }
   for (std::size_t index = 0; index < graph_.edges.size(); ++index) {
     const auto& edge = graph_.edges[index];
-    if (edge.stretch) {
+    if (edge.stretch || dropped_.contains(index)) {
       continue;
     }
     Edge one;
     if (page_ != nullptr) {
       one.out = page_->at("edges").at(index);
+      auto merged = json::array();
+      for (const auto& [gone, kept] : dropped_) {
+        if (kept == index) {
+          merged.push_back(graph_.edges[gone].name);
+        }
+      }
+      if (!merged.empty()) {
+        one.out["merged"] = std::move(merged);
+      }
+    }
+    if (page_ != nullptr && edge.escapeShare > 0.0) {
+      one.out["escape"] = std::round(edge.escapeShare * 100.0) / 100.0;
+      one.out["capacityBefore"] = edge.capacityBefore;
     }
     one.name = edge.name;
-    one.chambers = edge.chambers;
+    one.chambers = aliased(edge.chambers);
     one.capacity = edge.capacity;
+    one.before = edge.capacityBefore;
     one.users = edge.users;
     one.from = {edge.from[0], edge.from[1]};
     one.to = {edge.to[0], edge.to[1]};
@@ -3457,8 +4926,9 @@ void Checker::addSides() {
     // A gate too narrow for any wire that the check by stretches opened to
     // the resonators at whose own runs it ends holds none of them when it is
     // narrower than `resonatorPassage` of the clearance.
-    if (one.capacity >= 1 && one.length < clear_ && one.users.has_value() &&
-        !one.users->empty() && one.length < resonatorPassage() * clear_ &&
+    if (!edge.fixed && one.capacity >= 1 && one.length < clear_ &&
+        one.users.has_value() && !one.users->empty() &&
+        one.length < resonatorPassage() * clear_ &&
         std::ranges::all_of(
             *one.users,
             [&](const std::string& name) {
@@ -3468,8 +4938,9 @@ void Checker::addSides() {
     }
     // A gate that holds its length over the clearance holds it over the
     // clearance times the margin; a gate the check by stretches gave another
-    // capacity (a slot, a mouth, an own run's passage) keeps it.
-    if (one.capacity == wiresIn(one.length, clear_, 1.0)) {
+    // capacity (a slot, a mouth, an own run's passage) keeps it, and so does
+    // a gate an escape round narrowed (`fixed`).
+    if (!edge.fixed && one.capacity == wiresIn(one.length, clear_, 1.0)) {
       // A gap from a feedline edge to a static obstacle counts the bonus
       // that the obstacle grants (`staticGapBonus`).
       const auto bonus = feedlineToStatic(one.ends) ? staticGapBonus() : 0.0;
@@ -3478,6 +4949,12 @@ void Checker::addSides() {
                   margin_);
     }
     one.sides = edge.sides;
+    if (one.sides.has_value() && !alias_.empty()) {
+      one.sides = std::array{aliased((*one.sides)[0]), aliased((*one.sides)[1])};
+    }
+    if (page_ != nullptr && !alias_.empty()) {
+      one.out["chambers"] = one.chambers;
+    }
     // The gates near this one: a sample lies at most a cell and a half off
     // the line.
     const auto minX = std::min(one.from.x, one.to.x) - 2;
@@ -4140,7 +5617,9 @@ Way Checker::shortest(const Demand& demand,
       }
       const auto mask =
           demand.crossBit[k] | (demand.ownMouth[k] ? mouthBit : 0);
-      const auto d = (apart * weight[k] * chamberFactor(chamber)) + 1.0;
+      const auto d = (apart * weight[k] * chamberFactor(chamber)) + 1.0 +
+                     chordCostOf(chamber, demand.name, -1,
+                                 static_cast<std::int64_t>(k));
       const auto at = (move.pair * maskCount_) + mask;
       if (d < known(at)) {
         keep(at, d, NO_STATE, apart);
@@ -4163,7 +5642,9 @@ Way Checker::shortest(const Demand& demand,
     const auto mask = static_cast<std::uint64_t>(item.at % maskCount_);
     const auto& steps = stepsOf(item.at / maskCount_);
     if (mask == full && std::ranges::find(demand.to, c) != demand.to.end()) {
-      const auto total = d + (distance(end, mid_[k]) * chamberFactor(c));
+      const auto total = d + (distance(end, mid_[k]) * chamberFactor(c)) +
+                         chordCostOf(c, demand.name,
+                                     static_cast<std::int64_t>(k), -2);
       if (total < goalCost) {
         goalCost = total;
         goal = item.at;
@@ -4200,7 +5681,9 @@ Way Checker::shortest(const Demand& demand,
         mask2 |= mouthBit;
       }
       const auto step = steps[m];
-      const auto d2 = d + (step * weight[k2] * chamberFactor(c)) + 1.0;
+      const auto d2 = d + (step * weight[k2] * chamberFactor(c)) + 1.0 +
+                      chordCostOf(c, demand.name, static_cast<std::int64_t>(k),
+                                  static_cast<std::int64_t>(k2));
       const auto at2 = (move.pair * maskCount_) + mask2;
       if (d2 < known(at2)) {
         keep(at2, d2, item.at, step);
@@ -4225,9 +5708,13 @@ Way Checker::shortest(const Demand& demand,
 
 std::pair<SlotCheckResult, json> Checker::run() {
   readStrokesAndWires();
-  addSides();
+  // The slots first: a fan of gates with a slot between them is no fan.
   SlotPlacer placer(graph_, grid_, page_ != nullptr);
   auto slots = placer.run(strokes_);
+  if (graph_.mergeFans) {
+    mergeFans(slots);
+  }
+  addSides();
   addSlots(slots);
   const auto ne = edges_.size();
   for (const auto& edge : edges_) {
@@ -4508,6 +5995,16 @@ std::pair<SlotCheckResult, json> Checker::run() {
         }
       }
     }
+    // A chamber a merged fan joined to another counts there.
+    if (!alias_.empty()) {
+      for (std::size_t c = 0; c < chamberCount && c < alias_.size(); ++c) {
+        const auto into = static_cast<std::size_t>(alias_[c]);
+        if (into != c && into < chamberCount) {
+          area[into] += area[c];
+          area[c] = 0.0;
+        }
+      }
+    }
     // The cells of a gate's line belong to no chamber: each chamber beside
     // it takes half of them, or a chamber between two gates keeps hardly
     // any area.
@@ -4616,6 +6113,110 @@ std::pair<SlotCheckResult, json> Checker::run() {
   std::vector<std::pair<std::string, std::optional<std::vector<std::size_t>>>>
       ways;
   std::unordered_map<std::string, std::size_t> wayOf;
+  // The chords of the chambers (`buildChords`): the SAT routing counts the
+  // wires across each, prices it as it prices a gate and negotiates its
+  // overflow away as it does a gate's (user, 2026-10-31).
+  buildChords(moves);
+  const auto nch = chords_.size();
+  std::map<std::pair<std::int64_t, std::size_t>, std::vector<std::int64_t>>
+      chordInto;
+  if (nch > 0) {
+    for (const auto& [x, k, y] : moves) {
+      chordInto[{x, k}].push_back(y);
+    }
+  }
+  // The chords a way crosses: chamber by chamber, the edge or the end it
+  // comes in by and the one it leaves by.
+  const auto chordsCrossed =
+      [&](const Demand& demand,
+          const std::optional<std::vector<std::size_t>>& path) {
+        std::vector<std::uint32_t> out;
+        if (nch == 0 || !path.has_value()) {
+          return out;
+        }
+        const auto piece = [&](const std::int64_t chamber,
+                               const std::int64_t from, const std::int64_t to) {
+          if (chamber < 0 || std::cmp_greater_equal(chamber, chordsIn_.size())) {
+            return;
+          }
+          for (const auto j : chordsIn_[static_cast<std::size_t>(chamber)]) {
+            if (crossesChord(chords_[j], demand.name, from, to)) {
+              out.push_back(j);
+            }
+          }
+        };
+        if (path->empty()) {
+          for (const auto chamber : demand.from) {
+            if (std::ranges::find(demand.to, chamber) != demand.to.end()) {
+              piece(chamber, -1, -2);
+              break;
+            }
+          }
+          return out;
+        }
+        std::int64_t here = -1;
+        for (const auto chamber : demand.from) {
+          if (chordInto.contains({chamber, path->front()})) {
+            here = chamber;
+            break;
+          }
+        }
+        if (here < 0) {
+          return out;
+        }
+        std::int64_t in = -1;
+        for (std::size_t i = 0; i < path->size(); ++i) {
+          const auto k = (*path)[i];
+          piece(here, in, static_cast<std::int64_t>(k));
+          const auto found = chordInto.find({here, k});
+          if (found == chordInto.end()) {
+            return out;
+          }
+          auto next = found->second.front();
+          for (const auto y : found->second) {
+            const bool onward =
+                i + 1 < path->size()
+                    ? chordInto.contains({y, (*path)[i + 1]})
+                    : std::ranges::find(demand.to, y) != demand.to.end();
+            if (onward) {
+              next = y;
+              break;
+            }
+          }
+          here = next;
+          in = static_cast<std::int64_t>(k);
+        }
+        piece(here, in, -2);
+        return out;
+      };
+  std::vector<std::int64_t> chordLoad(nch, 0);
+  std::vector<double> chordHist(nch, 0.0);
+  std::vector<std::int64_t> chordHolds(nch, 0);
+  for (std::size_t j = 0; j < nch; ++j) {
+    chordHolds[j] = chords_[j].capacity;
+  }
+  std::vector<std::vector<std::uint32_t>> crossedBy(demands.size());
+  std::vector<std::size_t> chordOver;
+  // The wires that take a chord's room with their ways out: a wire through
+  // a slot whose way out touches the chord, crossing it not itself.
+  const auto takersOf = [&](const std::size_t j) {
+    std::set<std::string> takers;
+    for (const auto slot : chords_[j].touchSlots) {
+      for (std::size_t d = 0; d < demands.size(); ++d) {
+        const auto at = wayOf.find(demands[d].name);
+        if (at == wayOf.end() || !ways[at->second].second.has_value()) {
+          continue;
+        }
+        const auto& path = *ways[at->second].second;
+        if (std::ranges::find(path, slot) != path.end() &&
+            std::ranges::find(crossedBy[d], static_cast<std::uint32_t>(j)) ==
+                crossedBy[d].end()) {
+          takers.insert(demands[d].name);
+        }
+      }
+    }
+    return takers;
+  };
   std::vector<std::int64_t> load(ne, 0);
   std::vector<std::int64_t> limits(ne, 0);
   std::vector<std::size_t> over;
@@ -4631,8 +6232,77 @@ std::pair<SlotCheckResult, json> Checker::run() {
       }
     }
   }
+  // Under `escapeTouchRouting`: per slot, the gates the ways out of it
+  // touch, inflated like a wall; per gate, the wires whose own run it ends
+  // on, for which a way out there is their port.
+  const bool touchRouting = graph_.escapeTouch && graph_.escapeTouchRouting;
+  std::vector<std::vector<std::uint32_t>> touchGates(touchRouting ? ne : 0);
+  std::vector<std::vector<std::string>> runOwners(touchRouting ? ne : 0);
+  if (touchRouting) {
+    const auto inflation = graph_.inflation;
+    std::vector<std::uint32_t> gates;
+    for (std::size_t k = 0; k < ne; ++k) {
+      const auto& edge = edges_[k];
+      if (edge.stretch || edge.mouth ||
+          (edge.users.has_value() && !edge.users->empty())) {
+        continue;
+      }
+      gates.push_back(static_cast<std::uint32_t>(k));
+      for (const auto& end : edge.ends) {
+        if (const auto at = end.find(" at its "); at != std::string::npos) {
+          runOwners[k].push_back(end.substr(0, at));
+        }
+      }
+    }
+    for (std::size_t slot = 0; slot < ne; ++slot) {
+      const auto& edge = edges_[slot];
+      if (!edge.stretch || edge.corners.empty()) {
+        continue;
+      }
+      for (const auto& way : edge.ways) {
+        const auto curve = EscapeWays::curveOf(way);
+        if (curve.empty()) {
+          continue;
+        }
+        auto minX = curve.front().x;
+        auto maxX = minX;
+        auto minY = curve.front().y;
+        auto maxY = minY;
+        for (const auto& p : curve) {
+          minX = std::min(minX, p.x);
+          maxX = std::max(maxX, p.x);
+          minY = std::min(minY, p.y);
+          maxY = std::max(maxY, p.y);
+        }
+        for (const auto k : gates) {
+          const auto& gate = edges_[k];
+          if (std::max(gate.from.x, gate.to.x) < minX - inflation ||
+              std::min(gate.from.x, gate.to.x) > maxX + inflation ||
+              std::max(gate.from.y, gate.to.y) < minY - inflation ||
+              std::min(gate.from.y, gate.to.y) > maxY + inflation ||
+              std::ranges::find(touchGates[slot], k) != touchGates[slot].end()) {
+            continue;
+          }
+          if (std::ranges::any_of(curve, [&](const Point& p) {
+                return distanceToSegment(p, gate.from, gate.to) <= inflation;
+              })) {
+            touchGates[slot].push_back(k);
+          }
+        }
+      }
+    }
+  }
+  // Per gate in a round: the wires whose ways out touch it and that do not
+  // pass it, and the slots they take it through.
+  std::vector<std::int64_t> touchLoad(touchRouting ? ne : 0, 0);
+  std::vector<std::vector<std::size_t>> touchBy(touchRouting ? ne : 0);
+  std::vector<std::uint32_t> touchedNow;
   for (round = 0; round < ROUNDS; ++round) {
     std::ranges::fill(load, 0);
+    std::ranges::fill(touchLoad, 0);
+    for (auto& taking : touchBy) {
+      taking.clear();
+    }
     if (fill > 0.0) {
       std::ranges::fill(cload, 0.0);
       chamberWeight_.assign(chamberCount, 1.0);
@@ -4642,11 +6312,27 @@ std::pair<SlotCheckResult, json> Checker::run() {
     }
     std::vector<std::int64_t> ownLoad(ne, 0);
     std::ranges::fill(gload, 0);
+    std::ranges::fill(chordLoad, 0);
+    // What crossing a chord costs: a gate's price over the clearance times
+    // CHORD_PRICE_CLEARANCES, nothing while it holds and has no history.
+    const auto chordPrice = [&](const std::size_t j) {
+      const auto overJ =
+          std::max<std::int64_t>(0, chordLoad[j] + 1 - chordHolds[j]);
+      const auto price =
+          (1.0 + chordHist[j]) *
+          (1.0 + ((0.5 * static_cast<double>(round + 1)) *
+                  static_cast<double>(overJ)));
+      return (price - 1.0) * CHORD_PRICE_CLEARANCES * clear_;
+    };
+    for (std::size_t j = 0; j < nch; ++j) {
+      chordCost_[j] = chordPrice(j);
+    }
     // The price of edge k for a wire with `own` ends at its own run there,
     // from the loads of the wires routed so far in this round.
     const auto priceOf = [&](const std::size_t k, const std::int64_t own) {
       const auto lim = limitOf(k, ownLoad[k] + own);
-      auto overK = std::max<std::int64_t>(0, load[k] + 1 - lim);
+      auto overK = std::max<std::int64_t>(
+          0, load[k] + (touchRouting ? touchLoad[k] : 0) + 1 - lim);
       for (const auto gi : member[k]) {
         overK += std::max<std::int64_t>(0, gload[gi] + 1 - groups[gi].capacity);
       }
@@ -4730,9 +6416,35 @@ std::pair<SlotCheckResult, json> Checker::run() {
           ownLoad[k] += owns[d][k];
         }
       }
+      // The gates the ways out of the wire's slots touch and it does not
+      // pass, each once.
+      if (touchRouting && path.has_value()) {
+        touchedNow.clear();
+        for (const auto slot : *path) {
+          for (const auto k : touchGates[slot]) {
+            if (std::ranges::find(touchedNow, k) != touchedNow.end() ||
+                std::ranges::find(*path, k) != path->end() ||
+                std::ranges::find(runOwners[k], demand.name) !=
+                    runOwners[k].end()) {
+              continue;
+            }
+            touchedNow.push_back(k);
+            ++touchLoad[k];
+            touchBy[k].push_back(slot);
+            common[k] = priceOf(k, 0);
+          }
+        }
+      }
       const auto passed = passes(demand.name, path);
       for (const auto gi : passed) {
         ++gload[gi];
+      }
+      if (nch > 0) {
+        crossedBy[d] = chordsCrossed(demand, path);
+        for (const auto j : crossedBy[d]) {
+          ++chordLoad[j];
+          chordCost_[j] = chordPrice(j);
+        }
       }
       for (const auto& [chamber, covered] : piecesOf(demand, path)) {
         if (chamber >= 0 && std::cmp_less(chamber, chamberCount)) {
@@ -4753,9 +6465,14 @@ std::pair<SlotCheckResult, json> Checker::run() {
       }
     }
     over.clear();
+    // A gate a way out touches is over when the wires through it and the
+    // wires that touch it pass what it holds; touched alone it is not.
+    const auto touchedAt = [&](const std::size_t k) -> std::int64_t {
+      return touchRouting && load[k] > 0 ? touchLoad[k] : 0;
+    };
     for (std::size_t k = 0; k < ne; ++k) {
       limits[k] = limitOf(k, ownLoad[k]);
-      if (load[k] > limits[k]) {
+      if (load[k] + touchedAt(k) > limits[k]) {
         over.push_back(k);
       }
     }
@@ -4773,14 +6490,55 @@ std::pair<SlotCheckResult, json> Checker::run() {
     }
     const bool routed = std::ranges::all_of(
         ways, [](const auto& entry) { return entry.second.has_value(); });
-    if (over.empty() && gover.empty() && cover.empty() && routed) {
+    // The chords over: the wires across each against what it holds, less
+    // a wire per wire whose way out touches it; what they hold so takes the
+    // next round's prices.
+    chordOver.clear();
+    for (std::size_t j = 0; j < nch; ++j) {
+      chordHolds[j] = std::max<std::int64_t>(
+          0, chords_[j].capacity - static_cast<std::int64_t>(takersOf(j).size()));
+      if (chordLoad[j] > chordHolds[j]) {
+        chordOver.push_back(j);
+      }
+    }
+    // Without `chordsRouting` the routing does not see the chords: they
+    // are judged once it is done, and their overflow keeps no round going.
+    if (over.empty() && gover.empty() && cover.empty() &&
+        (chordOver.empty() || !graph_.chordsRouting) && routed) {
       break;
+    }
+    if (graph_.chordsRouting) {
+      for (const auto j : chordOver) {
+        const auto excess =
+            0.3 * static_cast<double>(chordLoad[j] - chordHolds[j]);
+        chordHist[j] += excess;
+        // The wires that take the chord's room with their ways out pay as
+        // the wires across it do: every slot whose way out touches it grows
+        // the same history, so that such a wire tries another slot. Priced
+        // on the crossing alone, the wire that must cross — out of its
+        // launcher — paid for the room the other took, and the other never
+        // moved (17q chain 1: wire 29 at slot f7 14 above 31's launcher,
+        // while f7 10 above its own touches nothing; user, 2026-11-01).
+        for (const auto slot : chords_[j].touchSlots) {
+          hist[slot] += excess;
+        }
+      }
     }
     for (const auto c : cover) {
       chist[c] += 0.3 * (cload[c] - roomOf[c]) / unitOf[c];
     }
     for (const auto k : over) {
-      hist[k] += 0.3 * static_cast<double>(load[k] - limits[k]);
+      const auto excess =
+          0.3 * static_cast<double>(load[k] + touchedAt(k) - limits[k]);
+      hist[k] += excess;
+      // The touching wires pay as the wires through it do, on the slots
+      // whose ways out touch it: they may move, a wire that must pass may
+      // not (17q chain 1).
+      if (touchedAt(k) > 0) {
+        for (const auto slot : touchBy[k]) {
+          hist[slot] += excess;
+        }
+      }
     }
     for (const auto gi : gover) {
       for (const auto k : groups[gi].slots) {
@@ -4798,7 +6556,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
   }
   chamberWeight_.clear();
   const bool sat = over.empty() && gover.empty() && cover.empty() &&
-                   unrouted.empty() && lost.empty();
+                   chordOver.empty() && unrouted.empty() && lost.empty();
   SlotCheckResult result;
   result.verdict = sat ? "SAT" : "UNSAT";
   for (const auto& edge : slots) {
@@ -4816,6 +6574,55 @@ std::pair<SlotCheckResult, json> Checker::run() {
   for (const auto c : cover) {
     result.over.push_back(std::format("c{} area {:.0f}%", c,
                                       100.0 * cload[c] / roomOf[c]));
+  }
+  for (const auto j : chordOver) {
+    const auto& chord = chords_[j];
+    result.over.push_back(std::format(
+        "chord c{} ({:.0f},{:.0f})-({:.0f},{:.0f}) {}/{}", chord.chamber,
+        chord.a.x, chord.a.y, chord.b.x, chord.b.y, chordLoad[j],
+        chordHolds[j]));
+    auto& walls = result.chordsOver[result.over.back()];
+    for (const auto& corner : chord.walls) {
+      walls.ends.insert(walls.ends.end(), corner.begin(), corner.end());
+    }
+    walls.middle = {(chord.a.x + chord.b.x) / 2.0, (chord.a.y + chord.b.y) / 2.0};
+  }
+  for (const auto j : chordOver) {
+    for (std::size_t d = 0; d < demands.size(); ++d) {
+      if (std::ranges::find(crossedBy[d], static_cast<std::uint32_t>(j)) !=
+              crossedBy[d].end() &&
+          std::ranges::find(result.crowded, demands[d].name) ==
+              result.crowded.end()) {
+        result.crowded.push_back(demands[d].name);
+      }
+    }
+  }
+  if (page_ != nullptr) {
+    for (std::size_t j = 0; j < nch; ++j) {
+      if (chordLoad[j] == 0) {
+        continue;
+      }
+      const auto& chord = chords_[j];
+      json wires = json::array();
+      for (std::size_t d = 0; d < demands.size(); ++d) {
+        if (std::ranges::find(crossedBy[d], static_cast<std::uint32_t>(j)) !=
+            crossedBy[d].end()) {
+          wires.push_back(demands[d].name);
+        }
+      }
+      const auto takers = takersOf(j);
+      chordLines_.push_back(
+          {{"chamber", chord.chamber},
+           {"line", json::array({json::array({chord.a.x, chord.a.y}),
+                                 json::array({chord.b.x, chord.b.y})})},
+           {"length", distance(chord.a, chord.b)},
+           {"capacity", chord.capacity},
+           {"holds", chordHolds[j]},
+           {"load", chordLoad[j]},
+           {"wires", std::move(wires)},
+           {"touching", takers},
+           {"over", chordLoad[j] > chordHolds[j]}});
+    }
   }
   if (!over.empty() || !gover.empty() || !cover.empty()) {
     std::vector<bool> isOver(ne, false);
@@ -4846,6 +6653,10 @@ std::pair<SlotCheckResult, json> Checker::run() {
         result.crowded.push_back(name);
       }
     }
+  }
+
+  if (graph_.escapeRounds > 0 && sat) {
+    escapeCapsOf(ways, load, limits, result);
   }
 
   if (page_ == nullptr) {
@@ -4893,7 +6704,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
         const auto x = rounded(mx + ((sign * static_cast<double>(step)) * nx));
         const auto y = rounded(my + ((sign * static_cast<double>(step)) * ny));
         if (grid_.inside(x, y) && grid_.at(x, y) >= CHAMBER) {
-          sides.push_back(grid_.at(x, y) - CHAMBER);
+          sides.push_back(grid_.chamberOf(grid_.at(x, y)));
           break;
         }
       }
@@ -5018,6 +6829,29 @@ std::pair<SlotCheckResult, json> Checker::run() {
   out["edges"] = std::move(edgesOut);
   out["wires"] = std::move(wiresOut);
   out["verdict"] = result.verdict;
+  auto mergedOut = json::array();
+  for (const auto& [gone, kept] : dropped_) {
+    const auto& edge = graph_.edges[gone];
+    mergedOut.push_back(
+        {{"name", edge.name},
+         {"into", graph_.edges[kept].name},
+         {"ends", edge.ends},
+         {"length", edge.length},
+         {"line", json::array({json::array({edge.from[0], edge.from[1]}),
+                               json::array({edge.to[0], edge.to[1]})})}});
+  }
+  out["mergedGates"] = std::move(mergedOut);
+  out["rejectedFans"] = rejectedFans_;
+  out["chordLines"] = chordLines_;
+  {
+    json joinedOut = json::object();
+    for (std::size_t c = 0; c < alias_.size(); ++c) {
+      if (alias_[c] != static_cast<std::int64_t>(c)) {
+        joinedOut[std::to_string(c)] = alias_[c];
+      }
+    }
+    out["chamberAlias"] = std::move(joinedOut);
+  }
   out["crossSlots"] = {{"reach", placer.reach},
                        {"along", placer.along},
                        {"edges", std::move(slotsOut)}};
@@ -5086,6 +6920,17 @@ std::pair<SlotCheckResult, json> Checker::run() {
   out.slotPinCells = graph.value("slotPinCells", out.slotPinCells);
   out.escapeStraight = graph.value("escapeStraight", out.escapeStraight);
   out.escapeStubMargin = graph.value("escapeStubMargin", out.escapeStubMargin);
+  out.escapeRounds = graph.value("escapeRounds", out.escapeRounds);
+  out.escapeCells = graph.value("escapeCells", out.escapeCells);
+  out.mergeFans = graph.value("mergeFans", out.mergeFans);
+  out.launcherEscapeCells =
+      graph.value("launcherEscapeCells", out.launcherEscapeCells);
+  out.escapeTouch = graph.value("escapeTouch", out.escapeTouch);
+  out.chords = graph.value("chords", out.chords);
+  out.chordsRouting = graph.value("chordsRouting", out.chordsRouting);
+  out.slotRoom = graph.value("slotRoom", out.slotRoom);
+  out.escapeTouchRouting =
+      graph.value("escapeTouchRouting", out.escapeTouchRouting);
   out.wallKinds = graph.at("wallKinds").get<std::vector<std::string>>();
   out.codes.reserve(static_cast<std::size_t>(out.width * out.height));
   const auto& raster = graph.at("raster");
@@ -5139,6 +6984,7 @@ std::pair<SlotCheckResult, json> Checker::run() {
         one.ends = edge.at("ends").get<std::vector<std::string>>();
       }
       one.mouth = truthy(edge, "mouth");
+      one.fixed = truthy(edge, "fixed");
       one.length = edge.at("length").get<double>();
       if (edge.contains("sides")) {
         one.sides =
@@ -5181,13 +7027,59 @@ std::pair<SlotCheckResult, json> Checker::run() {
   return out;
 }
 
+/// The check with its escape rounds (`SlotGraph::escapeRounds`): while a
+/// round is SAT and the ways out of the slots its wires took narrow a gate
+/// past its load, the gate takes the capacity left to it (`fixed`) and the
+/// check runs again. A gate still over after the last round makes the check
+/// UNSAT; its wires are crowded.
+template <typename Run>
+std::pair<SlotCheckResult, json> withEscapeRounds(SlotGraph graph, Run&& run) {
+  auto checked = run(graph);
+  for (std::int64_t round = 0;
+       graph.escapeRounds > 0 && checked.first.verdict == "SAT" &&
+       !checked.first.escapeCaps.empty();
+       ++round) {
+    auto& result = checked.first;
+    if (round == graph.escapeRounds) {
+      // Rounds spent while ways out still narrow gates: the gates whose load
+      // passes what is left make the check UNSAT.
+      for (const auto& name : result.escapeOver) {
+        result.verdict = "UNSAT";
+        result.over.push_back(
+            std::format("{} escape {}", name, result.escapeCaps[name]));
+        for (const auto& wire : result.escapeThrough[name]) {
+          if (std::ranges::find(result.crowded, wire) == result.crowded.end()) {
+            result.crowded.push_back(wire);
+          }
+        }
+      }
+      break;
+    }
+    for (auto& edge : graph.edges) {
+      if (const auto found = result.escapeCaps.find(edge.name);
+          found != result.escapeCaps.end()) {
+        if (edge.capacityBefore < 0) {
+          edge.capacityBefore = result.escapeBefore[edge.name];
+        }
+        edge.capacity = found->second;
+        edge.escapeShare = result.escapeShares[edge.name];
+        edge.fixed = true;
+      }
+    }
+    checked = run(graph);
+  }
+  return checked;
+}
+
 /// The check on a graph given as JSON, with the graph for the page.
 std::pair<SlotCheckResult, json> judge(const std::string_view graph) {
   try {
     const auto parsed = json::parse(graph);
     const auto typed = graphOf(parsed);
     useSettings(typed);
-    return Checker(typed, &parsed).run();
+    return withEscapeRounds(typed, [&](const SlotGraph& round) {
+      return Checker(round, &parsed).run();
+    });
   } catch (const json::exception& error) {
     throw std::invalid_argument(std::format(
         "slot check: the graph is no capacity graph: {}", error.what()));
@@ -5204,7 +7096,11 @@ SlotCheckResult slotCheck(const std::string_view graph) {
 
 SlotCheckResult slotCheck(const SlotGraph& graph) {
   useSettings(graph);
-  return Checker(graph, nullptr).run().first;
+  return withEscapeRounds(graph,
+                          [](const SlotGraph& round) {
+                            return Checker(round, nullptr).run();
+                          })
+      .first;
 }
 
 SlotGraph slotGraphOf(const std::string_view graph) {

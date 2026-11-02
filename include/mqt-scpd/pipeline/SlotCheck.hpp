@@ -62,6 +62,60 @@ struct SlotGraph {
   /// clearance an escape keeps from a stub, in cells.
   std::int64_t escapeStraight = 5;
   double escapeStubMargin = 4.0;
+  /// The escape rounds (`capacity_escape_rounds`): after a SAT check, the
+  /// ways out of the crossing slots the wires took narrow the gates they
+  /// reach into, and the check runs again on the narrowed gates, at most
+  /// this many times; 0 for none.
+  std::int64_t escapeRounds = 0;
+  /// What a way out takes of a gate it reaches into, in cells, flat
+  /// (`capacity_escape_cells`); 0 measures it, L - L1 - L2.
+  double escapeCells = 0.0;
+  /// Whether the check merges the fans of gates (`capacity_merge_fans`):
+  /// gates on one obstacle within two cells of each other at one end and on
+  /// one obstacle at the other, with nothing between them, are one gate,
+  /// the shortest.
+  bool mergeFans = false;
+  /// What a wire's turn out of its launcher takes of a gate that ends on
+  /// that launcher's stub and that the wire passes, in cells, flat, under
+  /// the escape rounds (`launcher_escape_cells`); 0 for none.
+  double launcherEscapeCells = 0.0;
+  /// Under the escape rounds (`capacity_escape_touch`, user, 2026-10-31):
+  /// every gate that a way out of a slot a wire took touches, inflated like
+  /// a wall, holds one wire less per such wire, once however many of its
+  /// ways out touch it; a wire that passes the gate itself counts there as
+  /// its load only.
+  bool escapeTouch = false;
+  /// Chords (`capacity_chords`, user, 2026-10-31): a line between two
+  /// corner points of a chamber on different obstacles, through the chamber
+  /// alone, parts no chambers but holds what a gate of its length holds, one
+  /// wire less per wire whose way out of a slot touches it and does not
+  /// cross it; the wires that come into the chamber on one side of it and
+  /// leave or end on the other must fit, or the check is UNSAT.
+  bool chords = false;
+  /// Under `chords` (`capacity_chords_routing`): the SAT routing prices the
+  /// chords in its way search and negotiates their overflow as it does a
+  /// gate's; off, they are counted and only judged once it is done.
+  bool chordsRouting = false;
+  /// Whether a crossing slot needs room past the crossing on both sides
+  /// (`capacity_slot_room`, user, 2026-11-01): a free cell, reached
+  /// straight from the slot's end, more than a clearance from every
+  /// feedline edge and every coupler run. A wire that crosses keeps more
+  /// than a clearance from the crossed edge once past it (the routed
+  /// benchmarks never run one nearer), so a slot whose far side has no such
+  /// cell — the closed end of a U the feedline makes round its coupler,
+  /// 45q chain 2 — takes no wire the router can lay.
+  bool slotRoom = false;
+  /// Under `escapeTouch` (`capacity_escape_touch_routing`, user,
+  /// 2026-11-01): the SAT routing counts, gate by gate, the wires whose way
+  /// out of the slot they take touches the gate and that do not pass it, as
+  /// it routes; a gate whose load and touches pass what it holds is over,
+  /// and the history of an overflow so caused grows on the touching slots
+  /// too, so that the touching wire tries another slot. The escape rounds
+  /// then leave the touches alone. Off, the escape rounds narrow a touched
+  /// gate after a SAT routing and keep it narrowed, which shuts out the
+  /// wire that must pass and never moves the one that touches it (17q chain
+  /// 1: 29 at f7 14 above 31's launcher shut 31's gate g78).
+  bool escapeTouchRouting = false;
   /// The order rule of a local check (`ringOrder`): a wire with a place in
   /// the ring (`ring`, by name, of `ringSize` places) passes a gate whose two
   /// ends lie on wires of the ring (their stub, lead or pad) only when it lies
@@ -115,7 +169,9 @@ struct SlotGraph {
   /// The cells of the port runs' slots.
   std::vector<std::array<std::int64_t, 2>> portSlots;
 
-  /// A port run or a feedline edge, by its middle line.
+  /// A port run or a feedline edge, by its middle line; under `slotRoom`
+  /// also the line a terminal edge is drawn on (kind `terminal`), which is
+  /// no wall.
   struct Stroke {
     std::string name;
     std::string kind;
@@ -145,6 +201,13 @@ struct SlotGraph {
     double length = 0.0;
     /// The chambers on the two sides of the line, when the graph knows them.
     std::optional<std::array<std::vector<std::int64_t>, 2>> sides;
+    /// Whether `capacity` is final: the check takes it as it is, with no
+    /// margin and no passage rule (an escape round narrowed the gate).
+    bool fixed = false;
+    /// Under escape rounds: the wires the ways out of the slots take of the
+    /// gate, and the capacity the check gave it before; for the page.
+    double escapeShare = 0.0;
+    std::int64_t capacityBefore = -1;
     bool operator==(const Edge&) const = default;
   };
   std::vector<Edge> edges;
@@ -193,9 +256,28 @@ struct SlotCheckResult {
   /// The wires whose way passes an edge or a self-bottleneck that is over,
   /// in the order they were routed.
   std::vector<std::string> crowded;
+  /// Every chord in `over` (`capacity_chords`), by its name there: the walls
+  /// its two corners lie on and the middle of its line, which a chord has
+  /// no edge of the graph to name (45q, 2026-10-31: the global SAT search
+  /// found no chain end for a chord over and never moved one).
+  struct ChordOver {
+    std::vector<std::string> ends;
+    std::array<double, 2> middle{};
+  };
+  std::map<std::string, ChordOver> chordsOver;
   /// The crossing slots the check placed across each feedline edge, by the
   /// edge's name.
   std::map<std::string, std::size_t> slots;
+  /// Under escape rounds, after a SAT round: every gate the ways out of the
+  /// slots the wires took narrow below the capacity the round gave it, by
+  /// name, with the capacity left to it, the share the ways out take, the
+  /// capacity before and the wires through it; `escapeOver` names those
+  /// whose load passes what is left. Empty otherwise.
+  std::map<std::string, std::int64_t> escapeCaps;
+  std::map<std::string, double> escapeShares;
+  std::map<std::string, std::int64_t> escapeBefore;
+  std::map<std::string, std::vector<std::string>> escapeThrough;
+  std::vector<std::string> escapeOver;
   /// The capacity graph as the check saw it, as JSON in the form of
   /// `final-capacity-graph.json`: the slot edges in place of the stretches,
   /// a self-bottleneck edge (`S …`) per line that limits a group of slots,

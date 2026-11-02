@@ -977,6 +977,33 @@ std::vector<Bottleneck> cdtGates(const std::uint32_t width,
     }
     return a < b;
   };
+  // The stretch of a split wall each candidate's ends lie on: per end the
+  // nearest split point of the first wall at it that has any (0 for none).
+  const auto stretchOf = [&](const CDT::VertInd v) -> std::uint32_t {
+    const auto& p = at(v);
+    for (std::uint8_t i = 0; i < pointWalls[v].count; ++i) {
+      const auto& splits = wallOf(pointWalls[v].of[i]).splits;
+      if (splits.empty()) {
+        continue;
+      }
+      std::uint32_t best = 0;
+      double distance = std::numeric_limits<double>::infinity();
+      for (std::uint32_t k = 0; k < splits.size(); ++k) {
+        const auto d = std::hypot(splits[k][0] - p.x, splits[k][1] - p.y);
+        if (d < distance) {
+          distance = d;
+          best = k;
+        }
+      }
+      return best + 1;
+    }
+    return 0;
+  };
+  std::vector<std::uint64_t> region(candidates.size(), 0);
+  for (std::size_t c = 0; c < candidates.size(); ++c) {
+    region[c] = (static_cast<std::uint64_t>(stretchOf(candidates[c].a)) << 32U) |
+                stretchOf(candidates[c].b);
+  }
   std::vector<std::vector<std::uint32_t>> neighbours(candidates.size());
   for (const auto& slots : onTriangle) {
     for (std::size_t i = 0; i < 3; ++i) {
@@ -985,7 +1012,7 @@ std::vector<Bottleneck> cdtGates(const std::uint32_t width,
         const auto b = slots[j];
         if (i == j || a == std::numeric_limits<std::uint32_t>::max() ||
             b == std::numeric_limits<std::uint32_t>::max() ||
-            candidates[a].pair != candidates[b].pair) {
+            candidates[a].pair != candidates[b].pair || region[a] != region[b]) {
           continue;
         }
         // Two candidates of one channel are neighbours unless the third edge
@@ -1028,6 +1055,7 @@ std::vector<Bottleneck> cdtGates(const std::uint32_t width,
   std::vector<std::uint32_t> gates;
   std::size_t contacts = 0;
   constexpr double NARROWEST = 3.0;
+  constexpr double TOUCH = 2.0;
   for (std::size_t from = 0; from < order.size();) {
     const auto cap = candidates[order[from]].cap;
     auto to = from;
@@ -1044,18 +1072,40 @@ std::vector<Bottleneck> cdtGates(const std::uint32_t width,
         }
       }
     }
-    for (auto k = from; k < to; ++k) {
-      const auto e = order[k];
-      if (sets.least[sets.find(e)] != e) {
-        continue;
-      }
-      if (cap == 0) {
+    if (cap == 0) {
+      // A run of no wire is closed by its narrowest candidate that a contact
+      // can be. One narrower than NARROWEST is where two walls almost touch;
+      // a run narrower there and wider elsewhere is still a channel no wire
+      // passes, and with its narrowest dropped it stayed open. A run that is
+      // narrower than NARROWEST throughout keeps no gate.
+      std::vector<std::uint32_t> contactOf(candidates.size(),
+                                           std::numeric_limits<std::uint32_t>::max());
+      for (auto k = from; k < to; ++k) {
+        const auto e = order[k];
         if (candidates[e].width < NARROWEST) {
           continue;
         }
-        ++contacts;
+        auto& best = contactOf[sets.find(e)];
+        if (best == std::numeric_limits<std::uint32_t>::max() || narrower(e, best)) {
+          best = e;
+        }
       }
-      gates.push_back(e);
+      for (auto k = from; k < to; ++k) {
+        const auto e = order[k];
+        // A run whose narrowest is narrower than TOUCH is where two walls
+        // touch: no gate, as before.
+        if (contactOf[sets.find(e)] == e && candidates[sets.least[sets.find(e)]].width >= TOUCH) {
+          ++contacts;
+          gates.push_back(e);
+        }
+      }
+    } else {
+      for (auto k = from; k < to; ++k) {
+        const auto e = order[k];
+        if (sets.least[sets.find(e)] == e) {
+          gates.push_back(e);
+        }
+      }
     }
     from = to;
   }

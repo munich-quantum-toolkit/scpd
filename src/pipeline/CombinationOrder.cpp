@@ -19,6 +19,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <regex>
 #include <set>
 #include <string>
 #include <tuple>
@@ -122,6 +123,142 @@ nextCombinationRound(std::vector<FailedCombination> failed,
     return round;
   }
   return std::nullopt;
+}
+
+std::vector<ConflictPair> conflictPairs(const std::vector<OverGate>& gates,
+                                        const FeedlineMap& chip) {
+  static const std::regex feedline(R"(^(f\d+)(?: at its (?:coupler|launcher))?(?:,.*)?$)");
+  static const std::regex lead(R"(^(?:lead|pad) of ([^,]+)(?:,.*)?$)");
+  static const std::regex port(R"(^(\S+) at its (?:source|target)(?:,.*)?$)");
+  // The end nearer a waypoint of a chain, the start on a tie.
+  const auto nearer = [&](const std::uint32_t chain, const std::size_t at) {
+    const auto [start, end] = chip.ends[chain];
+    const auto toStart = at > start ? at - start : start - at;
+    const auto toEnd = at > end ? at - end : end - at;
+    return toEnd < toStart ? ChainSide::End : ChainSide::Start;
+  };
+  const auto endOfWall = [&](const std::string& name) -> std::optional<ChainEnd> {
+    std::smatch match;
+    if (std::regex_match(name, match, feedline)) {
+      const auto found = chip.feedlines.find(match[1].str());
+      if (found == chip.feedlines.end() || found->second.chain >= chip.ends.size()) {
+        return std::nullopt;
+      }
+      const auto& edge = found->second;
+      if (edge.terminal) {
+        return ChainEnd{.chain = edge.chain,
+                        .side = edge.from == 0 ? ChainSide::Start : ChainSide::End};
+      }
+      return ChainEnd{.chain = edge.chain,
+                      .side = edge.from < chip.size[edge.chain] / 2 ? ChainSide::Start
+                                                                    : ChainSide::End};
+    }
+    if (std::regex_match(name, match, lead) || std::regex_match(name, match, port)) {
+      const auto found = chip.resonators.find(match[1].str());
+      if (found == chip.resonators.end() || found->second.first >= chip.ends.size()) {
+        return std::nullopt;
+      }
+      return ChainEnd{.chain = found->second.first,
+                      .side = nearer(found->second.first, found->second.second)};
+    }
+    return std::nullopt;
+  };
+  // The end coupler of another chain than `chain` whose pad centre lies
+  // nearest `middle`.
+  const auto partnerOf = [&](const std::uint32_t chain,
+                             const std::array<double, 2>& middle) -> std::optional<ChainEnd> {
+    std::optional<ChainEnd> best;
+    double distance = std::numeric_limits<double>::infinity();
+    for (std::uint32_t other = 0; other < chip.centres.size(); ++other) {
+      if (other == chain) {
+        continue;
+      }
+      for (const auto side : {ChainSide::Start, ChainSide::End}) {
+        const auto& centre = chip.centres[other][side == ChainSide::Start ? 0 : 1];
+        const auto d = std::hypot(centre[0] - middle[0], centre[1] - middle[1]);
+        if (d < distance) {
+          distance = d;
+          best = ChainEnd{.chain = other, .side = side};
+        }
+      }
+    }
+    return best;
+  };
+  std::vector<ConflictPair> pairs;
+  std::set<std::pair<ChainEnd, ChainEnd>> seen;
+  for (const auto& gate : gates) {
+    std::vector<ChainEnd> named;
+    for (const auto& name : gate.ends) {
+      if (const auto end = endOfWall(name)) {
+        named.push_back(*end);
+      }
+    }
+    if (named.empty()) {
+      continue;
+    }
+    auto one = named.front();
+    std::optional<ChainEnd> two;
+    for (const auto& end : named) {
+      if (end.chain != one.chain) {
+        two = end;
+        break;
+      }
+    }
+    if (!two.has_value()) {
+      two = partnerOf(one.chain, gate.middle);
+    }
+    if (!two.has_value()) {
+      continue;
+    }
+    if (two->chain < one.chain) {
+      std::swap(one, *two);
+    }
+    if (seen.insert({one, *two}).second) {
+      pairs.push_back({.first = one, .second = *two, .gate = gate.name});
+    }
+  }
+  return pairs;
+}
+
+std::vector<Combination> pairRoundPicks(const Combination& base, const std::uint32_t a,
+                                        const std::vector<std::size_t>& statesA,
+                                        const std::uint32_t b,
+                                        const std::vector<std::size_t>& statesB,
+                                        const std::set<Combination>& tried) {
+  std::vector<Combination> picks;
+  const auto add = [&](Combination pick) {
+    if (!tried.contains(pick) &&
+        std::ranges::find(picks, pick) == picks.end()) {
+      picks.push_back(std::move(pick));
+    }
+  };
+  for (const auto state : statesA) {
+    auto pick = base;
+    pick[a] = state;
+    add(std::move(pick));
+  }
+  for (const auto state : statesB) {
+    auto pick = base;
+    pick[b] = state;
+    add(std::move(pick));
+  }
+  std::vector<std::pair<std::size_t, std::size_t>> ranks;
+  for (std::size_t i = 0; i < statesA.size(); ++i) {
+    for (std::size_t j = 0; j < statesB.size(); ++j) {
+      ranks.emplace_back(i, j);
+    }
+  }
+  std::ranges::stable_sort(ranks, [](const auto& x, const auto& y) {
+    return x.first + x.second != y.first + y.second ? x.first + x.second < y.first + y.second
+                                                    : x.first < y.first;
+  });
+  for (const auto& [i, j] : ranks) {
+    auto pick = base;
+    pick[a] = statesA[i];
+    pick[b] = statesB[j];
+    add(std::move(pick));
+  }
+  return picks;
 }
 
 } // namespace mqt::scpd::pipeline

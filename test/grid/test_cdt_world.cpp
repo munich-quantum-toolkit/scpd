@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -719,6 +720,268 @@ TEST(CdtWorld, TheGatesAreThoseOfCdtGatesOnTheWholeRaster) {
   std::printf("mixed scene: %zu gates of cdtGates, %zu of the world, %zu matched\n",
               theirs.size(), mine.size(), found);
   EXPECT_GE(static_cast<double>(found), 0.8 * static_cast<double>(theirs.size()));
+}
+
+/// A crop of a pass of the router (17q, a feedline leaving the pad it
+/// starts at): the static walls in the crop, a label per cell, and the
+/// objects of the pass that reach into it.
+struct Crop {
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  CdtGateOptions options;
+  std::vector<CdtWall> statics;
+  std::vector<std::uint8_t> cuts;
+  BitGrid mask;
+  std::vector<std::uint32_t> owner;
+  std::vector<std::string> names;
+  std::vector<CdtObject> objects;
+};
+
+Crop cropOf(const std::string& path) {
+  std::ifstream in(path);
+  if (!in) {
+    throw std::runtime_error("cannot read " + path);
+  }
+  Crop c;
+  std::string word;
+  int version = 0;
+  in >> word >> version >> c.width >> c.height >> c.options.clearance >> c.options.widest >>
+      c.options.margin >> c.options.marginFrom >> c.options.simplify >> c.options.footReach;
+  c.options.canonical = true;
+  std::size_t n = 0;
+  in >> word >> n;
+  for (std::size_t k = 0; k < n; ++k) {
+    int fixed = 0;
+    int target = 0;
+    int cut = 0;
+    CdtWall wall;
+    in >> wall.group >> fixed >> target >> cut;
+    wall.fixed = fixed != 0;
+    wall.target = target != 0;
+    c.statics.push_back(wall);
+    c.cuts.push_back(static_cast<std::uint8_t>(cut));
+  }
+  c.mask = BitGrid(c.width, c.height);
+  c.owner.assign(static_cast<std::size_t>(c.width) * c.height, FREE);
+  in >> word;
+  for (std::uint32_t y = 0; y < c.height; ++y) {
+    std::uint32_t x = 0;
+    while (x < c.width) {
+      long label = 0;
+      std::uint32_t run = 0;
+      in >> label >> run;
+      for (std::uint32_t k = 0; k < run; ++k, ++x) {
+        if (label >= 0) {
+          const auto at = (static_cast<std::size_t>(y) * c.width) + x;
+          c.mask.set(at);
+          c.owner[at] = static_cast<std::uint32_t>(label);
+        }
+      }
+    }
+  }
+  in >> word >> n;
+  for (std::size_t k = 0; k < n; ++k) {
+    CdtObject object;
+    std::string name;
+    std::size_t walls = 0;
+    std::size_t cells = 0;
+    in >> word >> name >> object.key >> walls >> cells;
+    for (std::size_t w = 0; w < walls; ++w) {
+      int fixed = 0;
+      int target = 0;
+      int cut = 0;
+      CdtWall wall;
+      in >> wall.group >> fixed >> target >> cut;
+      wall.fixed = fixed != 0;
+      wall.target = target != 0;
+      object.walls.push_back(wall);
+      object.cuts.push_back(static_cast<std::uint8_t>(cut));
+    }
+    for (std::size_t q = 0; q < cells; ++q) {
+      std::size_t x = 0;
+      std::size_t y = 0;
+      std::uint32_t wall = 0;
+      in >> x >> y >> wall;
+      object.cells.push_back((y * c.width) + x);
+      object.wallOf.push_back(wall);
+    }
+    c.names.push_back(name);
+    c.objects.push_back(std::move(object));
+  }
+  return c;
+}
+
+/// A crop as one raster for `cdtGates`: every wall of an object a label of
+/// its own, its group the object's, and the name of each label's object
+/// ("static" for the statics).
+struct CropRaster {
+  BitGrid mask;
+  std::vector<std::uint32_t> owner;
+  std::vector<CdtWall> walls;
+  std::vector<std::string> nameOf;
+
+  explicit CropRaster(const Crop& crop)
+      : mask(crop.mask), owner(crop.owner), walls(crop.statics),
+        nameOf(crop.statics.size(), "static") {
+    for (std::size_t o = 0; o < crop.objects.size(); ++o) {
+      const auto& object = crop.objects[o];
+      const auto first = static_cast<std::uint32_t>(walls.size());
+      for (std::size_t k = 0; k < object.walls.size(); ++k) {
+        auto wall = object.walls[k];
+        wall.group = first + (wall.group < object.walls.size() ? wall.group
+                                                               : static_cast<std::uint32_t>(k));
+        walls.push_back(wall);
+        nameOf.push_back(crop.names[o]);
+      }
+      for (std::size_t q = 0; q < object.cells.size(); ++q) {
+        mask.set(object.cells[q]);
+        owner[object.cells[q]] = first + object.wallOf[q];
+      }
+    }
+  }
+  /// The name of the object a gate cell lies on, the label for a static.
+  [[nodiscard]] std::string at(const std::size_t cell) const {
+    if (!mask.test(cell)) {
+      return "";
+    }
+    return owner[cell] < crop_statics ? "static" + std::to_string(owner[cell]) : nameOf[owner[cell]];
+  }
+  std::uint32_t crop_statics = 0;
+};
+
+/// A corridor of one wire between two walls, closed at the bottom where the
+/// left wall turns to meet the right one and open at the top: the left wall
+/// A (x 30 to 33, its foot y 20 to 23 reaching x 48) and the right wall B
+/// (x 45 to 48), both y 20 to 110, a border round them.
+struct Corridor {
+  Raster r{120, 140};
+  std::uint32_t border = 0;
+  std::uint32_t a = 0;
+  std::uint32_t b = 0;
+  explicit Corridor(std::vector<std::array<double, 2>> splits) {
+    border = r.wall({.group = 0, .fixed = true});
+    a = r.wall({.group = 1, .fixed = false});
+    b = r.wall({.group = 2, .fixed = false, .target = false, .splits = std::move(splits)});
+    for (std::uint32_t y = 0; y < r.height; ++y) {
+      for (std::uint32_t x = 0; x < r.width; ++x) {
+        if (x == 0 || y == 0 || x == r.width - 1 || y == r.height - 1) {
+          r.cell(x, y, border);
+        }
+      }
+    }
+    r.rect(a, 30, 20, 33, 110);
+    r.rect(a, 34, 20, 44, 23);
+    r.rect(b, 45, 20, 48, 110);
+  }
+  /// The gates between A and B, by the labels of their two cells.
+  [[nodiscard]] std::vector<Bottleneck> between(const std::vector<Bottleneck>& gates) const {
+    std::vector<Bottleneck> out;
+    for (const auto& gate : gates) {
+      const auto p = r.owner[gate.first];
+      const auto q = r.owner[gate.second];
+      if ((p == a && q == b) || (p == b && q == a)) {
+        out.push_back(gate);
+      }
+    }
+    return out;
+  }
+  [[nodiscard]] double yOf(const Bottleneck& gate) const {
+    return (static_cast<double>(gate.first / r.width) + static_cast<double>(gate.second / r.width)) / 2.0;
+  }
+};
+
+CdtGateOptions corridorOptions() {
+  return {.clearance = 6.0, .widest = 6, .margin = 1.06, .marginFrom = 3, .canonical = true};
+}
+
+std::vector<Bottleneck> corridorWorldGates(const Corridor& c) {
+  const auto [mask, owner] = c.r.without({c.a, c.b});
+  CdtWorld world(c.r.width, c.r.height, mask, owner, c.r.walls, 0, corridorOptions());
+  const std::array la{c.a};
+  const std::array lb{c.b};
+  const std::array ids{world.add(cdtObjectOf(11, c.r.mask, c.r.owner, c.r.walls, la)),
+                       world.add(cdtObjectOf(12, c.r.mask, c.r.owner, c.r.walls, lb))};
+  const auto state = world.fromScratch(ids);
+  return world.result(*state).gates;
+}
+
+TEST(CdtWorld, AChannelWithoutCrossingPointsKeepsItsGatesAtItsNarrowest) {
+  // Without crossing points the corridor is one channel: its gates stand at
+  // its narrowest, at the foot where A meets B, none near its open top.
+  const Corridor c({});
+  for (const auto& gates :
+       {c.between(cdtGates(c.r.width, c.r.height, c.r.mask, c.r.owner, c.r.walls, 0,
+                           corridorOptions())),
+        c.between(corridorWorldGates(c))}) {
+    EXPECT_FALSE(gates.empty());
+    EXPECT_TRUE(std::ranges::none_of(gates, [&](const Bottleneck& g) { return c.yOf(g) > 40.0; }));
+  }
+}
+
+TEST(CdtWorld, AChannelIsSplitWhereItsWallCanBeCrossed) {
+  // B can be crossed at y 40, 60, 80 and 100: a wire may leave the corridor
+  // through B at each, so the corridor keeps a gate in every stretch between
+  // them, the one near its open top included, as in `cdtGates`.
+  const Corridor c({{46.5, 40.0}, {46.5, 60.0}, {46.5, 80.0}, {46.5, 100.0}});
+  for (const auto& gates :
+       {c.between(cdtGates(c.r.width, c.r.height, c.r.mask, c.r.owner, c.r.walls, 0,
+                           corridorOptions())),
+        c.between(corridorWorldGates(c))}) {
+    EXPECT_GE(gates.size(), 4U);
+    EXPECT_TRUE(std::ranges::any_of(gates, [&](const Bottleneck& g) { return c.yOf(g) > 90.0; }))
+        << "no gate near the open top";
+  }
+}
+
+TEST(CdtWorld, AChannelTooNarrowForAWireIsClosedByAContact) {
+  // f11 runs a few cells beside the artwork of Qb1 (label 1): the channel
+  // between them narrows to two cells, no wire passes it. Its candidates are
+  // all of no wire, and the narrowest is narrower than a contact; the run is
+  // closed still, by its narrowest candidate wide enough to be one, in
+  // `cdtGates` and in the world alike. (The run's narrowest alone, dropped,
+  // left the channel open: a chamber a wire was sent through.)
+  const auto crop = cropOf(std::string(MQT_SCPD_FIXTURE_DIR) + "/cdt/feedline-beside-artwork.crop");
+  CropRaster raster(crop);
+  raster.crop_statics = static_cast<std::uint32_t>(crop.statics.size());
+  // The channel, in the crop's cells: x 40 to 56, y 28 to 62.
+  const auto inChannel = [&](const Bottleneck& gate) {
+    const auto x = (static_cast<double>(gate.first % crop.width) +
+                    static_cast<double>(gate.second % crop.width)) / 2.0;
+    const auto y = (static_cast<double>(gate.first / crop.width) +
+                    static_cast<double>(gate.second / crop.width)) / 2.0;
+    return x >= 40 && x <= 56 && y >= 28 && y <= 62;
+  };
+  const auto feedlineAndArtwork = [&](const Bottleneck& gate) {
+    const auto a = raster.at(gate.first);
+    const auto b = raster.at(gate.second);
+    return (a == "f11" && b == "static1") || (a == "static1" && b == "f11");
+  };
+  const auto length = [&](const Bottleneck& gate) {
+    return std::hypot(static_cast<double>(gate.first % crop.width) -
+                          static_cast<double>(gate.second % crop.width),
+                      static_cast<double>(gate.first / crop.width) -
+                          static_cast<double>(gate.second / crop.width));
+  };
+  const auto theirs = cdtGates(crop.width, crop.height, raster.mask, raster.owner, raster.walls, 0,
+                               crop.options);
+  EXPECT_TRUE(std::ranges::any_of(theirs, [&](const Bottleneck& gate) {
+    return feedlineAndArtwork(gate) && inChannel(gate) && length(gate) < crop.options.clearance;
+  })) << "cdtGates leaves the channel open";
+
+  CdtWorld world(crop.width, crop.height, crop.mask, crop.owner, crop.statics, 0, crop.options,
+                 crop.cuts, 8);
+  std::vector<std::uint32_t> ids;
+  for (const auto& object : crop.objects) {
+    ids.push_back(world.add(object));
+  }
+  const auto state = world.fromScratch(ids);
+  const auto& result = world.result(*state);
+  bool closed = false;
+  for (std::size_t g = 0; g < result.gates.size(); ++g) {
+    closed = closed || (feedlineAndArtwork(result.gates[g]) && inChannel(result.gates[g]) &&
+                        result.capacity[g] == 0);
+  }
+  EXPECT_TRUE(closed) << "the world leaves the channel open";
 }
 
 // ---------------------------------------------------------------- touching

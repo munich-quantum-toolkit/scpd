@@ -59,6 +59,16 @@ inline constexpr uint64_t TRELLIS_UNREACHABLE =
 /// until it has seen every run of choices, or until `maxAccepts` stops it.
 /// The answer is therefore the same on every machine and at every speed.
 /// `progress` reports how far the search has come while it runs.
+///
+/// **Dives** (`diveEvery`). On a plateau of near-equal prefixes whose later
+/// steps cost more than their bound, best-first order takes every shallow
+/// prefix before any deep one and prices no complete run, so nothing is
+/// pruned (57q chain 6, 2026-11-01: 4000 steps, no prefix past layer 4). A
+/// dive then takes the cheapest prefix down depth-first to the end of the
+/// chain. It prices steps as the search does, on the same nodes, so no step
+/// is priced twice, and the run it completes is the cheapest run so far that
+/// every later step must beat. Dives never change what the search can prove:
+/// every entry of the open list still carries a lower bound.
 
 struct ChainSolution;
 
@@ -112,10 +122,26 @@ struct ChainProblem {
   /// answer. `found` is then not called for the run that step completes.
   mutable bool stepTested = true;
 
+  /// The optimality gap (`chain_optimality_gap`): the search stops on the
+  /// cheapest complete run priced so far as soon as it costs at most
+  /// `1 + gap` times the least bound still open, the bound every run left
+  /// to rule out stands on — the run is then within that factor of the
+  /// optimum, and `ChainSolution::withinGap` says so. 0 for the exact
+  /// search. Not with an `accept`.
+  double gap = 0.0;
+
   /// Set by `step` to end the search: the search drops the answer of the
   /// step that set it and returns at once with the runs it has found so
   /// far, `optimal` false and `ChainSolution::stopped` set.
   mutable bool stop = false;
+
+  /// Set by `step` when `bound` has risen since the search began — when the
+  /// caller learnt that a pair of choices cannot stand together under any
+  /// prefix. The search then works out its heuristic anew, so that every
+  /// prefix that leads into the pair is weighed at its new bound and not
+  /// stepped into the pair once per prefix (45q_dense chain 4, 2026-10-31).
+  /// A bound may only rise to what `step` answers under every prefix.
+  mutable bool boundRose = false;
 
   /// The real price of a step of the search from the back
   /// (`solveChainBidirectional`): the step out of choice `from` into
@@ -161,6 +187,39 @@ struct ChainProblem {
   /// nothing, zero for no limit. `ChainSolution::outOfTrials` says when it
   /// struck.
   uint32_t maxAccepts = 0;
+
+  /// How many steps the search prices best-first before it dives, and how
+  /// many a dive may price; 0 never dives. A dive starts from the first layer
+  /// and goes down depth-first, at each prefix trying its children in order
+  /// of `f` and pricing each as the search would; a refused child sends it to
+  /// the next, and a prefix whose children are spent sends it back up. It
+  /// ends on the first complete run it prices that is cheaper than the
+  /// cheapest so far, or when its steps are spent; then best-first search
+  /// goes on, with that run to beat. Steps priced in a dive count in
+  /// `ChainSolution::routed`. Not with an `accept`;
+  /// `solveChainBidirectional` with dives is `solveChainAStar`.
+  uint32_t diveEvery = 0;
+
+  /// How many steps one dive may price; 0 for `diveEvery`. More than
+  /// `diveEvery` makes the search dive more than it searches best-first.
+  uint32_t diveSteps = 0;
+
+  /// How many children of one prefix the first dive tries before it backs
+  /// up; every later dive tries twice as many as the one before. 0 tries
+  /// every child.
+  uint32_t diveWidth = 0;
+
+  /// How many more steps the search may price once it has priced a complete
+  /// run, before it stops on the cheapest run so far with
+  /// `ChainSolution::outOfSteps` set; 0 for no limit. Not with an `accept`.
+  uint32_t stepsAfterRun = 0;
+
+  /// Called at the end of every dive: what the search has found so far, the
+  /// steps the dive priced and the deepest layer it stood on. It reports and
+  /// decides nothing. Optional.
+  std::function<void(const ChainSolution& sofar, uint32_t steps,
+                     uint32_t deepest)>
+      dived;
 
   /// Called after every `progressEvery` priced steps with what the search
   /// has found so far and how many entries its open list holds. It reports
@@ -222,6 +281,24 @@ struct ChainSolution {
 
   /// Whether `step` ended the search (`ChainProblem::stop`).
   bool stopped = false;
+
+  /// Whether the search stopped on `ChainProblem::gap`: `chosen` costs at
+  /// most `1 + gap` times the least bound still open, so it is within that
+  /// factor of the optimum, unproved beyond it.
+  bool withinGap = false;
+
+  /// How many dives the search took (`ChainProblem::diveEvery`), and how many
+  /// of `routed` they priced.
+  uint32_t dives = 0;
+  uint32_t routedInDives = 0;
+
+  /// `routed` at the moment the first complete run was priced, by a dive or
+  /// not; UINT32_MAX when none was.
+  uint32_t firstRun = UINT32_MAX;
+
+  /// Whether `ChainProblem::stepsAfterRun` stopped the search: `chosen` is
+  /// the cheapest run priced so far, every step of it tested, unproved.
+  bool outOfSteps = false;
 
   /// The search from the back (`solveChainBidirectional`): how many of its
   /// steps were really priced, how many suffixes it grew children from, how

@@ -629,6 +629,158 @@ table FinalParams {
   /// How many options of a coupler's lattice reserve the chain search opens
   /// at a time, at the wall; 0 for all of them at once with the jogs.
   coupler_lattice_reserve_step: uint32 = 0;
+  /// The snap options of the coupler insertion, the pitch of their grid in
+  /// layout units (e.g. 50); 0 for none. Every plain option without a jog
+  /// is a template: the middle of its two feedline ports goes onto the
+  /// nearest grid point, then it is moved by every f of `coupler_snap_f`
+  /// along the feedline toward the port away from the resonator's stub and
+  /// by every r of `coupler_snap_r` across it (positive toward the
+  /// resonator), a pad along a diagonal in whole diagonal grid steps. The
+  /// lead is joined to the way where it lies nearest its tip, and the tests
+  /// of every option judge it. The snap options replace the plain ones; no
+  /// jog, copy, grid or line options are built. A coupler that no snap
+  /// option fits keeps its plain options. Needs `router_grid_snap` at the
+  /// same pitch.
+  coupler_snap_pitch: double = 0.0;
+  /// The shifts of `coupler_snap_pitch`, as comma lists of cells: f along
+  /// the feedline, r across it. Empty takes "0,20" and "0,20,-20".
+  coupler_snap_f: string;
+  coupler_snap_r: string;
+  /// How many options of each competing feedline end the pair rounds of the
+  /// global SAT search try: for a bottleneck over its capacity the two chain
+  /// ends that compete for it, each end coupler pinned to every other open
+  /// option in turn (the farthest from the bottleneck first), each chain
+  /// alone and both together. 0 for the search without pair rounds.
+  global_sat_end_options: uint32 = 16;
+  /// How much longer than the target plus `resonator_length_tolerance` the
+  /// resonator a snap option leaves may be, in layout units: the routing
+  /// draws the resonator again and takes the length back out of its way.
+  coupler_snap_length_slack: double = 0.0;
+  /// The optimality gap of the chain search, as a share (0.05 for 5 %): the
+  /// search of a chain stops on the cheapest run of options it has priced as
+  /// soon as that costs at most 1 + gap times the least lower bound still
+  /// open, so the run is within that share of the optimum. 0 for the exact
+  /// search, which proves its run the cheapest.
+  chain_optimality_gap: double = 0.0;
+  /// The escape rounds of the capacity check: after a SAT check, every way
+  /// out of a crossing slot a wire takes counts as a wall, and a gate it
+  /// narrows loses the share it covers, (L - L1 - L2) / (clearance *
+  /// margin), while every wire through it still counts one, those that
+  /// cross at the slot too; a gate that runs over gets capacity
+  /// floor(L / (clearance * margin) - that share) and the check runs again,
+  /// at most this many times. A gate still over after the last
+  /// round makes the check UNSAT. 0 turns the rounds off.
+  capacity_escape_rounds: uint32 = 0;
+  /// What a way out of a crossing slot takes of a gate it reaches into, in
+  /// cells, under `capacity_escape_rounds`: a flat share per way out, the
+  /// same for every gate it touches; 0 measures it, L - L1 - L2.
+  capacity_escape_cells: double = 0.0;
+  /// Merge the fans of gates in the capacity check: gates whose ends lie on
+  /// one obstacle within two cells of each other on one side and on one
+  /// obstacle on the other, with no crossing slot, port, port slot, wall or
+  /// other gate between them, are one gate, the shortest of them; the
+  /// chambers between them join the sides of that gate.
+  capacity_merge_fans: bool = true;
+  /// What the turn of a wire out of its launcher's straight run takes of a
+  /// gate that ends on that launcher's stub and that the wire passes, in
+  /// cells, under `capacity_escape_rounds`: a flat share, as
+  /// `capacity_escape_cells` for a way out of a slot; 0 for none.
+  launcher_escape_cells: double = 0.0;
+  /// Under `capacity_escape_rounds`: every gate that a way out of a slot a
+  /// wire took touches, inflated like a wall, holds one wire less per such
+  /// wire, once however many of its ways out touch it; a wire that passes
+  /// the gate itself counts there as its load only.
+  capacity_escape_touch: bool = false;
+  /// Chords in the capacity check: a line between two corner points of a
+  /// chamber on different obstacles, through the chamber alone, parts no
+  /// chambers but holds what a gate of its length holds, one wire less per
+  /// wire whose way out of a slot touches it and does not cross it; the
+  /// wires that come into the chamber on one side of it and leave or end on
+  /// the other must fit.
+  capacity_chords: bool = false;
+  /// Under `capacity_chords`: the SAT routing of the capacity check prices
+  /// the chords in its way search and negotiates their overflow as it does
+  /// a gate's; off, the chords are counted and only judged once the routing
+  /// is done.
+  capacity_chords_routing: bool = false;
+  /// A crossing slot needs room past the crossing on both sides: a free
+  /// cell, reachable straight from the slot's end, more than a clearance
+  /// from every feedline edge (its own too) and every coupler run. Off,
+  /// a slot needs only its rectangle and a way out free.
+  capacity_slot_room: bool = false;
+  /// Under `capacity_escape_touch`: the SAT routing of the capacity check
+  /// counts the ways out of the slots its wires take against the gates they
+  /// touch as it routes, and negotiates an overflow so caused away on the
+  /// slots as on the gate; off, the escape rounds narrow the gates after a
+  /// SAT routing and keep them narrowed.
+  capacity_escape_touch_routing: bool = false;
+  /// Under the capacity rule: a refused step whose gate over runs only
+  /// between walls of this chain's options and static walls puts those
+  /// options on a blacklist for every prefix — one option when the gate
+  /// hangs on one alone (a resonator's lead or pad against the artwork),
+  /// the pair of an edge when on its two — and a later step on them is
+  /// dropped unrouted, as on the slot blacklist.
+  chain_gate_blacklist: bool = false;
+  /// Under the capacity rule: what a gate over that hangs on options of
+  /// this chain alone costs those options, once per prefix it is over under
+  /// — one option when it hangs on one, the pair of an edge when on its
+  /// two — in the units of the chain search's prices; the search then tries
+  /// other options first but may come back to them. 0 for none.
+  chain_gate_penalty: uint32 = 0;
+  /// The plain wires that bridge an edge of a chain the search has laid
+  /// only part of must cross it as they must once the chain is whole, at its
+  /// crossing slots, and have no way when it has none. Off, such an edge is
+  /// prescribed to no wire, and they may pass round its open end.
+  capacity_prescribe_open_edges: bool = false;
+  /// Under the capacity rule: after every so many steps the chain search
+  /// prices best-first, it dives from the cheapest prefix depth-first to a
+  /// complete run, pricing at most as many steps, so that it has a run to
+  /// prune against before its budgets run out. 0 for never.
+  chain_dive_steps: uint32 = 0;
+  /// Under the capacity rule: how many more steps the chain search may
+  /// price once a run of options has joined the chain before it stops on
+  /// the cheapest run so far. 0 for no bound.
+  chain_dive_settle_steps: uint32 = 0;
+  /// Under `chain_dive_steps`: how many steps one dive may price; 0 for
+  /// `chain_dive_steps`. More makes the search dive more than it searches
+  /// best-first.
+  chain_dive_budget: uint32 = 0;
+  /// In the outer routing before the feedlines: what a cell in the halo of
+  /// a wire a relaxation let go of costs, in times the wire proximity
+  /// penalty; 1 as before. A wire relaxed past its neighbour then pays for
+  /// pressing into the room the neighbour needs about what a bend costs, and
+  /// leaves it its way back.
+  released_halo_factor: uint32 = 1;
+  /// In the outer routing before the feedlines: the run a wire let go of
+  /// arrives at its target on — as long as the straight run of a port's band
+  /// (`min_straight_length`) — is closed to the wire being drawn as a
+  /// rectangle one clearance to either side, square at its outer end, on top
+  /// of the clearance disc round the target cell. Off (the default), only the
+  /// disc, round, is closed.
+  released_arrival_box: bool = false;
+  /// Where the length-point clearance (`length_point_radius_cells`) is a
+  /// price rather than closed cells: "" (the default) nowhere — the band
+  /// closes its cells in the outer routing, its relaxation and the outer
+  /// refinement, as before; "refinement" in the outer refinement alone, the
+  /// rounds keeping the closed band; "all" in all three; "fallback" the band
+  /// stays closed and is priced only where it would leave a wire with no
+  /// way — the recovery at the end of the outer routing, which otherwise
+  /// drops the band, and still does for what the priced recovery leaves
+  /// failing — and a second search of the outer refinement for a
+  /// wire that found none with the band closed. A priced band
+  /// fails no wire: it costs `length_point_price` a cell at the band,
+  /// falling in four steps to nothing at the radius, so a wire keeps off
+  /// the place a coupler goes as far as its room lets it.
+  length_point_soft: string;
+  /// What a cell at a resonator's length-point band costs where
+  /// `length_point_soft` prices the band, in the units of the wire
+  /// proximity field (the "wire price" of the settings line); 0 prices
+  /// nothing, so the band is then simply open there.
+  length_point_price: uint32 = 0;
+  /// Where `length_point_soft` prices the band: how many ring pairs either
+  /// side of a wire have their band priced for it — 1 the pair beside it
+  /// alone, as the closed band; 2 the pair beyond it as well, and so on.
+  length_point_soft_pairs: uint32 = 1;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

@@ -784,4 +784,205 @@ TEST(CdtWorld, DISABLED_Replay) {
   }
 }
 
+// DIAG (temporary): one pass of a replay by the world and by `cdtGates`
+// (canonical) on the same raster, the gates near a point of both and how
+// many of either the other lacks, by their end walls.
+//
+// MQT_SCPD_CDT_REPLAY=<file> [MQT_SCPD_CDT_PASS=<index, default last>]
+//   [MQT_SCPD_CDT_NEAR=x,y,r] mqt-scpd-grid-test --gtest_also_run_disabled_tests
+//   --gtest_filter='CdtWorld.DISABLED_ReplayAgainstCdtGates'
+TEST(CdtWorld, DISABLED_ReplayAgainstCdtGates) {
+  const char* path = std::getenv("MQT_SCPD_CDT_REPLAY");
+  if (path == nullptr || *path == '\0') {
+    GTEST_SKIP() << "MQT_SCPD_CDT_REPLAY names no file";
+  }
+  Replay replay;
+  ASSERT_TRUE(loadReplay(path, replay));
+  ASSERT_FALSE(replay.passes.empty());
+  const auto index = std::min<std::size_t>(envOr("MQT_SCPD_CDT_PASS", static_cast<std::uint32_t>(replay.passes.size() - 1)),
+                                           replay.passes.size() - 1);
+  const auto& pass = replay.passes[index];
+  auto options = replay.options;
+  options.canonical = true;
+  CdtWorld world(replay.width, replay.height, replay.mask, replay.owner, replay.statics, 0,
+                 options, replay.cuts, 64);
+  for (const auto& object : replay.objects) {
+    (void)world.add(object);
+  }
+  const auto state = world.fromScratch(pass.ids);
+  const auto& result = world.result(*state);
+  // The raster of the pass: the statics as they are, every wall of the
+  // pass's objects a label of its own, its group the object's group.
+  BitGrid mask = replay.mask;
+  auto owner = replay.owner;
+  std::vector<CdtWall> walls = replay.statics;
+  std::vector<std::uint8_t> cuts = replay.cuts;
+  std::vector<std::string> names;
+  for (std::size_t k = 0; k < walls.size(); ++k) {
+    names.push_back(k == 0 ? "border" : "static" + std::to_string(k));
+  }
+  for (const auto id : pass.ids) {
+    const auto& object = replay.objects[id];
+    const auto first = static_cast<std::uint32_t>(walls.size());
+    for (std::size_t k = 0; k < object.walls.size(); ++k) {
+      auto wall = object.walls[k];
+      wall.group = (wall.group < object.walls.size() ? first + wall.group
+                                                               : first + static_cast<std::uint32_t>(k));
+      walls.push_back(wall);
+      cuts.push_back(object.cuts.empty() || object.cuts[k] != 0 ? 1 : 0);
+      names.push_back("o" + std::to_string(id) + "w" + std::to_string(k) +
+                      (wall.fixed ? "F" : "") + (wall.target ? "T" : ""));
+    }
+    for (std::size_t c = 0; c < object.cells.size(); ++c) {
+      mask.set(object.cells[c]);
+      owner[object.cells[c]] = first + object.wallOf[c];
+    }
+  }
+  const auto theirs = cdtGates(replay.width, replay.height, mask, owner, walls, 0, options);
+  const auto width = static_cast<std::int64_t>(replay.width);
+  const auto labelOf = [&](const std::size_t cell) {
+    return mask.test(cell) && owner[cell] < walls.size() ? owner[cell] : 0U;
+  };
+  const auto counts = [&](const Bottleneck& g) {
+    return cuts[labelOf(g.first)] != 0 || cuts[labelOf(g.second)] != 0;
+  };
+  std::vector<Bottleneck> mine;
+  for (std::size_t g = 0; g < result.gates.size(); ++g) {
+    if (result.cuts[g] != 0) {
+      mine.push_back(result.gates[g]);
+    }
+  }
+  std::vector<Bottleneck> ref;
+  for (const auto& g : theirs) {
+    if (counts(g)) {
+      ref.push_back(g);
+    }
+  }
+  const auto pairOf = [&](const Bottleneck& g) {
+    auto a = names[labelOf(g.first)];
+    auto b = names[labelOf(g.second)];
+    return a < b ? a + " · " + b : b + " · " + a;
+  };
+  std::map<std::string, int> balance;
+  for (const auto& g : ref) {
+    ++balance[pairOf(g)];
+  }
+  for (const auto& g : mine) {
+    --balance[pairOf(g)];
+  }
+  std::size_t onlyRef = 0;
+  std::size_t onlyMine = 0;
+  for (const auto& [pair, n] : balance) {
+    if (n > 0) {
+      onlyRef += static_cast<std::size_t>(n);
+    } else {
+      onlyMine += static_cast<std::size_t>(-n);
+    }
+  }
+  std::printf("pass %zu of %zu: cdtGates %zu (counting %zu), world %zu; by end walls: %zu only "
+              "cdtGates, %zu only the world\n",
+              index, replay.passes.size(), theirs.size(), ref.size(), mine.size(), onlyRef,
+              onlyMine);
+  // A crop of the pass as a test fixture: MQT_SCPD_CDT_CROP=x0,y0,x1,y1,path
+  // and MQT_SCPD_CDT_NAMES=id:name,id:name.
+  if (const char* crop = std::getenv("MQT_SCPD_CDT_CROP"); crop != nullptr && *crop != '\0') {
+    long x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    char out[1024] = {0};
+    std::sscanf(crop, "%ld,%ld,%ld,%ld,%1023s", &x0, &y0, &x1, &y1, out);
+    std::map<std::uint32_t, std::string> named;
+    if (const char* nm = std::getenv("MQT_SCPD_CDT_NAMES"); nm != nullptr) {
+      std::stringstream ss(nm);
+      std::string item;
+      while (std::getline(ss, item, ',')) {
+        const auto colon = item.find(':');
+        named[static_cast<std::uint32_t>(std::stoul(item.substr(0, colon)))] = item.substr(colon + 1);
+      }
+    }
+    std::ofstream f(out);
+    const auto cw = x1 - x0 + 1;
+    const auto ch = y1 - y0 + 1;
+    f << "cdtcrop 1\n" << cw << ' ' << ch << ' ' << options.clearance << ' ' << options.widest << ' '
+      << options.margin << ' ' << options.marginFrom << ' ' << options.simplify << ' '
+      << options.footReach << '\n';
+    f << "statics " << replay.statics.size() << '\n';
+    for (std::size_t k = 0; k < replay.statics.size(); ++k) {
+      const auto& w = replay.statics[k];
+      f << w.group << ' ' << (w.fixed ? 1 : 0) << ' ' << (w.target ? 1 : 0) << ' '
+        << static_cast<int>(replay.cuts[k]) << '\n';
+    }
+    // the static raster, a label per cell (-1 free), row runs
+    f << "raster\n";
+    for (long y = y0; y <= y1; ++y) {
+      long run = 0;
+      long last = -2;
+      for (long x = x0; x <= x1; ++x) {
+        const auto c = static_cast<std::size_t>((y * width) + x);
+        const long v = replay.mask.test(c) ? static_cast<long>(replay.owner[c]) : -1;
+        if (v != last && run > 0) {
+          f << last << ' ' << run << ' ';
+          run = 0;
+        }
+        last = v;
+        ++run;
+      }
+      f << last << ' ' << run << '\n';
+    }
+    std::vector<std::uint32_t> inside;
+    for (const auto id : pass.ids) {
+      for (const auto c : replay.objects[id].cells) {
+        const auto x = static_cast<long>(c % static_cast<std::size_t>(width));
+        const auto y = static_cast<long>(c / static_cast<std::size_t>(width));
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+          inside.push_back(id);
+          break;
+        }
+      }
+    }
+    f << "objects " << inside.size() << '\n';
+    for (const auto id : inside) {
+      const auto& o = replay.objects[id];
+      std::size_t n = 0;
+      for (const auto c : o.cells) {
+        const auto x = static_cast<long>(c % static_cast<std::size_t>(width));
+        const auto y = static_cast<long>(c / static_cast<std::size_t>(width));
+        n += (x >= x0 && x <= x1 && y >= y0 && y <= y1) ? 1 : 0;
+      }
+      f << "object " << (named.contains(id) ? named[id] : "o" + std::to_string(id)) << ' ' << o.key
+        << ' ' << o.walls.size() << ' ' << n << '\n';
+      for (std::size_t k = 0; k < o.walls.size(); ++k) {
+        f << o.walls[k].group << ' ' << (o.walls[k].fixed ? 1 : 0) << ' '
+          << (o.walls[k].target ? 1 : 0) << ' '
+          << (o.cuts.empty() || o.cuts[k] != 0 ? 1 : 0) << '\n';
+      }
+      for (std::size_t c = 0; c < o.cells.size(); ++c) {
+        const auto x = static_cast<long>(o.cells[c] % static_cast<std::size_t>(width));
+        const auto y = static_cast<long>(o.cells[c] / static_cast<std::size_t>(width));
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) {
+          f << (x - x0) << ' ' << (y - y0) << ' ' << o.wallOf[c] << '\n';
+        }
+      }
+    }
+  }
+  if (const char* near = std::getenv("MQT_SCPD_CDT_NEAR"); near != nullptr && *near != '\0') {
+    double x = 0;
+    double y = 0;
+    double r = 30;
+    std::sscanf(near, "%lf,%lf,%lf", &x, &y, &r);
+    const auto show = [&](const char* who, const std::vector<Bottleneck>& gates) {
+      for (const auto& g : gates) {
+        const auto ax = static_cast<double>(static_cast<std::int64_t>(g.first) % width);
+        const auto ay = static_cast<double>(static_cast<std::int64_t>(g.first) / width);
+        const auto bx = static_cast<double>(static_cast<std::int64_t>(g.second) % width);
+        const auto by = static_cast<double>(static_cast<std::int64_t>(g.second) / width);
+        if (std::min(std::hypot(ax - x, ay - y), std::hypot(bx - x, by - y)) <= r) {
+          std::printf("  %-8s (%4.0f,%4.0f) (%4.0f,%4.0f) len %5.1f  %s\n", who, ax, ay, bx, by,
+                      std::hypot(ax - bx, ay - by), pairOf(g).c_str());
+        }
+      }
+    };
+    show("cdtGates", ref);
+    show("world", mine);
+  }
+}
+
 } // namespace mqt::scpd::grid

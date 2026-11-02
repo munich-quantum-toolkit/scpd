@@ -1119,8 +1119,316 @@ class FinalParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 0
 
+    # The snap options of the coupler insertion, the pitch of their grid in
+    # layout units (e.g. 50); 0 for none. Every plain option without a jog
+    # is a template: the middle of its two feedline ports goes onto the
+    # nearest grid point, then it is moved by every f of `coupler_snap_f`
+    # along the feedline toward the port away from the resonator's stub and
+    # by every r of `coupler_snap_r` across it (positive toward the
+    # resonator), a pad along a diagonal in whole diagonal grid steps. The
+    # lead is joined to the way where it lies nearest its tip, and the tests
+    # of every option judge it. The snap options replace the plain ones; no
+    # jog, copy, grid or line options are built. A coupler that no snap
+    # option fits keeps its plain options. Needs `router_grid_snap` at the
+    # same pitch.
+    # FinalParams
+    def CouplerSnapPitch(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(220))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # The shifts of `coupler_snap_pitch`, as comma lists of cells: f along
+    # the feedline, r across it. Empty takes "0,20" and "0,20,-20".
+    # FinalParams
+    def CouplerSnapF(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(222))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # FinalParams
+    def CouplerSnapR(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(224))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # How many options of each competing feedline end the pair rounds of the
+    # global SAT search try: for a bottleneck over its capacity the two chain
+    # ends that compete for it, each end coupler pinned to every other open
+    # option in turn (the farthest from the bottleneck first), each chain
+    # alone and both together. 0 for the search without pair rounds.
+    # FinalParams
+    def GlobalSatEndOptions(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(226))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 16
+
+    # How much longer than the target plus `resonator_length_tolerance` the
+    # resonator a snap option leaves may be, in layout units: the routing
+    # draws the resonator again and takes the length back out of its way.
+    # FinalParams
+    def CouplerSnapLengthSlack(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(228))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # The optimality gap of the chain search, as a share (0.05 for 5 %): the
+    # search of a chain stops on the cheapest run of options it has priced as
+    # soon as that costs at most 1 + gap times the least lower bound still
+    # open, so the run is within that share of the optimum. 0 for the exact
+    # search, which proves its run the cheapest.
+    # FinalParams
+    def ChainOptimalityGap(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(230))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # The escape rounds of the capacity check: after a SAT check, every way
+    # out of a crossing slot a wire takes counts as a wall, and a gate it
+    # narrows loses the share it covers, (L - L1 - L2) / (clearance *
+    # margin), while every wire through it still counts one, those that
+    # cross at the slot too; a gate that runs over gets capacity
+    # floor(L / (clearance * margin) - that share) and the check runs again,
+    # at most this many times. A gate still over after the last
+    # round makes the check UNSAT. 0 turns the rounds off.
+    # FinalParams
+    def CapacityEscapeRounds(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(232))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # What a way out of a crossing slot takes of a gate it reaches into, in
+    # cells, under `capacity_escape_rounds`: a flat share per way out, the
+    # same for every gate it touches; 0 measures it, L - L1 - L2.
+    # FinalParams
+    def CapacityEscapeCells(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(234))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # Merge the fans of gates in the capacity check: gates whose ends lie on
+    # one obstacle within two cells of each other on one side and on one
+    # obstacle on the other, with no crossing slot, port, port slot, wall or
+    # other gate between them, are one gate, the shortest of them; the
+    # chambers between them join the sides of that gate.
+    # FinalParams
+    def CapacityMergeFans(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(236))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # What the turn of a wire out of its launcher's straight run takes of a
+    # gate that ends on that launcher's stub and that the wire passes, in
+    # cells, under `capacity_escape_rounds`: a flat share, as
+    # `capacity_escape_cells` for a way out of a slot; 0 for none.
+    # FinalParams
+    def LauncherEscapeCells(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(238))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
+        return 0.0
+
+    # Under `capacity_escape_rounds`: every gate that a way out of a slot a
+    # wire took touches, inflated like a wall, holds one wire less per such
+    # wire, once however many of its ways out touch it; a wire that passes
+    # the gate itself counts there as its load only.
+    # FinalParams
+    def CapacityEscapeTouch(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(240))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Chords in the capacity check: a line between two corner points of a
+    # chamber on different obstacles, through the chamber alone, parts no
+    # chambers but holds what a gate of its length holds, one wire less per
+    # wire whose way out of a slot touches it and does not cross it; the
+    # wires that come into the chamber on one side of it and leave or end on
+    # the other must fit.
+    # FinalParams
+    def CapacityChords(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(242))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Under `capacity_chords`: the SAT routing of the capacity check prices
+    # the chords in its way search and negotiates their overflow as it does
+    # a gate's; off, the chords are counted and only judged once the routing
+    # is done.
+    # FinalParams
+    def CapacityChordsRouting(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(244))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # A crossing slot needs room past the crossing on both sides: a free
+    # cell, reachable straight from the slot's end, more than a clearance
+    # from every feedline edge (its own too) and every coupler run. Off,
+    # a slot needs only its rectangle and a way out free.
+    # FinalParams
+    def CapacitySlotRoom(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(246))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Under `capacity_escape_touch`: the SAT routing of the capacity check
+    # counts the ways out of the slots its wires take against the gates they
+    # touch as it routes, and negotiates an overflow so caused away on the
+    # slots as on the gate; off, the escape rounds narrow the gates after a
+    # SAT routing and keep them narrowed.
+    # FinalParams
+    def CapacityEscapeTouchRouting(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(248))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Under the capacity rule: a refused step whose gate over runs only
+    # between walls of this chain's options and static walls puts those
+    # options on a blacklist for every prefix — one option when the gate
+    # hangs on one alone (a resonator's lead or pad against the artwork),
+    # the pair of an edge when on its two — and a later step on them is
+    # dropped unrouted, as on the slot blacklist.
+    # FinalParams
+    def ChainGateBlacklist(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(250))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Under the capacity rule: what a gate over that hangs on options of
+    # this chain alone costs those options, once per prefix it is over under
+    # — one option when it hangs on one, the pair of an edge when on its
+    # two — in the units of the chain search's prices; the search then tries
+    # other options first but may come back to them. 0 for none.
+    # FinalParams
+    def ChainGatePenalty(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(252))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # The plain wires that bridge an edge of a chain the search has laid
+    # only part of must cross it as they must once the chain is whole, at its
+    # crossing slots, and have no way when it has none. Off, such an edge is
+    # prescribed to no wire, and they may pass round its open end.
+    # FinalParams
+    def CapacityPrescribeOpenEdges(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(254))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Under the capacity rule: after every so many steps the chain search
+    # prices best-first, it dives from the cheapest prefix depth-first to a
+    # complete run, pricing at most as many steps, so that it has a run to
+    # prune against before its budgets run out. 0 for never.
+    # FinalParams
+    def ChainDiveSteps(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(256))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Under the capacity rule: how many more steps the chain search may
+    # price once a run of options has joined the chain before it stops on
+    # the cheapest run so far. 0 for no bound.
+    # FinalParams
+    def ChainDiveSettleSteps(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(258))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Under `chain_dive_steps`: how many steps one dive may price; 0 for
+    # `chain_dive_steps`. More makes the search dive more than it searches
+    # best-first.
+    # FinalParams
+    def ChainDiveBudget(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(260))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # In the outer routing before the feedlines: what a cell in the halo of
+    # a wire a relaxation let go of costs, in times the wire proximity
+    # penalty; 1 as before. A wire relaxed past its neighbour then pays for
+    # pressing into the room the neighbour needs about what a bend costs, and
+    # leaves it its way back.
+    # FinalParams
+    def ReleasedHaloFactor(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(262))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 1
+
+    # In the outer routing before the feedlines: the run a wire let go of
+    # arrives at its target on — as long as the straight run of a port's band
+    # (`min_straight_length`) — is closed to the wire being drawn as a
+    # rectangle one clearance to either side, square at its outer end, on top
+    # of the clearance disc round the target cell. Off (the default), only the
+    # disc, round, is closed.
+    # FinalParams
+    def ReleasedArrivalBox(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(264))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
+    # Where the length-point clearance (`length_point_radius_cells`) is a
+    # price rather than closed cells: "" (the default) nowhere — the band
+    # closes its cells in the outer routing, its relaxation and the outer
+    # refinement, as before; "refinement" in the outer refinement alone, the
+    # rounds keeping the closed band; "all" in all three; "fallback" the band
+    # stays closed and is priced only where it would leave a wire with no
+    # way — the recovery at the end of the outer routing, which otherwise
+    # drops the band, and still does for what the priced recovery leaves
+    # failing — and a second search of the outer refinement for a
+    # wire that found none with the band closed. A priced band
+    # fails no wire: it costs `length_point_price` a cell at the band,
+    # falling in four steps to nothing at the radius, so a wire keeps off
+    # the place a coupler goes as far as its room lets it.
+    # FinalParams
+    def LengthPointSoft(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(266))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # What a cell at a resonator's length-point band costs where
+    # `length_point_soft` prices the band, in the units of the wire
+    # proximity field (the "wire price" of the settings line); 0 prices
+    # nothing, so the band is then simply open there.
+    # FinalParams
+    def LengthPointPrice(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(268))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Where `length_point_soft` prices the band: how many ring pairs either
+    # side of a wire have their band priced for it — 1 the pair beside it
+    # alone, as the closed band; 2 the pair beyond it as well, and so on.
+    # FinalParams
+    def LengthPointSoftPairs(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(270))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 1
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(108)
+    builder.StartObject(134)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -1773,6 +2081,162 @@ def FinalParamsAddCouplerLatticeReserveStep(builder: flatbuffers.Builder, couple
 def AddCouplerLatticeReserveStep(builder: flatbuffers.Builder, couplerLatticeReserveStep: int):
     FinalParamsAddCouplerLatticeReserveStep(builder, couplerLatticeReserveStep)
 
+def FinalParamsAddCouplerSnapPitch(builder: flatbuffers.Builder, couplerSnapPitch: float):
+    builder.PrependFloat64Slot(108, couplerSnapPitch, 0.0)
+
+def AddCouplerSnapPitch(builder: flatbuffers.Builder, couplerSnapPitch: float):
+    FinalParamsAddCouplerSnapPitch(builder, couplerSnapPitch)
+
+def FinalParamsAddCouplerSnapF(builder: flatbuffers.Builder, couplerSnapF: int):
+    builder.PrependUOffsetTRelativeSlot(109, flatbuffers.number_types.UOffsetTFlags.py_type(couplerSnapF), 0)
+
+def AddCouplerSnapF(builder: flatbuffers.Builder, couplerSnapF: int):
+    FinalParamsAddCouplerSnapF(builder, couplerSnapF)
+
+def FinalParamsAddCouplerSnapR(builder: flatbuffers.Builder, couplerSnapR: int):
+    builder.PrependUOffsetTRelativeSlot(110, flatbuffers.number_types.UOffsetTFlags.py_type(couplerSnapR), 0)
+
+def AddCouplerSnapR(builder: flatbuffers.Builder, couplerSnapR: int):
+    FinalParamsAddCouplerSnapR(builder, couplerSnapR)
+
+def FinalParamsAddGlobalSatEndOptions(builder: flatbuffers.Builder, globalSatEndOptions: int):
+    builder.PrependUint32Slot(111, globalSatEndOptions, 16)
+
+def AddGlobalSatEndOptions(builder: flatbuffers.Builder, globalSatEndOptions: int):
+    FinalParamsAddGlobalSatEndOptions(builder, globalSatEndOptions)
+
+def FinalParamsAddCouplerSnapLengthSlack(builder: flatbuffers.Builder, couplerSnapLengthSlack: float):
+    builder.PrependFloat64Slot(112, couplerSnapLengthSlack, 0.0)
+
+def AddCouplerSnapLengthSlack(builder: flatbuffers.Builder, couplerSnapLengthSlack: float):
+    FinalParamsAddCouplerSnapLengthSlack(builder, couplerSnapLengthSlack)
+
+def FinalParamsAddChainOptimalityGap(builder: flatbuffers.Builder, chainOptimalityGap: float):
+    builder.PrependFloat64Slot(113, chainOptimalityGap, 0.0)
+
+def AddChainOptimalityGap(builder: flatbuffers.Builder, chainOptimalityGap: float):
+    FinalParamsAddChainOptimalityGap(builder, chainOptimalityGap)
+
+def FinalParamsAddCapacityEscapeRounds(builder: flatbuffers.Builder, capacityEscapeRounds: int):
+    builder.PrependUint32Slot(114, capacityEscapeRounds, 0)
+
+def AddCapacityEscapeRounds(builder: flatbuffers.Builder, capacityEscapeRounds: int):
+    FinalParamsAddCapacityEscapeRounds(builder, capacityEscapeRounds)
+
+def FinalParamsAddCapacityEscapeCells(builder: flatbuffers.Builder, capacityEscapeCells: float):
+    builder.PrependFloat64Slot(115, capacityEscapeCells, 0.0)
+
+def AddCapacityEscapeCells(builder: flatbuffers.Builder, capacityEscapeCells: float):
+    FinalParamsAddCapacityEscapeCells(builder, capacityEscapeCells)
+
+def FinalParamsAddCapacityMergeFans(builder: flatbuffers.Builder, capacityMergeFans: bool):
+    builder.PrependBoolSlot(116, capacityMergeFans, 1)
+
+def AddCapacityMergeFans(builder: flatbuffers.Builder, capacityMergeFans: bool):
+    FinalParamsAddCapacityMergeFans(builder, capacityMergeFans)
+
+def FinalParamsAddLauncherEscapeCells(builder: flatbuffers.Builder, launcherEscapeCells: float):
+    builder.PrependFloat64Slot(117, launcherEscapeCells, 0.0)
+
+def AddLauncherEscapeCells(builder: flatbuffers.Builder, launcherEscapeCells: float):
+    FinalParamsAddLauncherEscapeCells(builder, launcherEscapeCells)
+
+def FinalParamsAddCapacityEscapeTouch(builder: flatbuffers.Builder, capacityEscapeTouch: bool):
+    builder.PrependBoolSlot(118, capacityEscapeTouch, 0)
+
+def AddCapacityEscapeTouch(builder: flatbuffers.Builder, capacityEscapeTouch: bool):
+    FinalParamsAddCapacityEscapeTouch(builder, capacityEscapeTouch)
+
+def FinalParamsAddCapacityChords(builder: flatbuffers.Builder, capacityChords: bool):
+    builder.PrependBoolSlot(119, capacityChords, 0)
+
+def AddCapacityChords(builder: flatbuffers.Builder, capacityChords: bool):
+    FinalParamsAddCapacityChords(builder, capacityChords)
+
+def FinalParamsAddCapacityChordsRouting(builder: flatbuffers.Builder, capacityChordsRouting: bool):
+    builder.PrependBoolSlot(120, capacityChordsRouting, 0)
+
+def AddCapacityChordsRouting(builder: flatbuffers.Builder, capacityChordsRouting: bool):
+    FinalParamsAddCapacityChordsRouting(builder, capacityChordsRouting)
+
+def FinalParamsAddCapacitySlotRoom(builder: flatbuffers.Builder, capacitySlotRoom: bool):
+    builder.PrependBoolSlot(121, capacitySlotRoom, 0)
+
+def AddCapacitySlotRoom(builder: flatbuffers.Builder, capacitySlotRoom: bool):
+    FinalParamsAddCapacitySlotRoom(builder, capacitySlotRoom)
+
+def FinalParamsAddCapacityEscapeTouchRouting(builder: flatbuffers.Builder, capacityEscapeTouchRouting: bool):
+    builder.PrependBoolSlot(122, capacityEscapeTouchRouting, 0)
+
+def AddCapacityEscapeTouchRouting(builder: flatbuffers.Builder, capacityEscapeTouchRouting: bool):
+    FinalParamsAddCapacityEscapeTouchRouting(builder, capacityEscapeTouchRouting)
+
+def FinalParamsAddChainGateBlacklist(builder: flatbuffers.Builder, chainGateBlacklist: bool):
+    builder.PrependBoolSlot(123, chainGateBlacklist, 0)
+
+def AddChainGateBlacklist(builder: flatbuffers.Builder, chainGateBlacklist: bool):
+    FinalParamsAddChainGateBlacklist(builder, chainGateBlacklist)
+
+def FinalParamsAddChainGatePenalty(builder: flatbuffers.Builder, chainGatePenalty: int):
+    builder.PrependUint32Slot(124, chainGatePenalty, 0)
+
+def AddChainGatePenalty(builder: flatbuffers.Builder, chainGatePenalty: int):
+    FinalParamsAddChainGatePenalty(builder, chainGatePenalty)
+
+def FinalParamsAddCapacityPrescribeOpenEdges(builder: flatbuffers.Builder, capacityPrescribeOpenEdges: bool):
+    builder.PrependBoolSlot(125, capacityPrescribeOpenEdges, 0)
+
+def AddCapacityPrescribeOpenEdges(builder: flatbuffers.Builder, capacityPrescribeOpenEdges: bool):
+    FinalParamsAddCapacityPrescribeOpenEdges(builder, capacityPrescribeOpenEdges)
+
+def FinalParamsAddChainDiveSteps(builder: flatbuffers.Builder, chainDiveSteps: int):
+    builder.PrependUint32Slot(126, chainDiveSteps, 0)
+
+def AddChainDiveSteps(builder: flatbuffers.Builder, chainDiveSteps: int):
+    FinalParamsAddChainDiveSteps(builder, chainDiveSteps)
+
+def FinalParamsAddChainDiveSettleSteps(builder: flatbuffers.Builder, chainDiveSettleSteps: int):
+    builder.PrependUint32Slot(127, chainDiveSettleSteps, 0)
+
+def AddChainDiveSettleSteps(builder: flatbuffers.Builder, chainDiveSettleSteps: int):
+    FinalParamsAddChainDiveSettleSteps(builder, chainDiveSettleSteps)
+
+def FinalParamsAddChainDiveBudget(builder: flatbuffers.Builder, chainDiveBudget: int):
+    builder.PrependUint32Slot(128, chainDiveBudget, 0)
+
+def AddChainDiveBudget(builder: flatbuffers.Builder, chainDiveBudget: int):
+    FinalParamsAddChainDiveBudget(builder, chainDiveBudget)
+
+def FinalParamsAddReleasedHaloFactor(builder: flatbuffers.Builder, releasedHaloFactor: int):
+    builder.PrependUint32Slot(129, releasedHaloFactor, 1)
+
+def AddReleasedHaloFactor(builder: flatbuffers.Builder, releasedHaloFactor: int):
+    FinalParamsAddReleasedHaloFactor(builder, releasedHaloFactor)
+
+def FinalParamsAddReleasedArrivalBox(builder: flatbuffers.Builder, releasedArrivalBox: bool):
+    builder.PrependBoolSlot(130, releasedArrivalBox, 0)
+
+def AddReleasedArrivalBox(builder: flatbuffers.Builder, releasedArrivalBox: bool):
+    FinalParamsAddReleasedArrivalBox(builder, releasedArrivalBox)
+
+def FinalParamsAddLengthPointSoft(builder: flatbuffers.Builder, lengthPointSoft: int):
+    builder.PrependUOffsetTRelativeSlot(131, flatbuffers.number_types.UOffsetTFlags.py_type(lengthPointSoft), 0)
+
+def AddLengthPointSoft(builder: flatbuffers.Builder, lengthPointSoft: int):
+    FinalParamsAddLengthPointSoft(builder, lengthPointSoft)
+
+def FinalParamsAddLengthPointPrice(builder: flatbuffers.Builder, lengthPointPrice: int):
+    builder.PrependUint32Slot(132, lengthPointPrice, 0)
+
+def AddLengthPointPrice(builder: flatbuffers.Builder, lengthPointPrice: int):
+    FinalParamsAddLengthPointPrice(builder, lengthPointPrice)
+
+def FinalParamsAddLengthPointSoftPairs(builder: flatbuffers.Builder, lengthPointSoftPairs: int):
+    builder.PrependUint32Slot(133, lengthPointSoftPairs, 1)
+
+def AddLengthPointSoftPairs(builder: flatbuffers.Builder, lengthPointSoftPairs: int):
+    FinalParamsAddLengthPointSoftPairs(builder, lengthPointSoftPairs)
+
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -1893,6 +2357,32 @@ class FinalParamsT(object):
         couplerLatticeNear = 0.0,
         couplerLatticeChecker = False,
         couplerLatticeReserveStep = 0,
+        couplerSnapPitch = 0.0,
+        couplerSnapF = None,
+        couplerSnapR = None,
+        globalSatEndOptions = 16,
+        couplerSnapLengthSlack = 0.0,
+        chainOptimalityGap = 0.0,
+        capacityEscapeRounds = 0,
+        capacityEscapeCells = 0.0,
+        capacityMergeFans = True,
+        launcherEscapeCells = 0.0,
+        capacityEscapeTouch = False,
+        capacityChords = False,
+        capacityChordsRouting = False,
+        capacitySlotRoom = False,
+        capacityEscapeTouchRouting = False,
+        chainGateBlacklist = False,
+        chainGatePenalty = 0,
+        capacityPrescribeOpenEdges = False,
+        chainDiveSteps = 0,
+        chainDiveSettleSteps = 0,
+        chainDiveBudget = 0,
+        releasedHaloFactor = 1,
+        releasedArrivalBox = False,
+        lengthPointSoft = None,
+        lengthPointPrice = 0,
+        lengthPointSoftPairs = 1,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -2002,6 +2492,32 @@ class FinalParamsT(object):
         self.couplerLatticeNear = couplerLatticeNear  # type: float
         self.couplerLatticeChecker = couplerLatticeChecker  # type: bool
         self.couplerLatticeReserveStep = couplerLatticeReserveStep  # type: int
+        self.couplerSnapPitch = couplerSnapPitch  # type: float
+        self.couplerSnapF = couplerSnapF  # type: Optional[str]
+        self.couplerSnapR = couplerSnapR  # type: Optional[str]
+        self.globalSatEndOptions = globalSatEndOptions  # type: int
+        self.couplerSnapLengthSlack = couplerSnapLengthSlack  # type: float
+        self.chainOptimalityGap = chainOptimalityGap  # type: float
+        self.capacityEscapeRounds = capacityEscapeRounds  # type: int
+        self.capacityEscapeCells = capacityEscapeCells  # type: float
+        self.capacityMergeFans = capacityMergeFans  # type: bool
+        self.launcherEscapeCells = launcherEscapeCells  # type: float
+        self.capacityEscapeTouch = capacityEscapeTouch  # type: bool
+        self.capacityChords = capacityChords  # type: bool
+        self.capacityChordsRouting = capacityChordsRouting  # type: bool
+        self.capacitySlotRoom = capacitySlotRoom  # type: bool
+        self.capacityEscapeTouchRouting = capacityEscapeTouchRouting  # type: bool
+        self.chainGateBlacklist = chainGateBlacklist  # type: bool
+        self.chainGatePenalty = chainGatePenalty  # type: int
+        self.capacityPrescribeOpenEdges = capacityPrescribeOpenEdges  # type: bool
+        self.chainDiveSteps = chainDiveSteps  # type: int
+        self.chainDiveSettleSteps = chainDiveSettleSteps  # type: int
+        self.chainDiveBudget = chainDiveBudget  # type: int
+        self.releasedHaloFactor = releasedHaloFactor  # type: int
+        self.releasedArrivalBox = releasedArrivalBox  # type: bool
+        self.lengthPointSoft = lengthPointSoft  # type: Optional[str]
+        self.lengthPointPrice = lengthPointPrice  # type: int
+        self.lengthPointSoftPairs = lengthPointSoftPairs  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -2146,6 +2662,38 @@ class FinalParamsT(object):
         self.couplerLatticeNear = finalParams.CouplerLatticeNear()
         self.couplerLatticeChecker = finalParams.CouplerLatticeChecker()
         self.couplerLatticeReserveStep = finalParams.CouplerLatticeReserveStep()
+        self.couplerSnapPitch = finalParams.CouplerSnapPitch()
+        self.couplerSnapF = finalParams.CouplerSnapF()
+        if self.couplerSnapF is not None:
+            self.couplerSnapF = self.couplerSnapF.decode('utf-8')
+        self.couplerSnapR = finalParams.CouplerSnapR()
+        if self.couplerSnapR is not None:
+            self.couplerSnapR = self.couplerSnapR.decode('utf-8')
+        self.globalSatEndOptions = finalParams.GlobalSatEndOptions()
+        self.couplerSnapLengthSlack = finalParams.CouplerSnapLengthSlack()
+        self.chainOptimalityGap = finalParams.ChainOptimalityGap()
+        self.capacityEscapeRounds = finalParams.CapacityEscapeRounds()
+        self.capacityEscapeCells = finalParams.CapacityEscapeCells()
+        self.capacityMergeFans = finalParams.CapacityMergeFans()
+        self.launcherEscapeCells = finalParams.LauncherEscapeCells()
+        self.capacityEscapeTouch = finalParams.CapacityEscapeTouch()
+        self.capacityChords = finalParams.CapacityChords()
+        self.capacityChordsRouting = finalParams.CapacityChordsRouting()
+        self.capacitySlotRoom = finalParams.CapacitySlotRoom()
+        self.capacityEscapeTouchRouting = finalParams.CapacityEscapeTouchRouting()
+        self.chainGateBlacklist = finalParams.ChainGateBlacklist()
+        self.chainGatePenalty = finalParams.ChainGatePenalty()
+        self.capacityPrescribeOpenEdges = finalParams.CapacityPrescribeOpenEdges()
+        self.chainDiveSteps = finalParams.ChainDiveSteps()
+        self.chainDiveSettleSteps = finalParams.ChainDiveSettleSteps()
+        self.chainDiveBudget = finalParams.ChainDiveBudget()
+        self.releasedHaloFactor = finalParams.ReleasedHaloFactor()
+        self.releasedArrivalBox = finalParams.ReleasedArrivalBox()
+        self.lengthPointSoft = finalParams.LengthPointSoft()
+        if self.lengthPointSoft is not None:
+            self.lengthPointSoft = self.lengthPointSoft.decode('utf-8')
+        self.lengthPointPrice = finalParams.LengthPointPrice()
+        self.lengthPointSoftPairs = finalParams.LengthPointSoftPairs()
 
     # FinalParamsT
     def Pack(self, builder):
@@ -2163,6 +2711,12 @@ class FinalParamsT(object):
             couplerMeanderSlackChains = builder.CreateString(self.couplerMeanderSlackChains)
         if self.capacityCheckChains is not None:
             capacityCheckChains = builder.CreateString(self.capacityCheckChains)
+        if self.couplerSnapF is not None:
+            couplerSnapF = builder.CreateString(self.couplerSnapF)
+        if self.couplerSnapR is not None:
+            couplerSnapR = builder.CreateString(self.couplerSnapR)
+        if self.lengthPointSoft is not None:
+            lengthPointSoft = builder.CreateString(self.lengthPointSoft)
         FinalParamsStart(builder)
         if self.router is not None:
             FinalParamsAddRouter(builder, router)
@@ -2279,5 +2833,34 @@ class FinalParamsT(object):
         FinalParamsAddCouplerLatticeNear(builder, self.couplerLatticeNear)
         FinalParamsAddCouplerLatticeChecker(builder, self.couplerLatticeChecker)
         FinalParamsAddCouplerLatticeReserveStep(builder, self.couplerLatticeReserveStep)
+        FinalParamsAddCouplerSnapPitch(builder, self.couplerSnapPitch)
+        if self.couplerSnapF is not None:
+            FinalParamsAddCouplerSnapF(builder, couplerSnapF)
+        if self.couplerSnapR is not None:
+            FinalParamsAddCouplerSnapR(builder, couplerSnapR)
+        FinalParamsAddGlobalSatEndOptions(builder, self.globalSatEndOptions)
+        FinalParamsAddCouplerSnapLengthSlack(builder, self.couplerSnapLengthSlack)
+        FinalParamsAddChainOptimalityGap(builder, self.chainOptimalityGap)
+        FinalParamsAddCapacityEscapeRounds(builder, self.capacityEscapeRounds)
+        FinalParamsAddCapacityEscapeCells(builder, self.capacityEscapeCells)
+        FinalParamsAddCapacityMergeFans(builder, self.capacityMergeFans)
+        FinalParamsAddLauncherEscapeCells(builder, self.launcherEscapeCells)
+        FinalParamsAddCapacityEscapeTouch(builder, self.capacityEscapeTouch)
+        FinalParamsAddCapacityChords(builder, self.capacityChords)
+        FinalParamsAddCapacityChordsRouting(builder, self.capacityChordsRouting)
+        FinalParamsAddCapacitySlotRoom(builder, self.capacitySlotRoom)
+        FinalParamsAddCapacityEscapeTouchRouting(builder, self.capacityEscapeTouchRouting)
+        FinalParamsAddChainGateBlacklist(builder, self.chainGateBlacklist)
+        FinalParamsAddChainGatePenalty(builder, self.chainGatePenalty)
+        FinalParamsAddCapacityPrescribeOpenEdges(builder, self.capacityPrescribeOpenEdges)
+        FinalParamsAddChainDiveSteps(builder, self.chainDiveSteps)
+        FinalParamsAddChainDiveSettleSteps(builder, self.chainDiveSettleSteps)
+        FinalParamsAddChainDiveBudget(builder, self.chainDiveBudget)
+        FinalParamsAddReleasedHaloFactor(builder, self.releasedHaloFactor)
+        FinalParamsAddReleasedArrivalBox(builder, self.releasedArrivalBox)
+        if self.lengthPointSoft is not None:
+            FinalParamsAddLengthPointSoft(builder, lengthPointSoft)
+        FinalParamsAddLengthPointPrice(builder, self.lengthPointPrice)
+        FinalParamsAddLengthPointSoftPairs(builder, self.lengthPointSoftPairs)
         finalParams = FinalParamsEnd(builder)
         return finalParams

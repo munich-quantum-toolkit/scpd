@@ -97,20 +97,28 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
   // prefix** — which is what makes the search exact. It is the same
   // relaxation the trellis uses as its price array, asked as a heuristic
   // instead.
+  //
+  // A step may raise the bound (`boundRose`); the pass then runs again, and
+  // an entry whose `f` the new heuristic raises goes back on the queue when
+  // it is popped, as a placeholder does.
   std::vector<std::vector<uint64_t>> rest(layers);
-  rest[layers - 1].assign(problem.width[layers - 1], 0);
-  for (std::size_t layer = layers - 1; layer > 0; --layer) {
-    rest[layer - 1].assign(problem.width[layer - 1], TRELLIS_UNREACHABLE);
-    for (uint32_t from = 0; from < problem.width[layer - 1]; ++from) {
-      auto least = TRELLIS_UNREACHABLE;
-      for (uint32_t to = 0; to < problem.width[layer]; ++to) {
-        const auto reach =
-            plus(problem.bound(layer - 1, from, to), rest[layer][to]);
-        least = reach < least ? reach : least;
+  const auto restAnew = [&] {
+    rest[layers - 1].assign(problem.width[layers - 1], 0);
+    for (std::size_t layer = layers - 1; layer > 0; --layer) {
+      rest[layer - 1].assign(problem.width[layer - 1], TRELLIS_UNREACHABLE);
+      for (uint32_t from = 0; from < problem.width[layer - 1]; ++from) {
+        auto least = TRELLIS_UNREACHABLE;
+        for (uint32_t to = 0; to < problem.width[layer]; ++to) {
+          const auto reach =
+              plus(problem.bound(layer - 1, from, to), rest[layer][to]);
+          least = reach < least ? reach : least;
+        }
+        rest[layer - 1][from] = least;
       }
-      rest[layer - 1][from] = least;
     }
-  }
+  };
+  problem.boundRose = false;
+  restAnew();
 
   std::vector<Node> arena;
   std::priority_queue<Open, std::vector<Open>, Worse> open;
@@ -143,8 +151,312 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
                .node = static_cast<uint32_t>(arena.size() - 1)});
   }
 
+  // Dives (`ChainProblem::diveEvery`): the children of every prefix grown,
+  // by its node, and the dive each node was last tried in.
+  const bool diving = problem.diveEvery > 0 && !problem.accept;
+  const auto rootEnd = static_cast<uint32_t>(arena.size());
+  std::unordered_map<uint32_t, std::pair<uint32_t, uint32_t>> childrenOf;
+  std::vector<uint32_t> triedIn;
+  // The prefixes a dive tried every child of, unbounded by its width or its
+  // steps, and found none to go down: no later dive goes into them again.
+  // Bounds only rise and the cheapest run only falls, so a spent prefix
+  // stays spent.
+  std::vector<bool> spent;
+  uint32_t routedAtDive = 0;
+
+  // What became of a step priced.
+  enum class Stepped : std::uint8_t { Dead, Real, Stopped };
+  // A node that cannot be a chain: real at no price, so that its entry is
+  // dropped when it pops and no dive prices it again.
+  const auto deadAt = [&](const uint32_t node) {
+    arena[node].real = true;
+    arena[node].price = TRELLIS_UNREACHABLE;
+  };
+  // Pay for the last step of the placeholder `node`, routed against the ways
+  // the prefix before it laid: its price, the incumbent when it completes a
+  // cheaper run, and `f` its new `f` when it is real.
+  const auto priceStep = [&](const uint32_t node, uint64_t& f) -> Stepped {
+    const auto layer = arena[node].layer;
+    const auto choice = arena[node].choice;
+    {
+      const auto parent = arena[node].parent;
+      const auto floor = plus(arena[parent].price, rest[layer][choice]);
+      problem.stepBudget = out.solved && out.cost > floor
+                               ? out.cost - 1 - floor
+                               : TRELLIS_UNREACHABLE;
+    }
+    prefixOf(arena[node].parent);
+    int64_t redone = 0;
+    problem.stepNode = node;
+    problem.winnerNode = out.solved ? winner : UINT32_MAX;
+    problem.stepTested = true;
+    const auto priced = problem.step(prefix, choice, redone);
+    problem.stepBudget = TRELLIS_UNREACHABLE;
+    if (problem.boundRose) {
+      problem.boundRose = false;
+      restAnew();
+    }
+    ++out.routed;
+    if (problem.progress && problem.progressEvery > 0 &&
+        out.routed % problem.progressEvery == 0) {
+      problem.progress(out, open.size());
+    }
+    if (problem.stop) {
+      // The caller ended the search. What it found so far stands,
+      // unproved.
+      out.stopped = true;
+      return Stepped::Stopped;
+    }
+    if (priced == TRELLIS_UNREACHABLE) {
+      // This prefix blocks itself. Nothing that extends it is a chain.
+      deadAt(node);
+      return Stepped::Dead;
+    }
+    auto price = plus(arena[arena[node].parent].price, priced);
+    if (redone != 0 && price != TRELLIS_UNREACHABLE) {
+      // Laying this step meant laying an earlier one again, so the prefix
+      // no longer costs what its parent did plus this step.
+      out.relaid = true;
+      const auto by = static_cast<uint64_t>(redone < 0 ? -redone : redone);
+      price = redone < 0 ? (by > price ? 0 : price - by) : plus(price, by);
+    }
+    f = plus(price, rest[layer][choice]);
+    if (f == TRELLIS_UNREACHABLE) {
+      deadAt(node);
+      return Stepped::Dead;
+    }
+    arena[node].price = price;
+    arena[node].real = true;
+    if (layer + 1 == layers) {
+      // A complete run of choices, every step of it routed. Keep the
+      // cheapest of them: a placeholder whose bound reaches it is dropped
+      // unpriced, and `stepBudget` tells a step how much it may cost. They
+      // do not arrive cheapest first — the end of the chain is reached in
+      // order of the *bound* on what a run costs, and its last step is
+      // priced only once it is reached.
+      //
+      // Not with an `accept`: then `solved` means an accepted run exists,
+      // and a run recorded here could be one the caller refuses when it
+      // pops.
+      prefixOf(node);
+      if (!problem.accept && (!out.solved || price < out.cost)) {
+        if (!out.solved) {
+          out.firstRun = out.routed;
+        }
+        out.solved = true;
+        out.cost = price;
+        out.chosen = prefix;
+        winner = node;
+      } else if (!problem.accept && price == out.cost) {
+        winner = std::min(winner, node);
+      }
+      if (problem.found && problem.stepTested) {
+        problem.found(prefix, price);
+      }
+    }
+    return Stepped::Real;
+  };
+  // Grow the children of the real prefix `node`, each a placeholder at its
+  // bound.
+  const auto expandNode = [&](const uint32_t node) {
+    ++out.expansions;
+    if (problem.expanded) {
+      prefixOf(node);
+      problem.expanded(prefix);
+    }
+    const auto price = arena[node].price;
+    const auto layer = arena[node].layer;
+    const auto choice = arena[node].choice;
+    const auto next = layer + 1;
+    const auto first = static_cast<uint32_t>(arena.size());
+    for (uint32_t to = 0; to < problem.width[next]; ++to) {
+      const auto guess = plus(price, problem.bound(layer, choice, to));
+      const auto f = plus(guess, rest[next][to]);
+      if (f == TRELLIS_UNREACHABLE) {
+        continue;
+      }
+      arena.push_back({.parent = node,
+                       .choice = to,
+                       .layer = next,
+                       .price = guess,
+                       .real = false});
+      open.push({.f = f,
+                 .layer = next,
+                 .node = static_cast<uint32_t>(arena.size() - 1)});
+    }
+    if (diving) {
+      childrenOf.emplace(node,
+                         std::pair{first, static_cast<uint32_t>(arena.size())});
+    }
+  };
+  // Whether `stepsAfterRun` is spent.
+  const auto settled = [&] {
+    return problem.stepsAfterRun > 0 && !problem.accept && out.solved &&
+           out.routed - out.firstRun >= problem.stepsAfterRun;
+  };
+  // **A dive**: from the first layer down, depth-first, at each prefix the
+  // child of least `f` not yet tried in this dive, priced as best-first
+  // search prices it; a dead child sends it to the next, a prefix whose
+  // children are spent — or the first `width` of them tried — sends it back
+  // up. It ends on the first complete run cheaper than the cheapest so far,
+  // or when it has priced `diveEvery` steps. It pushes no entry of its own:
+  // the placeholder entry of every node it prices is still on the queue at
+  // or below the node's real `f`, and the real branch below moves it up when
+  // it pops, so every entry stays a lower bound.
+  const auto dive = [&]() -> Stepped {
+    ++out.dives;
+    const auto width =
+        problem.diveWidth == 0
+            ? UINT32_MAX
+            : problem.diveWidth << std::min<uint32_t>(out.dives - 1, 16);
+    const auto start = out.routed;
+    const auto budget =
+        problem.diveSteps > 0 ? problem.diveSteps : problem.diveEvery;
+    uint32_t deepest = 0;
+    struct Frame {
+      uint32_t node;
+      uint32_t tried;
+      // Whether a child was passed over for the width: then the prefix is
+      // not spent when its children run out.
+      bool cut;
+    };
+    std::vector<Frame> stack{{.node = NO_PARENT, .tried = 0, .cut = false}};
+    const auto fOf = [&](const uint32_t c) {
+      const auto& node = arena[c];
+      if (node.real) {
+        return plus(node.price, rest[node.layer][node.choice]);
+      }
+      const auto& parent = arena[node.parent];
+      return plus(
+          plus(parent.price,
+               problem.bound(node.layer - 1, parent.choice, node.choice)),
+          rest[node.layer][node.choice]);
+    };
+    while (!stack.empty()) {
+      if (out.routed - start >= budget) {
+        break;
+      }
+      if (settled()) {
+        out.outOfSteps = true;
+        break;
+      }
+      auto& frame = stack.back();
+      uint32_t from = 0;
+      uint32_t to = rootEnd;
+      if (frame.node != NO_PARENT) {
+        const auto& node = arena[frame.node];
+        const auto f = plus(node.price, rest[node.layer][node.choice]);
+        if (f == TRELLIS_UNREACHABLE || (out.solved && f >= out.cost)) {
+          stack.pop_back();
+          continue;
+        }
+        auto grown = childrenOf.find(frame.node);
+        if (grown == childrenOf.end()) {
+          expandNode(frame.node);
+          grown = childrenOf.find(frame.node);
+        }
+        from = grown->second.first;
+        to = grown->second.second;
+      }
+      if (frame.tried >= width) {
+        // Cut short by the width: neither it nor the prefix above it is
+        // spent.
+        stack.pop_back();
+        if (!stack.empty()) {
+          stack.back().cut = true;
+        }
+        continue;
+      }
+      triedIn.resize(arena.size(), 0);
+      spent.resize(arena.size(), false);
+      auto best = NO_PARENT;
+      auto bestF = TRELLIS_UNREACHABLE;
+      for (auto c = from; c < to; ++c) {
+        if (triedIn[c] == out.dives || spent[c]) {
+          continue;
+        }
+        const auto f = fOf(c);
+        if (f == TRELLIS_UNREACHABLE || (out.solved && f >= out.cost)) {
+          continue;
+        }
+        if (f < bestF) {
+          bestF = f;
+          best = c;
+        }
+      }
+      if (best == NO_PARENT) {
+        // Every child is tried, dead, spent or out of bound: the prefix is
+        // spent unless the width passed one over.
+        const bool cut = frame.cut;
+        if (frame.node != NO_PARENT && !cut) {
+          spent[frame.node] = true;
+        }
+        stack.pop_back();
+        if (cut && !stack.empty()) {
+          stack.back().cut = true;
+        }
+        continue;
+      }
+      triedIn[best] = out.dives;
+      ++frame.tried;
+      const bool last = arena[best].layer + 1 == layers;
+      if (!arena[best].real) {
+        const auto before = out.solved ? out.cost : TRELLIS_UNREACHABLE;
+        uint64_t f = 0;
+        const auto stepped = priceStep(best, f);
+        ++out.routedInDives;
+        if (stepped == Stepped::Stopped) {
+          return Stepped::Stopped;
+        }
+        if (stepped == Stepped::Dead) {
+          continue;
+        }
+        if (last) {
+          if (out.solved && out.cost < before) {
+            break;
+          }
+          continue;
+        }
+      } else if (last) {
+        continue;
+      }
+      if (out.solved && fOf(best) >= out.cost) {
+        continue;
+      }
+      out.reached = std::max(out.reached, arena[best].layer);
+      deepest = std::max(deepest, arena[best].layer);
+      stack.push_back({.node = best, .tried = 0, .cut = false});
+    }
+    if (problem.dived) {
+      problem.dived(out, out.routed - start, deepest);
+    }
+    return Stepped::Real;
+  };
+
   while (!open.empty()) {
+    if (settled()) {
+      out.outOfSteps = true;
+      return out;
+    }
+    if (diving && out.routed - routedAtDive >= problem.diveEvery) {
+      routedAtDive = out.routed;
+      if (dive() == Stepped::Stopped || out.outOfSteps) {
+        return out;
+      }
+      routedAtDive = out.routed;
+      continue;
+    }
     const auto top = open.top();
+    // The least `f` on the queue bounds every run not yet ruled out. A run
+    // priced within the gap of it is within the gap of the optimum; one
+    // priced at it is the optimum, and the search goes on to prove it.
+    if (problem.gap > 0.0 && !problem.accept && out.solved &&
+        out.cost > top.f &&
+        static_cast<double>(out.cost) <=
+            static_cast<double>(top.f) * (1.0 + problem.gap)) {
+      out.withinGap = true;
+      return out;
+    }
     open.pop();
     // Every node is pushed once as a placeholder and at most once more with
     // its step priced, and each push is popped exactly once, so nothing in
@@ -178,77 +490,25 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
         ++out.pruned;
         continue;
       }
-      {
-        const auto parent = arena[top.node].parent;
-        const auto floor = plus(arena[parent].price, rest[layer][choice]);
-        problem.stepBudget = out.solved && out.cost > floor
-                                 ? out.cost - 1 - floor
-                                 : TRELLIS_UNREACHABLE;
-      }
-      // The search has committed to looking at this prefix, so pay for its
-      // last step: routed against the ways the prefix before it laid, which
-      // is the whole reason this search exists.
-      prefixOf(arena[top.node].parent);
-      int64_t redone = 0;
-      problem.stepNode = top.node;
-      problem.winnerNode = out.solved ? winner : UINT32_MAX;
-      problem.stepTested = true;
-      const auto priced = problem.step(prefix, choice, redone);
-      problem.stepBudget = TRELLIS_UNREACHABLE;
-      ++out.routed;
-      if (problem.progress && problem.progressEvery > 0 &&
-          out.routed % problem.progressEvery == 0) {
-        problem.progress(out, open.size());
-      }
-      if (problem.stop) {
-        // The caller ended the search. What it found so far stands,
-        // unproved.
-        out.stopped = true;
+      uint64_t f = 0;
+      const auto stepped = priceStep(top.node, f);
+      if (stepped == Stepped::Stopped) {
         return out;
       }
-      if (priced == TRELLIS_UNREACHABLE) {
-        // This prefix blocks itself. Nothing that extends it is a chain.
+      if (stepped == Stepped::Dead) {
         continue;
-      }
-      auto price = plus(arena[arena[top.node].parent].price, priced);
-      if (redone != 0 && price != TRELLIS_UNREACHABLE) {
-        // Laying this step meant laying an earlier one again, so the prefix
-        // no longer costs what its parent did plus this step.
-        out.relaid = true;
-        const auto by = static_cast<uint64_t>(redone < 0 ? -redone : redone);
-        price = redone < 0 ? (by > price ? 0 : price - by) : plus(price, by);
-      }
-      const auto f = plus(price, rest[layer][choice]);
-      if (f == TRELLIS_UNREACHABLE) {
-        continue;
-      }
-      arena[top.node].price = price;
-      arena[top.node].real = true;
-      if (layer + 1 == layers) {
-        // A complete run of choices, every step of it routed. Keep the
-        // cheapest of them: a placeholder whose bound reaches it is dropped
-        // unpriced, and `stepBudget` tells a step how much it may cost. They
-        // do not arrive cheapest first — the end of the chain is reached in
-        // order of the *bound* on what a run costs, and its last step is
-        // priced only once it is reached.
-        //
-        // Not with an `accept`: then `solved` means an accepted run exists,
-        // and a run recorded here could be one the caller refuses when it
-        // pops.
-        prefixOf(top.node);
-        if (!problem.accept && (!out.solved || price < out.cost)) {
-          out.solved = true;
-          out.cost = price;
-          out.chosen = prefix;
-          winner = top.node;
-        } else if (!problem.accept && price == out.cost) {
-          winner = std::min(winner, top.node);
-        }
-        if (problem.found && problem.stepTested) {
-          problem.found(prefix, price);
-        }
       }
       open.push({.f = f, .layer = layer, .node = top.node});
+      continue;
+    }
+
+    // A real prefix whose heuristic rose since it was pushed goes back at
+    // its new `f`, and one that can no longer reach the end is dropped.
+    if (const auto again = plus(arena[top.node].price, rest[layer][choice]);
+        again > top.f) {
+      if (again != TRELLIS_UNREACHABLE) {
+        open.push({.f = again, .layer = layer, .node = top.node});
+      }
       continue;
     }
 
@@ -275,28 +535,11 @@ ChainSolution solveChainAStar(const ChainProblem& problem) {
       return out;
     }
 
-    ++out.expansions;
-    if (problem.expanded) {
-      prefixOf(top.node);
-      problem.expanded(prefix);
+    if (diving && childrenOf.contains(top.node)) {
+      // A dive grew its children already; they are on the queue.
+      continue;
     }
-    const auto price = arena[top.node].price;
-    const auto next = layer + 1;
-    for (uint32_t to = 0; to < problem.width[next]; ++to) {
-      const auto guess = plus(price, problem.bound(layer, choice, to));
-      const auto f = plus(guess, rest[next][to]);
-      if (f == TRELLIS_UNREACHABLE) {
-        continue;
-      }
-      arena.push_back({.parent = top.node,
-                       .choice = to,
-                       .layer = next,
-                       .price = guess,
-                       .real = false});
-      open.push({.f = f,
-                 .layer = next,
-                 .node = static_cast<uint32_t>(arena.size() - 1)});
-    }
+    expandNode(top.node);
   }
   // The queue ran dry: every run of choices there is has been weighed, so
   // the answer is settled whether or not a step was ever relaid — nothing is
@@ -330,7 +573,8 @@ enum class Priced : std::uint8_t { Requeued, Pruned, Dead, Real, Stopped };
 
 ChainSolution solveChainBidirectional(const ChainProblem& problem) {
   const auto layers = problem.width.size();
-  if (!problem.stepBack || problem.accept || layers < 3) {
+  if (!problem.stepBack || problem.accept || layers < 3 ||
+      problem.diveEvery > 0) {
     return solveChainAStar(problem);
   }
   ChainSolution out;

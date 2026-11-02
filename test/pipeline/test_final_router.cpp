@@ -1027,6 +1027,50 @@ GlobalSatOutcome globalSatOf(const Benchmark& benchmark,
   return out;
 }
 
+/// `global_sat_end_options = 0` switches the pair rounds off: the global
+/// SAT search names no conflict pair and runs no pair round.
+TEST(FinalRouter, ThePairRoundsAreOffAtZero) {
+  auto benchmark = seventeenQubit();
+  finalParamsOf(benchmark).chain_rule_refusals = 1;
+  finalParamsOf(benchmark).global_sat_end_options = 0;
+  const auto planned = plan(benchmark);
+  for (const auto& line : globalSatOf(benchmark, planned).lines) {
+    EXPECT_EQ(line.find("pair round"), std::string::npos) << line;
+    EXPECT_EQ(line.find(" ↔ "), std::string::npos) << line;
+  }
+}
+
+/// With the pair rounds on, a chip UNSAT after the commit with a bottleneck
+/// over names the competing chain ends, and the pair rounds come before the
+/// conflict-directed stage 2.
+TEST(FinalRouter, ThePairRoundsNameTheirPair) {
+  auto benchmark = seventeenQubit();
+  finalParamsOf(benchmark).chain_rule_refusals = 1;
+  const auto planned = plan(benchmark);
+  const auto outcome = globalSatOf(benchmark, planned);
+  const bool unsat = std::ranges::any_of(outcome.lines, [](const std::string& line) {
+    return line.find("global SAT: the chip is UNSAT (g") != std::string::npos;
+  });
+  if (!unsat) {
+    GTEST_SKIP() << "the chip is SAT after the commit, or UNSAT by no bottleneck";
+  }
+  const std::regex pair(R"(global SAT: g\d+: (start|end) of chain \d+ \(waypoint \d+\) ↔ (start|end) of chain \d+ \(waypoint \d+\))");
+  EXPECT_TRUE(std::ranges::any_of(outcome.lines, [&](const std::string& line) {
+    return std::regex_search(line, pair);
+  }));
+  std::size_t lastPair = 0;
+  std::size_t firstStage2 = outcome.lines.size();
+  for (std::size_t k = 0; k < outcome.lines.size(); ++k) {
+    if (outcome.lines[k].find("pair round") != std::string::npos) {
+      lastPair = k;
+    }
+    if (outcome.lines[k].find("stage 2 round") != std::string::npos) {
+      firstStage2 = std::min(firstStage2, k);
+    }
+  }
+  EXPECT_LT(lastPair, firstStage2);
+}
+
 /// `coupler_offsets` names the offsets the option generator turns a pad
 /// by, 0,1,2,5,6,7 by default. Those offsets named are the default: the
 /// couplers come out with the same options, and none on offset 3 or 4
@@ -1173,6 +1217,193 @@ TEST(CouplerSession, CopiesThePlainOptionsInPlaceOfTheJogs) {
   EXPECT_TRUE(std::ranges::any_of(outcome.every, [](const std::string& line) {
     return line.find("jogs none, copies by 20 cells") != std::string::npos;
   }));
+}
+
+/// `coupler_snap_pitch` replaces the plain options by snap options: every
+/// plain option without a jog moved so that the middle of its feedline ports
+/// lies on the grid of the pitch, then by every f along the feedline and r
+/// across it. Under `router_grid_snap` at the same pitch the grid points are
+/// every fifth cell. A coupler with snap options keeps them alone, no option
+/// has a jog, the shifts are the default ones and the settings line names
+/// The end states of every end of the first chains of a session
+/// (`CouplerSession::endStates`), with the options each chain stands on.
+struct EndStatesSeen {
+  std::vector<nlohmann::json> ends;
+  std::vector<std::vector<std::size_t>> standing;
+};
+
+EndStatesSeen endStatesOf(Benchmark benchmark, const std::size_t chains = 2) {
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+  EndStatesSeen seen;
+  const auto all = nlohmann::json::parse(session.chains()).at("chains");
+  for (std::size_t chain = 0; chain < std::min(chains, all.size()); ++chain) {
+    for (const bool end : {false, true}) {
+      seen.ends.push_back(
+          nlohmann::json::parse(session.endStates(static_cast<std::uint32_t>(chain), end)));
+      seen.standing.push_back(all.at(chain).at("options").get<std::vector<std::size_t>>());
+    }
+  }
+  return seen;
+}
+
+/// A state of a chain end stands on the option its end coupler was pinned
+/// to (`Segment::pinned`): the end segment searched with that coupler on
+/// one option only. The options tried are other than the one the coupler
+/// stands on, and at most `global_sat_end_options` (16) of them.
+TEST(CouplerSession, AnEndStateStandsOnItsPinnedOption) {
+  const auto seen = endStatesOf(nineQubit());
+  std::size_t states = 0;
+  for (std::size_t k = 0; k < seen.ends.size(); ++k) {
+    const auto& end = seen.ends[k];
+    const auto waypoint = end.at("waypoint").get<std::size_t>();
+    const auto tried = end.at("tried").get<std::vector<std::size_t>>();
+    EXPECT_LE(tried.size(), 16U) << end.dump();
+    EXPECT_EQ(std::ranges::count(tried, seen.standing[k].at(waypoint)), 0) << end.dump();
+    for (const auto& state : end.at("states")) {
+      ++states;
+      const auto option = state.at("option").get<std::size_t>();
+      EXPECT_EQ(state.at("options").at(waypoint).get<std::size_t>(), option) << end.dump();
+      EXPECT_EQ(std::ranges::count(tried, option), 1) << end.dump();
+    }
+  }
+  EXPECT_GT(states, 0U);
+}
+
+/// `global_sat_end_options` caps the options tried per end.
+TEST(CouplerSession, EndStatesAreCappedByTheSetting) {
+  auto benchmark = nineQubit();
+  finalParamsOf(benchmark).global_sat_end_options = 2;
+  for (const auto& end : endStatesOf(benchmark).ends) {
+    EXPECT_LE(end.at("tried").size(), 2U) << end.dump();
+  }
+}
+
+/// An end with no other option to try has no state.
+TEST(CouplerSession, AnEndWithNoOtherOptionHasNoState) {
+  auto benchmark = nineQubit();
+  finalParamsOf(benchmark).coupler_offsets = "0";
+  for (const auto& end : endStatesOf(benchmark, 8).ends) {
+    if (end.at("tried").empty()) {
+      EXPECT_TRUE(end.at("states").empty()) << end.dump();
+    }
+  }
+}
+
+/// them.
+TEST(CouplerSession, SnapsTheOptionsOntoTheGrid) {
+  auto chip = nineQubit();
+  finalParamsOf(chip).router_grid_snap = 50.0;
+  finalParamsOf(chip).coupler_snap_pitch = 50.0;
+  finalParamsOf(chip).coupler_merge = false;
+  const auto planned = plan(chip);
+  const auto outcome = globalSatOf(chip, planned);
+  const auto parsed = nlohmann::json::parse(outcome.couplers);
+  std::size_t snapped = 0;
+  std::set<std::pair<int, int>> shifts;
+  for (const auto& coupler : parsed.at("couplers")) {
+    const auto& options = coupler.at("options");
+    const bool any = std::ranges::any_of(options, [](const nlohmann::json& option) {
+      return !option.at("snap").is_null();
+    });
+    for (const auto& option : options) {
+      EXPECT_EQ(option.at("jog"), 0);
+      if (any) {
+        EXPECT_FALSE(option.at("snap").is_null());
+      }
+      if (option.at("snap").is_null()) {
+        continue;
+      }
+      ++snapped;
+      shifts.emplace(option.at("snap").at(0).get<int>(), option.at("snap").at(1).get<int>());
+      const auto mid = [&](const std::size_t axis) {
+        return option.at("in").at(axis).get<std::int64_t>() +
+               option.at("out").at(axis).get<std::int64_t>();
+      };
+      // twice the middle, on every tenth half cell
+      EXPECT_EQ(mid(0) % 10, 0) << option.dump();
+      EXPECT_EQ(mid(1) % 10, 0) << option.dump();
+    }
+  }
+  EXPECT_GT(snapped, 0U);
+  for (const auto& [f, r] : shifts) {
+    EXPECT_TRUE(f == 0 || f == 20) << f;
+    EXPECT_TRUE(r == 0 || r == 20 || r == -20) << r;
+  }
+  EXPECT_TRUE(shifts.contains({0, 0}));
+  EXPECT_TRUE(std::ranges::any_of(outcome.every, [](const std::string& line) {
+    return line.find("snap options 50 (f 0,20, r 0,20,-20)") != std::string::npos;
+  }));
+}
+
+/// A snap move that puts the pad or its feedline run through the box edge
+/// takes the next grid point inward, as a plain option is moved into the
+/// box, instead of being refused: on the 17-qubit chip, whose couplers along
+/// the border stand at the box edge, a snap move is refused for the box only
+/// where the move inward passes `coupler_shift_cells` (the move then mostly
+/// undoes itself), and every snap option keeps the middle of its feedline
+/// ports on the grid.
+TEST(CouplerSession, MovesASnapOptionIntoTheBoxInGridSteps) {
+  auto chip = seventeenQubit();
+  finalParamsOf(chip).router_grid_snap = 50.0;
+  finalParamsOf(chip).coupler_snap_pitch = 50.0;
+  finalParamsOf(chip).coupler_merge = false;
+  const auto planned = plan(chip);
+  const auto outcome = globalSatOf(chip, planned);
+  const auto line = std::ranges::find_if(outcome.every, [](const std::string& said) {
+    return said.find("snap options:") != std::string::npos;
+  });
+  ASSERT_NE(line, outcome.every.end());
+  // Refused for the box only where the move inward passes coupler_shift_cells.
+  EXPECT_FALSE(std::regex_search(*line, std::regex(R"(\d+ (the body|the feedline's run along the pad) leaves the box)")))
+      << *line;
+  for (const auto& coupler : nlohmann::json::parse(outcome.couplers).at("couplers")) {
+    for (const auto& option : coupler.at("options")) {
+      if (option.at("snap").is_null()) {
+        continue;
+      }
+      const auto twiceMiddle = [&](const std::size_t axis) {
+        return option.at("in").at(axis).get<std::int64_t>() + option.at("out").at(axis).get<std::int64_t>();
+      };
+      EXPECT_EQ(twiceMiddle(0) % 10, 0) << option.dump();
+      EXPECT_EQ(twiceMiddle(1) % 10, 0) << option.dump();
+    }
+  }
+}
+
+/// A snap move that leaves the resonator too long or too short is moved
+/// along the resonator's way, toward the qubit or back from it, in whole grid
+/// steps, until the length fits, as the grid options slide along the way:
+/// on the 17-qubit chip some snap options are built that way, the line after
+/// the settings counts them, and every snap option keeps the middle of its
+/// feedline ports on the grid.
+TEST(CouplerSession, SlidesASnapOptionAlongTheWayUntilItsLengthFits) {
+  auto chip = seventeenQubit();
+  finalParamsOf(chip).router_grid_snap = 50.0;
+  finalParamsOf(chip).coupler_snap_pitch = 50.0;
+  finalParamsOf(chip).coupler_merge = false;
+  const auto planned = plan(chip);
+  const auto outcome = globalSatOf(chip, planned);
+  const auto line = std::ranges::find_if(outcome.every, [](const std::string& said) {
+    return said.find("snap options:") != std::string::npos;
+  });
+  ASSERT_NE(line, outcome.every.end());
+  std::smatch slid;
+  ASSERT_TRUE(std::regex_search(*line, slid, std::regex(R"((\d+) slid along the resonator)"))) << *line;
+  EXPECT_GT(std::stoi(slid[1].str()), 0) << *line;
+  for (const auto& coupler : nlohmann::json::parse(outcome.couplers).at("couplers")) {
+    for (const auto& option : coupler.at("options")) {
+      if (option.at("snap").is_null()) {
+        continue;
+      }
+      const auto twiceMiddle = [&](const std::size_t axis) {
+        return option.at("in").at(axis).get<std::int64_t>() + option.at("out").at(axis).get<std::int64_t>();
+      };
+      EXPECT_EQ(twiceMiddle(0) % 10, 0) << option.dump();
+      EXPECT_EQ(twiceMiddle(1) % 10, 0) << option.dump();
+    }
+  }
 }
 
 /// `coupler_option_extension` adds centred options: the pad's centre on the
@@ -2394,6 +2625,47 @@ TEST(CouplerSession, CutsEveryGateAtTheWallsItCrosses) {
     }
   }
   EXPECT_GT(gates, 0U);
+}
+
+TEST(CouplerSession, GatesTheRunOfATerminalEdgeAtItsCouplerAgainstTheArtwork) {
+  // The run of a terminal edge at its coupler stands free on the chip, as
+  // the coupler does, whichever way the edge runs: no target run that sits
+  // on the copper of its port. So it makes gates with the artwork and the
+  // border (user, 2026-10-31: on 45q_dense the gate from f38's run at its
+  // coupler to the artwork of Qb25, which wires 126 and 127 pass, was
+  // missing because f38 runs from its launcher to its coupler).
+  const auto benchmark = seventeenQubit();
+  const auto planned = plan(benchmark);
+  CouplerSession session(benchmark.chip, planned.global, planned.assignment,
+                         planned.detail, benchmark.config);
+
+  const auto check = stretchCheck(session);
+  const auto& graph = check.at("graph");
+  std::vector<std::string> toCoupler;
+  for (const auto& wire : graph.at("wires")) {
+    if (wire.value("terminal", false) &&
+        wire.at("target").at("label") == "coupler port") {
+      toCoupler.push_back(wire.at("name").get<std::string>());
+    }
+  }
+  ASSERT_FALSE(toCoupler.empty());
+  for (const auto& name : toCoupler) {
+    bool gated = false;
+    for (const auto& edge : graph.at("edges")) {
+      if (edge.at("kind") != "bottleneck") {
+        continue;
+      }
+      const auto ends = edge.at("ends").get<std::vector<std::string>>();
+      const auto run = std::ranges::any_of(ends, [&](const std::string& end) {
+        return end.starts_with(name + " at its coupler");
+      });
+      const auto still = std::ranges::any_of(ends, [](const std::string& end) {
+        return end.starts_with("artwork") || end == "border";
+      });
+      gated = gated || (run && still);
+    }
+    EXPECT_TRUE(gated) << name;
+  }
 }
 
 /// A line of the capacity graph, in cells.

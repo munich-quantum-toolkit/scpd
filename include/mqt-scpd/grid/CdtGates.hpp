@@ -33,6 +33,14 @@ struct CdtWall {
   /// A flank of the run at a wire's target: it forms no bottleneck with a
   /// static wall either.
   bool target = false;
+  /// Where a wire may cross the wall (a feedline edge between two couplers),
+  /// as points on it: a channel along it is cut where they lie. Two
+  /// candidates of one channel are of one basin only when each of their
+  /// ends on such a wall lies nearest the same point, so every stretch of
+  /// the channel between two crossings keeps a gate of its own: a wire that
+  /// enters the channel and leaves it across the wall passes the gate of
+  /// every stretch before its crossing.
+  std::vector<std::array<double, 2>> splits;
 };
 
 /// The settings of `cdtGates`.

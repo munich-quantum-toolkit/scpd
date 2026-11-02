@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
+#include <vector>
 
 namespace mqt::scpd::routing {
 
@@ -89,5 +91,37 @@ spliceCouplerDogleg(
     const MovePrimitives& primitives, double targetLength, Path& path,
     Heading orientation, const CouplerDoglegOptions& options = {},
     const std::function<bool(uint32_t, uint32_t)>& anchorAllowed = {});
+
+/// A coupler option as `coupler_snap_pitch` moves it, in cells: its two
+/// feedline ports and the anchor of the resonator's lead on the pad.
+struct CouplerSnapPad {
+  double inX = 0.0;
+  double inY = 0.0;
+  double outX = 0.0;
+  double outY = 0.0;
+  double anchorX = 0.0;
+  double anchorY = 0.0;
+};
+
+/// One move of a pad onto the snap grid, in whole cells, and the shifts it
+/// carries.
+struct CouplerSnapMove {
+  std::int64_t x = 0;
+  std::int64_t y = 0;
+  std::int32_t f = 0;
+  std::int32_t r = 0;
+};
+
+/// The moves of `coupler_snap_pitch`: the middle of the pad's feedline ports
+/// onto the nearest point of a grid of `pitch` cells (whose origin is a
+/// cell), then for every f of `fs` and r of `rs`, in that order, f cells
+/// along the feedline toward the port away from the anchor and r cells across
+/// it, positive toward the anchor's side. A pad along a diagonal moves in
+/// whole diagonal steps of the grid, the nearest to f and r. Each move is
+/// kept once, with the first f and r that reach it.
+[[nodiscard]] MQT_SCPD_ROUTING_EXPORT std::vector<CouplerSnapMove>
+couplerSnapMoves(const CouplerSnapPad& pad, std::int64_t pitch,
+                 std::span<const std::int32_t> fs,
+                 std::span<const std::int32_t> rs);
 
 } // namespace mqt::scpd::routing

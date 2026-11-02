@@ -483,7 +483,25 @@ def test_the_coupler_insertion_keys_of_the_final_stage_read_and_default() -> Non
     assert final.couplerLatticeNear == 0.0
     assert final.couplerLatticeChecker is False
     assert final.couplerLatticeReserveStep == 0
+    assert final.couplerSnapPitch == 0.0
+    assert final.couplerSnapF in ("", None, b"")
+    assert final.couplerSnapR in ("", None, b"")
+    assert final.couplerSnapLengthSlack == 0.0
+    assert final.chainOptimalityGap == 0.0
+    assert final.capacityEscapeRounds == 0
+    assert final.capacityEscapeCells == 0.0
+    assert final.capacityMergeFans is True
+    assert final.launcherEscapeCells == 0.0
+    assert final.globalSatEndOptions == 16
     assert final.chainRuleSteps == 0
+    assert final.chainDiveSteps == 0
+    assert final.chainDiveSettleSteps == 0
+    assert final.chainDiveBudget == 0
+    assert final.releasedHaloFactor == 1
+    assert final.releasedArrivalBox is False
+    assert final.lengthPointSoft in ("", None, b"")
+    assert final.lengthPointPrice == 0
+    assert final.lengthPointSoftPairs == 1
     assert final.capacityChamberFill == 0.0
     assert final.couplerMeanderSlack is False
     assert final.couplerMeanderSlackChains in ("", None, b"")
@@ -524,6 +542,18 @@ def test_chain_search_names_the_searches() -> None:
     """`[stages.final] chain_search` is astar or bidirectional, and names the value it refuses."""
     with pytest.raises(ConfigError, match="chain_search: 'dijkstra'"):
         parse_config(MANUAL + '\n[stages.final]\nchain_search = "dijkstra"\n')
+
+
+def test_length_point_soft_names_the_modes() -> None:
+    """`[stages.final] length_point_soft` is empty, refinement or all, and survives a round trip."""
+    with pytest.raises(ConfigError, match="length_point_soft: 'everywhere'"):
+        parse_config(MANUAL + '\n[stages.final]\nlength_point_soft = "everywhere"\n')
+    config = parse_config(MANUAL + '\n[stages.final]\nlength_point_soft = "all"\nlength_point_price = 24\n')
+    back = read_config(write_config(config))
+    assert back.stages is not None
+    assert back.stages.final is not None
+    assert back.stages.final.lengthPointSoft == "all"
+    assert back.stages.final.lengthPointPrice == 24
 
 
 @pytest.mark.parametrize("extensions", ["0,x", "0,10.5", "201", "-201", "0,--3"])

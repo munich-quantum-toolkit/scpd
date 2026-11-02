@@ -97,6 +97,18 @@ public:
   /// check before.
   [[nodiscard]] std::string insertionCheck();
 
+  /// The states of one end of chain `chain` for the pair rounds of the
+  /// global SAT search: its start (`end` false) or end coupler pinned to
+  /// every other open option in turn, at most `global_sat_end_options`, the
+  /// farthest from the coupler's own pad first; each end segment searched
+  /// with the pin and its first run checked locally. Returns JSON: `chain`,
+  /// `side`, `waypoint`, `tried` (the options pinned) and `states` (per state
+  /// `option`, `options` per waypoint and `standing`: SAT with the other
+  /// chains standing, else with the chain alone). The chip stays as it was.
+  ///
+  /// @throws std::invalid_argument when the chain does not exist.
+  [[nodiscard]] std::string endStates(std::uint32_t chain, bool end);
+
   /// The two local checks of the global SAT search on chain `chain` with
   /// its couplers on `options`, one per waypoint (0 at a fixed waypoint).
   /// The chain's couplers are put on `options` and their feedline edges

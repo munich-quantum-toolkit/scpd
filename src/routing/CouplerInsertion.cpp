@@ -21,7 +21,9 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <numbers>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -368,6 +370,65 @@ std::optional<CouplerSplice> spliceCouplerDogleg(
                                   .heading = chosenCell.heading,
                                   .primitive = chosenCell.primitive},
                        .inAllowedArea = inAllowedArea};
+}
+
+std::vector<CouplerSnapMove> couplerSnapMoves(const CouplerSnapPad& pad,
+                                              const std::int64_t pitch,
+                                              std::span<const std::int32_t> fs,
+                                              std::span<const std::int32_t> rs) {
+  std::vector<CouplerSnapMove> moves;
+  const double ux0 = pad.outX - pad.inX;
+  const double uy0 = pad.outY - pad.inY;
+  const double length = std::hypot(ux0, uy0);
+  if (pitch <= 0 || !(length > 0.0)) {
+    return moves;
+  }
+  const double ux = ux0 / length;
+  const double uy = uy0 / length;
+  const double midX = 0.5 * (pad.inX + pad.outX);
+  const double midY = 0.5 * (pad.inY + pad.outY);
+  const double toAnchorX = pad.anchorX - midX;
+  const double toAnchorY = pad.anchorY - midY;
+  // f runs along the feedline toward the port away from the stub; r across
+  // it, positive toward the side the stub (and the resonator) lies on.
+  const double along = (toAnchorX * ux) + (toAnchorY * uy) > 0.0 ? -1.0 : 1.0;
+  const double fx = along * ux;
+  const double fy = along * uy;
+  const double side = (toAnchorX * uy) - (toAnchorY * ux) > 0.0 ? 1.0 : -1.0;
+  const double vx = side * uy;
+  const double vy = -side * ux;
+  const auto step = static_cast<double>(pitch);
+  const double snapX = step * std::round(midX / step);
+  const double snapY = step * std::round(midY / step);
+  const bool diagonal = std::abs(ux) > 1e-9 && std::abs(uy) > 1e-9;
+  const auto sign = [](const double value) { return value > 0.0 ? 1.0 : -1.0; };
+  for (const auto f : fs) {
+    for (const auto r : rs) {
+      double targetX = 0.0;
+      double targetY = 0.0;
+      if (diagonal) {
+        // Whole diagonal steps of the grid, (pitch, pitch) each.
+        const double diagonalStep = step * std::numbers::sqrt2;
+        const double kf = std::round(static_cast<double>(f) / diagonalStep);
+        const double kr = std::round(static_cast<double>(r) / diagonalStep);
+        targetX = snapX + (step * ((kf * sign(fx)) + (kr * sign(vx))));
+        targetY = snapY + (step * ((kf * sign(fy)) + (kr * sign(vy))));
+      } else {
+        targetX = snapX + (static_cast<double>(f) * fx) + (static_cast<double>(r) * vx);
+        targetY = snapY + (static_cast<double>(f) * fy) + (static_cast<double>(r) * vy);
+      }
+      const CouplerSnapMove move{.x = std::llround(targetX - midX),
+                                 .y = std::llround(targetY - midY),
+                                 .f = f,
+                                 .r = r};
+      if (std::ranges::none_of(moves, [&](const CouplerSnapMove& other) {
+            return other.x == move.x && other.y == move.y;
+          })) {
+        moves.push_back(move);
+      }
+    }
+  }
+  return moves;
 }
 
 } // namespace mqt::scpd::routing

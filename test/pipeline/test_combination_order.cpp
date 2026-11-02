@@ -172,5 +172,136 @@ TEST(CombinationOrder, ATieBetweenPadsNamesTheSmallerChain) {
   EXPECT_EQ(namedChains(finding, chip), (std::set<std::uint32_t>{1}));
 }
 
+// ------------------------------------------------- conflicts between feedline ends
+
+/// Two chains of four waypoints (0 and 3 launchers): f0 0->1, f1 1->2, f2 2->3
+/// on chain 0, f3 to f5 the same on chain 1; the resonator R5 at waypoint 2 of
+/// chain 1. The start couplers stand at x 0 and 12, the end couplers at 10
+/// and 30.
+FeedlineMap twoChains() {
+  FeedlineMap chip;
+  chip.feedlines = {{"f0", {.chain = 0, .from = 0, .to = 1, .terminal = true}},
+                    {"f1", {.chain = 0, .from = 1, .to = 2, .terminal = false}},
+                    {"f2", {.chain = 0, .from = 2, .to = 3, .terminal = true}},
+                    {"f3", {.chain = 1, .from = 0, .to = 1, .terminal = true}},
+                    {"f4", {.chain = 1, .from = 1, .to = 2, .terminal = false}},
+                    {"f5", {.chain = 1, .from = 2, .to = 3, .terminal = true}}};
+  chip.resonators = {{"R5", {1, 2}}};
+  chip.size = {4, 4};
+  chip.ends = {{1, 2}, {1, 2}};
+  chip.centres = {{{{0.0, 0.0}, {10.0, 0.0}}}, {{{12.0, 0.0}, {30.0, 0.0}}}};
+  return chip;
+}
+
+constexpr ChainEnd startOf(const std::uint32_t chain) {
+  return {.chain = chain, .side = ChainSide::Start};
+}
+constexpr ChainEnd endOf(const std::uint32_t chain) {
+  return {.chain = chain, .side = ChainSide::End};
+}
+
+TEST(ConflictPairs, ATerminalStubAgainstAPortTakesTheNearestOtherEnd) {
+  const auto pairs = conflictPairs(
+      {{.name = "g380", .ends = {"f2 at its coupler, right", "7 at its target, right"}, .middle = {11.0, 1.0}}},
+      twoChains());
+  ASSERT_EQ(pairs.size(), 1U);
+  EXPECT_EQ(pairs[0].first, endOf(0));
+  EXPECT_EQ(pairs[0].second, startOf(1));
+  EXPECT_EQ(pairs[0].gate, "g380");
+}
+
+TEST(ConflictPairs, TwoFeedlineWallsMakeThePairDirectly) {
+  const auto pairs = conflictPairs(
+      {{.name = "g1", .ends = {"f2 at its coupler, left", "f3 at its coupler, right"}, .middle = {100.0, 100.0}}},
+      twoChains());
+  ASSERT_EQ(pairs.size(), 1U);
+  EXPECT_EQ(pairs[0].first, endOf(0));
+  EXPECT_EQ(pairs[0].second, startOf(1));
+}
+
+TEST(ConflictPairs, AnInnerEdgeMapsToItsNearerEnd) {
+  const auto pairs =
+      conflictPairs({{.name = "g1", .ends = {"f1", "f4"}, .middle = {0.0, 0.0}}}, twoChains());
+  // Both edges run 1 -> 2 of four waypoints: before the middle, the start.
+  ASSERT_EQ(pairs.size(), 1U);
+  EXPECT_EQ(pairs[0].first, startOf(0));
+  EXPECT_EQ(pairs[0].second, startOf(1));
+}
+
+TEST(ConflictPairs, ALeadMapsThroughItsResonator) {
+  const auto pairs = conflictPairs(
+      {{.name = "g1", .ends = {"f2", "lead of R5, left"}, .middle = {0.0, 0.0}}}, twoChains());
+  ASSERT_EQ(pairs.size(), 1U);
+  EXPECT_EQ(pairs[0].first, endOf(0));
+  EXPECT_EQ(pairs[0].second, endOf(1));
+}
+
+TEST(ConflictPairs, APairComesOnceInTheOrderOfItsFirstGate) {
+  const auto pairs = conflictPairs({{.name = "g1", .ends = {"f1", "f4"}, .middle = {0.0, 0.0}},
+                                    {.name = "g2", .ends = {"f2", "f3"}, .middle = {0.0, 0.0}},
+                                    {.name = "g3", .ends = {"f4", "f1"}, .middle = {0.0, 0.0}}},
+                                   twoChains());
+  ASSERT_EQ(pairs.size(), 2U);
+  EXPECT_EQ(pairs[0].first, startOf(0));
+  EXPECT_EQ(pairs[0].second, startOf(1));
+  EXPECT_EQ(pairs[0].gate, "g1");
+  EXPECT_EQ(pairs[1].first, endOf(0));
+  EXPECT_EQ(pairs[1].second, startOf(1));
+  EXPECT_EQ(pairs[1].gate, "g2");
+}
+
+TEST(ConflictPairs, AGateOfNoFeedlineMakesNoPair) {
+  const auto pairs = conflictPairs(
+      {{.name = "g1", .ends = {"artwork near Qb1.port0", "7 at its target, left"}, .middle = {11.0, 0.0}}},
+      twoChains());
+  EXPECT_TRUE(pairs.empty());
+}
+
+TEST(ConflictPairs, AChainOfOneCouplerIsNotItsOwnPartner) {
+  // Chain 2: a launcher, one coupler at x 50, a launcher; both walls of the
+  // gate are its own.
+  auto chip = twoChains();
+  chip.feedlines.insert({"f6", {.chain = 2, .from = 0, .to = 1, .terminal = true}});
+  chip.feedlines.insert({"f7", {.chain = 2, .from = 1, .to = 2, .terminal = true}});
+  chip.size.push_back(3);
+  chip.ends.push_back({1, 1});
+  chip.centres.push_back({{{50.0, 0.0}, {50.0, 0.0}}});
+  const auto pairs = conflictPairs(
+      {{.name = "g1", .ends = {"f6 at its coupler, left", "f7 at its coupler, right"}, .middle = {49.0, 1.0}}},
+      chip);
+  ASSERT_EQ(pairs.size(), 1U);
+  EXPECT_NE(pairs[0].first.chain, pairs[0].second.chain);
+  EXPECT_EQ(pairs[0].first, endOf(1));
+  EXPECT_EQ(pairs[0].second.chain, 2U);
+}
+
+TEST(PairRound, TriesEachSideAloneThenBoth) {
+  const auto picks = pairRoundPicks({0, 0, 0}, 0, {3, 4}, 2, {5}, {});
+  EXPECT_EQ(picks, (std::vector<Combination>{
+                       {3, 0, 0}, {4, 0, 0}, {0, 0, 5}, {3, 0, 5}, {4, 0, 5}}));
+}
+
+TEST(PairRound, OrdersTheJointPicksByRankSum) {
+  const auto picks = pairRoundPicks({0, 0, 0}, 0, {1, 2}, 2, {1, 2}, {});
+  ASSERT_EQ(picks.size(), 8U);
+  // The four alone first, then both: rank sums 0, 1, 1, 2, a's rank on a tie.
+  EXPECT_EQ(std::vector<Combination>(picks.begin() + 4, picks.end()),
+            (std::vector<Combination>{{1, 0, 1}, {1, 0, 2}, {2, 0, 1}, {2, 0, 2}}));
+}
+
+TEST(PairRound, LeavesOutWhatWasTried) {
+  const auto picks = pairRoundPicks({0, 0, 0}, 0, {3, 4}, 2, {5}, {{3, 0, 0}});
+  EXPECT_EQ(std::ranges::count(picks, Combination{3, 0, 0}), 0);
+  EXPECT_EQ(picks.size(), 4U);
+}
+
+TEST(PairRound, KeepsWhatTheBaseMoves) {
+  const auto picks = pairRoundPicks({0, 7, 0}, 0, {3, 4}, 2, {5}, {});
+  ASSERT_FALSE(picks.empty());
+  for (const auto& pick : picks) {
+    EXPECT_EQ(pick[1], 7U);
+  }
+}
+
 } // namespace
 } // namespace mqt::scpd::pipeline

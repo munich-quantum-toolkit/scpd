@@ -172,7 +172,33 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "coupler_lattice_near": 0.0,
         "coupler_lattice_checker": False,
         "coupler_lattice_reserve_step": 0,
+        "coupler_snap_pitch": 0.0,
+        "coupler_snap_f": "",
+        "coupler_snap_r": "",
+        "coupler_snap_length_slack": 0.0,
+        "chain_optimality_gap": 0.0,
+        "global_sat_end_options": 16,
         "capacity_chamber_fill": 0.0,
+        "capacity_escape_rounds": 0,
+        "capacity_escape_cells": 0.0,
+        "capacity_merge_fans": True,
+        "launcher_escape_cells": 0.0,
+        "capacity_escape_touch": False,
+        "capacity_chords": False,
+        "capacity_chords_routing": False,
+        "capacity_slot_room": False,
+        "capacity_escape_touch_routing": False,
+        "chain_gate_blacklist": False,
+        "chain_gate_penalty": 0,
+        "capacity_prescribe_open_edges": False,
+        "chain_dive_steps": 0,
+        "chain_dive_settle_steps": 0,
+        "chain_dive_budget": 0,
+        "released_halo_factor": 1,
+        "released_arrival_box": False,
+        "length_point_soft": "",
+        "length_point_price": 0,
+        "length_point_soft_pairs": 1,
         "coupler_meander_slack": False,
         "coupler_meander_slack_chains": "",
         "crossing_reach_cells": 10,
@@ -424,6 +450,10 @@ def _jog_problems(text: str) -> list[str]:
 
 #: The searches ``[stages.final] chain_search`` names: from the front of a chain alone, or from both ends.
 CHAIN_SEARCHES = ("astar", "bidirectional")
+#: Where ``[stages.final] length_point_soft`` prices the length-point band rather than closing
+#: it: nowhere, in the outer refinement alone, in the outer routing, its relaxation and the
+#: outer refinement, or only where the closed band would leave a wire with no way.
+LENGTH_POINT_SOFT = ("", "refinement", "all", "fallback")
 
 #: The furthest ``[stages.final] coupler_option_extension`` places a centred option, in cells.
 MAX_EXTENSION_CELLS = 200
@@ -559,6 +589,12 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("global_sat_tries", "globalSatTries"),
         ("chain_rule_refusals", "chainRuleRefusals"),
         ("chain_rule_steps", "chainRuleSteps"),
+        ("chain_dive_steps", "chainDiveSteps"),
+        ("chain_dive_settle_steps", "chainDiveSettleSteps"),
+        ("chain_dive_budget", "chainDiveBudget"),
+        ("released_halo_factor", "releasedHaloFactor"),
+        ("length_point_price", "lengthPointPrice"),
+        ("length_point_soft_pairs", "lengthPointSoftPairs"),
         ("chain_dead_prefix_refusals", "chainDeadPrefixRefusals"),
         ("coupler_lattice_options", "couplerLatticeOptions"),
         ("coupler_lattice_reserve", "couplerLatticeReserve"),
@@ -621,7 +657,32 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.final.couplerLatticeNear = take(final, "coupler_lattice_near", float)
     stages.final.couplerLatticeChecker = take(final, "coupler_lattice_checker", bool)
     stages.final.couplerLatticeReserveStep = take(final, "coupler_lattice_reserve_step", int)
+    stages.final.couplerSnapPitch = take(final, "coupler_snap_pitch", float)
+    stages.final.couplerSnapF = take(final, "coupler_snap_f", str)
+    stages.final.couplerSnapR = take(final, "coupler_snap_r", str)
+    stages.final.couplerSnapLengthSlack = take(final, "coupler_snap_length_slack", float)
+    stages.final.chainOptimalityGap = take(final, "chain_optimality_gap", float)
+    stages.final.globalSatEndOptions = take(final, "global_sat_end_options", int)
     stages.final.capacityChamberFill = take(final, "capacity_chamber_fill", float)
+    stages.final.capacityEscapeRounds = take(final, "capacity_escape_rounds", int)
+    stages.final.capacityEscapeCells = take(final, "capacity_escape_cells", float)
+    stages.final.capacityMergeFans = take(final, "capacity_merge_fans", bool)
+    stages.final.launcherEscapeCells = take(final, "launcher_escape_cells", float)
+    stages.final.capacityEscapeTouch = take(final, "capacity_escape_touch", bool)
+    stages.final.capacityChords = take(final, "capacity_chords", bool)
+    stages.final.capacityChordsRouting = take(final, "capacity_chords_routing", bool)
+    stages.final.capacitySlotRoom = take(final, "capacity_slot_room", bool)
+    stages.final.capacityEscapeTouchRouting = take(final, "capacity_escape_touch_routing", bool)
+    stages.final.chainGateBlacklist = take(final, "chain_gate_blacklist", bool)
+    stages.final.chainGatePenalty = take(final, "chain_gate_penalty", int)
+    stages.final.capacityPrescribeOpenEdges = take(final, "capacity_prescribe_open_edges", bool)
+    stages.final.releasedArrivalBox = take(final, "released_arrival_box", bool)
+    stages.final.lengthPointSoft = take(final, "length_point_soft", str)
+    if stages.final.lengthPointSoft not in LENGTH_POINT_SOFT:
+        problems.append(
+            f"[stages.final] length_point_soft: '{stages.final.lengthPointSoft}' is not one of "
+            + ", ".join(f"'{mode}'" for mode in LENGTH_POINT_SOFT)
+        )
     stages.final.couplerMeanderSlack = take(final, "coupler_meander_slack", bool)
     stages.final.couplerMeanderSlackChains = take(final, "coupler_meander_slack_chains", str)
     stages.final.chainEndBlacklist = take(final, "chain_end_blacklist", bool)

@@ -18,6 +18,7 @@
 #include <functional>
 #include <map>
 #include <random>
+#include <set>
 #include <span>
 #include <utility>
 #include <vector>
@@ -781,3 +782,117 @@ TEST(ChainSearch, AStepFromTheBackCanEndTheSearch) {
 }
 
 } // namespace
+
+namespace {
+
+/// One fixed start, `n` choices, one fixed end. Choice 0's step costs what
+/// its bound says, 49, and the step out of it 53 against a bound of 50, so
+/// its run costs 102 and is found first; every other choice is bounded at 50
+/// but costs 60, so the optimum is 102 and every other run 110 — and ruling
+/// them out takes a priced step each.
+ChainProblem plateau(const uint32_t n) {
+  ChainProblem problem;
+  problem.width = {1, n, 1};
+  problem.bound = [](const std::size_t layer, const uint32_t from,
+                     const uint32_t to) -> uint64_t {
+    if (layer == 0) {
+      return to == 0 ? 49 : 50;
+    }
+    static_cast<void>(from);
+    return 50;
+  };
+  problem.step = [](const std::span<const uint32_t> prefix, const uint32_t to,
+                    int64_t&) -> uint64_t {
+    if (prefix.size() == 1) {
+      return to == 0 ? 49 : 60;
+    }
+    return prefix[1] == 0 ? 53 : 50;
+  };
+  return problem;
+}
+
+} // namespace
+
+TEST(ChainSearch, AnOptimalityGapStopsOnARunWithinItOfTheBound) {
+  // Exact, the search prices every one of the `n - 1` dear choices before it
+  // can name the run of 102. With a gap of 5 % it stops as soon as that run
+  // lies within 5 % of the cheapest bound still open (100): the same run,
+  // far fewer steps, and said to be within the gap rather than optimal.
+  const auto exact = solveChainAStar(plateau(40));
+  ASSERT_TRUE(exact.solved);
+  EXPECT_EQ(exact.cost, 102U);
+  EXPECT_TRUE(exact.optimal);
+  EXPECT_FALSE(exact.withinGap);
+
+  auto problem = plateau(40);
+  problem.gap = 0.05;
+  const auto gapped = solveChainAStar(problem);
+  ASSERT_TRUE(gapped.solved);
+  EXPECT_EQ(gapped.cost, 102U);
+  EXPECT_EQ(gapped.chosen, (std::vector<uint32_t>{0, 0, 0}));
+  EXPECT_TRUE(gapped.withinGap);
+  EXPECT_FALSE(gapped.optimal);
+  EXPECT_LT(gapped.routed, exact.routed);
+  EXPECT_EQ(gapped.routed, 2U);
+}
+
+TEST(ChainSearch, AGapTooSmallForTheRunSearchesOnToTheOptimum) {
+  // 102 is 2 % over the bound of 100: a gap of 1 % does not cover it, and
+  // the search answers exactly as without a gap.
+  auto problem = plateau(40);
+  problem.gap = 0.01;
+  const auto result = solveChainAStar(problem);
+  ASSERT_TRUE(result.solved);
+  EXPECT_EQ(result.cost, 102U);
+  EXPECT_TRUE(result.optimal);
+  EXPECT_FALSE(result.withinGap);
+  EXPECT_EQ(result.routed, solveChainAStar(plateau(40)).routed);
+}
+
+TEST(ChainSearch, ABoundThatRisesSteersTheSearchOffADeadEnd) {
+  // **The end blacklist of the coupler insertion, as a search sees it**
+  // (45q_dense chain 4, user 2026-10-31). Thirty-six prefixes of two wide
+  // layers cost the same; after them the cheap choice 0 of layer 3 cannot
+  // reach the launcher under any prefix, and the dear choice 1 can. The
+  // first prefix to try 0 → launcher learns that and raises the bound of the
+  // pair to everything (`boundRose`). The search must then work out its
+  // heuristic anew and take choice 1, not step into choice 0 once per
+  // prefix: on the chip every such step is a capacity check, and the search
+  // ran out of its step budget on them before it ever tried choice 1.
+  std::set<std::pair<uint32_t, uint32_t>> shut;
+  uint32_t intoTheDeadEnd = 0;
+  ChainProblem problem;
+  problem.width = {1, 6, 6, 2, 1};
+  problem.bound = [&shut](const std::size_t layer, const uint32_t from,
+                          const uint32_t to) -> uint64_t {
+    if (layer == 2) {
+      return to == 0 ? 1 : 5;
+    }
+    if (layer == 3 && shut.contains({from, to})) {
+      return TRELLIS_UNREACHABLE;
+    }
+    return 1;
+  };
+  problem.step = [&](const std::span<const uint32_t> prefix, const uint32_t to,
+                     int64_t& redone) -> uint64_t {
+    redone = 0;
+    const auto layer = prefix.size() - 1;
+    if (layer == 2 && to == 0) {
+      ++intoTheDeadEnd;
+    }
+    if (layer == 3 && prefix[3] == 0) {
+      if (shut.insert({0U, to}).second) {
+        problem.boundRose = true;
+      }
+      return TRELLIS_UNREACHABLE;
+    }
+    return problem.bound(layer, prefix[layer], to);
+  };
+
+  const auto result = solveChainAStar(problem);
+  ASSERT_TRUE(result.solved);
+  EXPECT_TRUE(result.optimal);
+  EXPECT_EQ(result.cost, 8U);
+  EXPECT_EQ(result.chosen[3], 1U);
+  EXPECT_EQ(intoTheDeadEnd, 1U);
+}

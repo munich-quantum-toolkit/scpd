@@ -30,6 +30,14 @@ namespace mqt::scpd::pipeline {
 /// 0 for the state the commit left.
 using Combination = std::vector<std::size_t>;
 
+/// A bottleneck over its capacity as the whole-chip check names it: its
+/// name, the names of the walls at its two ends and the middle of its line.
+struct OverGate {
+  std::string name;
+  std::vector<std::string> ends;
+  std::array<double, 2> middle{};
+};
+
 /// A combination the whole-chip check found UNSAT.
 struct FailedCombination {
   /// The combination.
@@ -41,6 +49,8 @@ struct FailedCombination {
   std::set<std::uint32_t> named;
   /// The number of the check, 0 for the commit.
   std::uint32_t check = 0;
+  /// The bottlenecks over its capacity the check found (the pair rounds).
+  std::vector<OverGate> gates;
 };
 
 /// One round of the conflict-directed stage of the global SAT search.
@@ -115,5 +125,67 @@ namedChains(const CheckFinding& finding, const ChipChains& chip);
 nextCombinationRound(std::vector<FailedCombination> failed,
                      const std::function<std::size_t(std::uint32_t)>& statesOf,
                      const std::set<Combination>& tried);
+
+/// Which end of a chain (a feedline): its start, the first coupler, or its
+/// end, the last coupler.
+enum class ChainSide : std::uint8_t { Start, End };
+
+/// One end of a chain.
+struct ChainEnd {
+  std::uint32_t chain = 0;
+  ChainSide side = ChainSide::Start;
+  auto operator<=>(const ChainEnd&) const = default;
+};
+
+/// Two chain ends that compete for a bottleneck over its capacity, the
+/// lower chain first, and the bottleneck that named them first.
+struct ConflictPair {
+  ChainEnd first;
+  ChainEnd second;
+  std::string gate;
+};
+
+/// What `conflictPairs` knows of the chip: per feedline edge (`f<k>`) its
+/// chain, its two waypoints and whether it is a terminal edge; per resonator
+/// the chain and waypoint of its coupler; per chain its number of waypoints,
+/// the waypoints of its start and end couplers and their pad centres.
+struct FeedlineMap {
+  struct Feedline {
+    std::uint32_t chain = 0;
+    std::size_t from = 0;
+    std::size_t to = 0;
+    bool terminal = false;
+  };
+  std::map<std::string, Feedline> feedlines;
+  std::map<std::string, std::pair<std::uint32_t, std::size_t>> resonators;
+  std::vector<std::size_t> size;
+  std::vector<std::array<std::size_t, 2>> ends;
+  std::vector<std::array<std::array<double, 2>, 2>> centres;
+};
+
+/// The chain ends that compete for the bottlenecks over, for the pair rounds
+/// of the global SAT search. Each end wall of a bottleneck names a chain end:
+/// a terminal edge (`fN`, `fN at its coupler`, `fN at its launcher`) the end
+/// it belongs to; an inner edge the end nearer it by waypoint; a resonator's
+/// lead, pad or port the end nearer its coupler's waypoint; any other wall
+/// none. When the two walls name two chains, they are the pair; when they
+/// name one chain only, its partner is the end coupler of another chain
+/// whose pad centre lies nearest the middle of the bottleneck (the lower
+/// chain, then its start, on a tie). A bottleneck that names no chain makes
+/// no pair. Each pair comes once, in the order of the bottleneck that named
+/// it first.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<ConflictPair>
+conflictPairs(const std::vector<OverGate>& gates, const FeedlineMap& chip);
+
+/// The combinations of one pair round of the global SAT search, on top of
+/// `base`: chain `a` alone on each of `statesA` (state numbers, best first),
+/// then chain `b` alone on each of `statesB`, then both, by the sum of the
+/// two states' ranks in their lists, then by a's rank; every combination
+/// `tried` holds left out.
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<Combination>
+pairRoundPicks(const Combination& base, std::uint32_t a,
+               const std::vector<std::size_t>& statesA, std::uint32_t b,
+               const std::vector<std::size_t>& statesB,
+               const std::set<Combination>& tried);
 
 } // namespace mqt::scpd::pipeline

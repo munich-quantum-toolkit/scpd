@@ -63,6 +63,8 @@ constexpr double CONSTRAINT_TOLERANCE = 0.0;
 constexpr double HAIR_REACH = 1e-4;
 /// A gap of no wire narrower than this is no contact (`cdtGates`).
 constexpr double NARROWEST = 3.0;
+/// A run of no wire narrower than this somewhere is where two walls touch.
+constexpr double TOUCH = 2.0;
 
 double msSince(const Clock::time_point from, const Clock::time_point to) {
   return std::chrono::duration<double, std::milli>(to - from).count();
@@ -808,6 +810,8 @@ struct CdtWorld::Impl {
   std::vector<u32> wallGroup;
   std::vector<u32> wallObject;
   std::vector<std::uint8_t> wallCuts;
+  /// Per wall, where a wire may cross it (`CdtWall::splits`).
+  std::vector<std::vector<std::array<double, 2>>> wallSplits;
   std::vector<std::uint8_t> groupFixed;
   std::vector<std::uint8_t> groupTarget;
   /// What orders the groups: a function of the walls' labels and the
@@ -1506,6 +1510,7 @@ struct CdtWorld::Impl {
     wallGroup.resize(staticWalls + 1);
     wallObject.assign(staticWalls + 1, NONE);
     wallCuts.assign(staticWalls + 1, 1);
+    wallSplits.assign(staticWalls + 1, {});
     groupFixed.assign(staticWalls + 1, 1);
     groupTarget.assign(staticWalls + 1, 0);
     groupRank.resize(staticWalls + 1);
@@ -1521,6 +1526,7 @@ struct CdtWorld::Impl {
       wallCuts[label] = cuts.empty() || (label < cuts.size() && cuts[label] != 0)
                             ? 1
                             : 0;
+      wallSplits[label] = wall.splits;
     }
     wallGroup[outsideWall] = outsideWall;
     gidNx = (static_cast<std::int64_t>(width) / GID_SQUARE) + 1;
@@ -1718,6 +1724,7 @@ struct CdtWorld::Impl {
       const auto& wall = spec.walls[k];
       const auto local = wall.group < object.wallCount ? wall.group : k;
       wallGroup.push_back(firstGroup + local);
+      wallSplits.push_back(wall.splits);
       wallObject.push_back(o);
       wallCuts.push_back(spec.cuts.empty() || (k < spec.cuts.size() && spec.cuts[k] != 0)
                              ? 1
@@ -2261,6 +2268,38 @@ struct CdtWorld::Impl {
         }
       }
       const auto n = component.size();
+      // The stretch of a split wall each end of a candidate lies on, as
+      // `cdtGates` takes it: per end the nearest split point of the first
+      // wall at it that has any.
+      const auto stretchOf = [&](const u32 v) -> u64 {
+        Groups groups;
+        Groups wallsHere;
+        groupsAt(s, v, groups, wallsHere);
+        const auto p = at(s, v);
+        for (std::uint8_t i = 0; i < wallsHere.count; ++i) {
+          const auto wall = wallsHere.of[i];
+          if (wall >= wallSplits.size() || wallSplits[wall].empty()) {
+            continue;
+          }
+          const auto& splits = wallSplits[wall];
+          u64 best = 0;
+          double distance = std::numeric_limits<double>::infinity();
+          for (u64 k = 0; k < splits.size(); ++k) {
+            const auto d = std::hypot(splits[k][0] - p.x, splits[k][1] - p.y);
+            if (d < distance) {
+              distance = d;
+              best = k;
+            }
+          }
+          return best + 1;
+        }
+        return 0;
+      };
+      std::vector<u64> region(n, 0);
+      for (std::size_t i = 0; i < n; ++i) {
+        const auto& ce = s.pool[component[i]];
+        region[i] = (stretchOf(ce.a) << 32U) | stretchOf(ce.b);
+      }
       neighbours.assign(n, {});
       for (std::size_t i = 0; i < n; ++i) {
         const auto& ce = s.pool[component[i]];
@@ -2268,7 +2307,7 @@ struct CdtWorld::Impl {
           for (std::size_t j = 0; j < 3; ++j) {
             const auto f = s.slot[(tri * 3) + j];
             if (f == NONE || f == component[i] || !s.pool[f].samePair(ce) ||
-                isMouth(s, ce, s.pool[f])) {
+                isMouth(s, ce, s.pool[f]) || region[i] != region[local[f]]) {
               continue;
             }
             neighbours[i].push_back(local[f]);
@@ -2314,15 +2353,38 @@ struct CdtWorld::Impl {
             }
           }
         }
-        for (auto k = from; k < to; ++k) {
-          const auto e = order[k];
-          if (sets.least[sets.find(e)] != e) {
-            continue;
+        if (cap == 0) {
+          // A run of no wire is closed by its narrowest candidate that a
+          // contact can be, as in `cdtGates`: a run narrower than NARROWEST
+          // in one place and wider elsewhere is still a channel no wire
+          // passes. A run narrower than NARROWEST throughout keeps no gate.
+          std::vector<u32> contactOf(n, NONE);
+          for (auto k = from; k < to; ++k) {
+            const auto e = order[k];
+            if (s.pool[component[e]].width < NARROWEST) {
+              continue;
+            }
+            auto& best = contactOf[sets.find(e)];
+            if (best == NONE || narrower(e, best)) {
+              best = e;
+            }
           }
-          if (cap == 0 && s.pool[component[e]].width < NARROWEST) {
-            continue;
+          for (auto k = from; k < to; ++k) {
+            const auto e = order[k];
+            // A run whose narrowest is narrower than TOUCH is where two
+            // walls touch: no gate, as before.
+            if (contactOf[sets.find(e)] == e &&
+                s.pool[component[sets.least[sets.find(e)]]].width >= TOUCH) {
+              gate[e] = 1;
+            }
           }
-          gate[e] = 1;
+        } else {
+          for (auto k = from; k < to; ++k) {
+            const auto e = order[k];
+            if (sets.least[sets.find(e)] == e) {
+              gate[e] = 1;
+            }
+          }
         }
         from = to;
       }

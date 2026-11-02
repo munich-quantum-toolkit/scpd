@@ -1298,6 +1298,32 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   double coupler_lattice_near = 0.0;
   bool coupler_lattice_checker = false;
   uint32_t coupler_lattice_reserve_step = 0;
+  double coupler_snap_pitch = 0.0;
+  std::string coupler_snap_f{};
+  std::string coupler_snap_r{};
+  uint32_t global_sat_end_options = 16;
+  double coupler_snap_length_slack = 0.0;
+  double chain_optimality_gap = 0.0;
+  uint32_t capacity_escape_rounds = 0;
+  double capacity_escape_cells = 0.0;
+  bool capacity_merge_fans = true;
+  double launcher_escape_cells = 0.0;
+  bool capacity_escape_touch = false;
+  bool capacity_chords = false;
+  bool capacity_chords_routing = false;
+  bool capacity_slot_room = false;
+  bool capacity_escape_touch_routing = false;
+  bool chain_gate_blacklist = false;
+  uint32_t chain_gate_penalty = 0;
+  bool capacity_prescribe_open_edges = false;
+  uint32_t chain_dive_steps = 0;
+  uint32_t chain_dive_settle_steps = 0;
+  uint32_t chain_dive_budget = 0;
+  uint32_t released_halo_factor = 1;
+  bool released_arrival_box = false;
+  std::string length_point_soft{};
+  uint32_t length_point_price = 0;
+  uint32_t length_point_soft_pairs = 1;
 };
 
 /// What the Final stage is allowed to do.
@@ -1423,7 +1449,33 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_COUPLER_LATTICE_FLOOR = 212,
     VT_COUPLER_LATTICE_NEAR = 214,
     VT_COUPLER_LATTICE_CHECKER = 216,
-    VT_COUPLER_LATTICE_RESERVE_STEP = 218
+    VT_COUPLER_LATTICE_RESERVE_STEP = 218,
+    VT_COUPLER_SNAP_PITCH = 220,
+    VT_COUPLER_SNAP_F = 222,
+    VT_COUPLER_SNAP_R = 224,
+    VT_GLOBAL_SAT_END_OPTIONS = 226,
+    VT_COUPLER_SNAP_LENGTH_SLACK = 228,
+    VT_CHAIN_OPTIMALITY_GAP = 230,
+    VT_CAPACITY_ESCAPE_ROUNDS = 232,
+    VT_CAPACITY_ESCAPE_CELLS = 234,
+    VT_CAPACITY_MERGE_FANS = 236,
+    VT_LAUNCHER_ESCAPE_CELLS = 238,
+    VT_CAPACITY_ESCAPE_TOUCH = 240,
+    VT_CAPACITY_CHORDS = 242,
+    VT_CAPACITY_CHORDS_ROUTING = 244,
+    VT_CAPACITY_SLOT_ROOM = 246,
+    VT_CAPACITY_ESCAPE_TOUCH_ROUTING = 248,
+    VT_CHAIN_GATE_BLACKLIST = 250,
+    VT_CHAIN_GATE_PENALTY = 252,
+    VT_CAPACITY_PRESCRIBE_OPEN_EDGES = 254,
+    VT_CHAIN_DIVE_STEPS = 256,
+    VT_CHAIN_DIVE_SETTLE_STEPS = 258,
+    VT_CHAIN_DIVE_BUDGET = 260,
+    VT_RELEASED_HALO_FACTOR = 262,
+    VT_RELEASED_ARRIVAL_BOX = 264,
+    VT_LENGTH_POINT_SOFT = 266,
+    VT_LENGTH_POINT_PRICE = 268,
+    VT_LENGTH_POINT_SOFT_PAIRS = 270
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -2078,6 +2130,210 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t coupler_lattice_reserve_step() const {
     return GetField<uint32_t>(VT_COUPLER_LATTICE_RESERVE_STEP, 0);
   }
+  /// The snap options of the coupler insertion, the pitch of their grid in
+  /// layout units (e.g. 50); 0 for none. Every plain option without a jog
+  /// is a template: the middle of its two feedline ports goes onto the
+  /// nearest grid point, then it is moved by every f of `coupler_snap_f`
+  /// along the feedline toward the port away from the resonator's stub and
+  /// by every r of `coupler_snap_r` across it (positive toward the
+  /// resonator), a pad along a diagonal in whole diagonal grid steps. The
+  /// lead is joined to the way where it lies nearest its tip, and the tests
+  /// of every option judge it. The snap options replace the plain ones; no
+  /// jog, copy, grid or line options are built. A coupler that no snap
+  /// option fits keeps its plain options. Needs `router_grid_snap` at the
+  /// same pitch.
+  double coupler_snap_pitch() const {
+    return GetField<double>(VT_COUPLER_SNAP_PITCH, 0.0);
+  }
+  /// The shifts of `coupler_snap_pitch`, as comma lists of cells: f along
+  /// the feedline, r across it. Empty takes "0,20" and "0,20,-20".
+  const ::flatbuffers::String *coupler_snap_f() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COUPLER_SNAP_F);
+  }
+  const ::flatbuffers::String *coupler_snap_r() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COUPLER_SNAP_R);
+  }
+  /// How many options of each competing feedline end the pair rounds of the
+  /// global SAT search try: for a bottleneck over its capacity the two chain
+  /// ends that compete for it, each end coupler pinned to every other open
+  /// option in turn (the farthest from the bottleneck first), each chain
+  /// alone and both together. 0 for the search without pair rounds.
+  uint32_t global_sat_end_options() const {
+    return GetField<uint32_t>(VT_GLOBAL_SAT_END_OPTIONS, 16);
+  }
+  /// How much longer than the target plus `resonator_length_tolerance` the
+  /// resonator a snap option leaves may be, in layout units: the routing
+  /// draws the resonator again and takes the length back out of its way.
+  double coupler_snap_length_slack() const {
+    return GetField<double>(VT_COUPLER_SNAP_LENGTH_SLACK, 0.0);
+  }
+  /// The optimality gap of the chain search, as a share (0.05 for 5 %): the
+  /// search of a chain stops on the cheapest run of options it has priced as
+  /// soon as that costs at most 1 + gap times the least lower bound still
+  /// open, so the run is within that share of the optimum. 0 for the exact
+  /// search, which proves its run the cheapest.
+  double chain_optimality_gap() const {
+    return GetField<double>(VT_CHAIN_OPTIMALITY_GAP, 0.0);
+  }
+  /// The escape rounds of the capacity check: after a SAT check, every way
+  /// out of a crossing slot a wire takes counts as a wall, and a gate it
+  /// narrows loses the share it covers, (L - L1 - L2) / (clearance *
+  /// margin), while every wire through it still counts one, those that
+  /// cross at the slot too; a gate that runs over gets capacity
+  /// floor(L / (clearance * margin) - that share) and the check runs again,
+  /// at most this many times. A gate still over after the last
+  /// round makes the check UNSAT. 0 turns the rounds off.
+  uint32_t capacity_escape_rounds() const {
+    return GetField<uint32_t>(VT_CAPACITY_ESCAPE_ROUNDS, 0);
+  }
+  /// What a way out of a crossing slot takes of a gate it reaches into, in
+  /// cells, under `capacity_escape_rounds`: a flat share per way out, the
+  /// same for every gate it touches; 0 measures it, L - L1 - L2.
+  double capacity_escape_cells() const {
+    return GetField<double>(VT_CAPACITY_ESCAPE_CELLS, 0.0);
+  }
+  /// Merge the fans of gates in the capacity check: gates whose ends lie on
+  /// one obstacle within two cells of each other on one side and on one
+  /// obstacle on the other, with no crossing slot, port, port slot, wall or
+  /// other gate between them, are one gate, the shortest of them; the
+  /// chambers between them join the sides of that gate.
+  bool capacity_merge_fans() const {
+    return GetField<uint8_t>(VT_CAPACITY_MERGE_FANS, 1) != 0;
+  }
+  /// What the turn of a wire out of its launcher's straight run takes of a
+  /// gate that ends on that launcher's stub and that the wire passes, in
+  /// cells, under `capacity_escape_rounds`: a flat share, as
+  /// `capacity_escape_cells` for a way out of a slot; 0 for none.
+  double launcher_escape_cells() const {
+    return GetField<double>(VT_LAUNCHER_ESCAPE_CELLS, 0.0);
+  }
+  /// Under `capacity_escape_rounds`: every gate that a way out of a slot a
+  /// wire took touches, inflated like a wall, holds one wire less per such
+  /// wire, once however many of its ways out touch it; a wire that passes
+  /// the gate itself counts there as its load only.
+  bool capacity_escape_touch() const {
+    return GetField<uint8_t>(VT_CAPACITY_ESCAPE_TOUCH, 0) != 0;
+  }
+  /// Chords in the capacity check: a line between two corner points of a
+  /// chamber on different obstacles, through the chamber alone, parts no
+  /// chambers but holds what a gate of its length holds, one wire less per
+  /// wire whose way out of a slot touches it and does not cross it; the
+  /// wires that come into the chamber on one side of it and leave or end on
+  /// the other must fit.
+  bool capacity_chords() const {
+    return GetField<uint8_t>(VT_CAPACITY_CHORDS, 0) != 0;
+  }
+  /// Under `capacity_chords`: the SAT routing of the capacity check prices
+  /// the chords in its way search and negotiates their overflow as it does
+  /// a gate's; off, the chords are counted and only judged once the routing
+  /// is done.
+  bool capacity_chords_routing() const {
+    return GetField<uint8_t>(VT_CAPACITY_CHORDS_ROUTING, 0) != 0;
+  }
+  /// A crossing slot needs room past the crossing on both sides: a free
+  /// cell, reachable straight from the slot's end, more than a clearance
+  /// from every feedline edge (its own too) and every coupler run. Off,
+  /// a slot needs only its rectangle and a way out free.
+  bool capacity_slot_room() const {
+    return GetField<uint8_t>(VT_CAPACITY_SLOT_ROOM, 0) != 0;
+  }
+  /// Under `capacity_escape_touch`: the SAT routing of the capacity check
+  /// counts the ways out of the slots its wires take against the gates they
+  /// touch as it routes, and negotiates an overflow so caused away on the
+  /// slots as on the gate; off, the escape rounds narrow the gates after a
+  /// SAT routing and keep them narrowed.
+  bool capacity_escape_touch_routing() const {
+    return GetField<uint8_t>(VT_CAPACITY_ESCAPE_TOUCH_ROUTING, 0) != 0;
+  }
+  /// Under the capacity rule: a refused step whose gate over runs only
+  /// between walls of this chain's options and static walls puts those
+  /// options on a blacklist for every prefix — one option when the gate
+  /// hangs on one alone (a resonator's lead or pad against the artwork),
+  /// the pair of an edge when on its two — and a later step on them is
+  /// dropped unrouted, as on the slot blacklist.
+  bool chain_gate_blacklist() const {
+    return GetField<uint8_t>(VT_CHAIN_GATE_BLACKLIST, 0) != 0;
+  }
+  /// Under the capacity rule: what a gate over that hangs on options of
+  /// this chain alone costs those options, once per prefix it is over under
+  /// — one option when it hangs on one, the pair of an edge when on its
+  /// two — in the units of the chain search's prices; the search then tries
+  /// other options first but may come back to them. 0 for none.
+  uint32_t chain_gate_penalty() const {
+    return GetField<uint32_t>(VT_CHAIN_GATE_PENALTY, 0);
+  }
+  /// The plain wires that bridge an edge of a chain the search has laid
+  /// only part of must cross it as they must once the chain is whole, at its
+  /// crossing slots, and have no way when it has none. Off, such an edge is
+  /// prescribed to no wire, and they may pass round its open end.
+  bool capacity_prescribe_open_edges() const {
+    return GetField<uint8_t>(VT_CAPACITY_PRESCRIBE_OPEN_EDGES, 0) != 0;
+  }
+  /// Under the capacity rule: after every so many steps the chain search
+  /// prices best-first, it dives from the cheapest prefix depth-first to a
+  /// complete run, pricing at most as many steps, so that it has a run to
+  /// prune against before its budgets run out. 0 for never.
+  uint32_t chain_dive_steps() const {
+    return GetField<uint32_t>(VT_CHAIN_DIVE_STEPS, 0);
+  }
+  /// Under the capacity rule: how many more steps the chain search may
+  /// price once a run of options has joined the chain before it stops on
+  /// the cheapest run so far. 0 for no bound.
+  uint32_t chain_dive_settle_steps() const {
+    return GetField<uint32_t>(VT_CHAIN_DIVE_SETTLE_STEPS, 0);
+  }
+  /// Under `chain_dive_steps`: how many steps one dive may price; 0 for
+  /// `chain_dive_steps`. More makes the search dive more than it searches
+  /// best-first.
+  uint32_t chain_dive_budget() const {
+    return GetField<uint32_t>(VT_CHAIN_DIVE_BUDGET, 0);
+  }
+  /// In the outer routing before the feedlines: what a cell in the halo of
+  /// a wire a relaxation let go of costs, in times the wire proximity
+  /// penalty; 1 as before. A wire relaxed past its neighbour then pays for
+  /// pressing into the room the neighbour needs about what a bend costs, and
+  /// leaves it its way back.
+  uint32_t released_halo_factor() const {
+    return GetField<uint32_t>(VT_RELEASED_HALO_FACTOR, 1);
+  }
+  /// In the outer routing before the feedlines: the run a wire let go of
+  /// arrives at its target on — as long as the straight run of a port's band
+  /// (`min_straight_length`) — is closed to the wire being drawn as a
+  /// rectangle one clearance to either side, square at its outer end, on top
+  /// of the clearance disc round the target cell. Off (the default), only the
+  /// disc, round, is closed.
+  bool released_arrival_box() const {
+    return GetField<uint8_t>(VT_RELEASED_ARRIVAL_BOX, 0) != 0;
+  }
+  /// Where the length-point clearance (`length_point_radius_cells`) is a
+  /// price rather than closed cells: "" (the default) nowhere — the band
+  /// closes its cells in the outer routing, its relaxation and the outer
+  /// refinement, as before; "refinement" in the outer refinement alone, the
+  /// rounds keeping the closed band; "all" in all three; "fallback" the band
+  /// stays closed and is priced only where it would leave a wire with no
+  /// way — the recovery at the end of the outer routing, which otherwise
+  /// drops the band, and still does for what the priced recovery leaves
+  /// failing — and a second search of the outer refinement for a
+  /// wire that found none with the band closed. A priced band
+  /// fails no wire: it costs `length_point_price` a cell at the band,
+  /// falling in four steps to nothing at the radius, so a wire keeps off
+  /// the place a coupler goes as far as its room lets it.
+  const ::flatbuffers::String *length_point_soft() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_LENGTH_POINT_SOFT);
+  }
+  /// What a cell at a resonator's length-point band costs where
+  /// `length_point_soft` prices the band, in the units of the wire
+  /// proximity field (the "wire price" of the settings line); 0 prices
+  /// nothing, so the band is then simply open there.
+  uint32_t length_point_price() const {
+    return GetField<uint32_t>(VT_LENGTH_POINT_PRICE, 0);
+  }
+  /// Where `length_point_soft` prices the band: how many ring pairs either
+  /// side of a wire have their band priced for it — 1 the pair beside it
+  /// alone, as the closed band; 2 the pair beyond it as well, and so on.
+  uint32_t length_point_soft_pairs() const {
+    return GetField<uint32_t>(VT_LENGTH_POINT_SOFT_PAIRS, 1);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -2196,6 +2452,35 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<double>(verifier, VT_COUPLER_LATTICE_NEAR, 8) &&
            VerifyField<uint8_t>(verifier, VT_COUPLER_LATTICE_CHECKER, 1) &&
            VerifyField<uint32_t>(verifier, VT_COUPLER_LATTICE_RESERVE_STEP, 4) &&
+           VerifyField<double>(verifier, VT_COUPLER_SNAP_PITCH, 8) &&
+           VerifyOffset(verifier, VT_COUPLER_SNAP_F) &&
+           verifier.VerifyString(coupler_snap_f()) &&
+           VerifyOffset(verifier, VT_COUPLER_SNAP_R) &&
+           verifier.VerifyString(coupler_snap_r()) &&
+           VerifyField<uint32_t>(verifier, VT_GLOBAL_SAT_END_OPTIONS, 4) &&
+           VerifyField<double>(verifier, VT_COUPLER_SNAP_LENGTH_SLACK, 8) &&
+           VerifyField<double>(verifier, VT_CHAIN_OPTIMALITY_GAP, 8) &&
+           VerifyField<uint32_t>(verifier, VT_CAPACITY_ESCAPE_ROUNDS, 4) &&
+           VerifyField<double>(verifier, VT_CAPACITY_ESCAPE_CELLS, 8) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_MERGE_FANS, 1) &&
+           VerifyField<double>(verifier, VT_LAUNCHER_ESCAPE_CELLS, 8) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_ESCAPE_TOUCH, 1) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_CHORDS, 1) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_CHORDS_ROUTING, 1) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_SLOT_ROOM, 1) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_ESCAPE_TOUCH_ROUTING, 1) &&
+           VerifyField<uint8_t>(verifier, VT_CHAIN_GATE_BLACKLIST, 1) &&
+           VerifyField<uint32_t>(verifier, VT_CHAIN_GATE_PENALTY, 4) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_PRESCRIBE_OPEN_EDGES, 1) &&
+           VerifyField<uint32_t>(verifier, VT_CHAIN_DIVE_STEPS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_CHAIN_DIVE_SETTLE_STEPS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_CHAIN_DIVE_BUDGET, 4) &&
+           VerifyField<uint32_t>(verifier, VT_RELEASED_HALO_FACTOR, 4) &&
+           VerifyField<uint8_t>(verifier, VT_RELEASED_ARRIVAL_BOX, 1) &&
+           VerifyOffset(verifier, VT_LENGTH_POINT_SOFT) &&
+           verifier.VerifyString(length_point_soft()) &&
+           VerifyField<uint32_t>(verifier, VT_LENGTH_POINT_PRICE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_LENGTH_POINT_SOFT_PAIRS, 4) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2531,6 +2816,84 @@ struct FinalParamsBuilder {
   void add_coupler_lattice_reserve_step(uint32_t coupler_lattice_reserve_step) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_COUPLER_LATTICE_RESERVE_STEP, coupler_lattice_reserve_step, 0);
   }
+  void add_coupler_snap_pitch(double coupler_snap_pitch) {
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_SNAP_PITCH, coupler_snap_pitch, 0.0);
+  }
+  void add_coupler_snap_f(::flatbuffers::Offset<::flatbuffers::String> coupler_snap_f) {
+    fbb_.AddOffset(FinalParams::VT_COUPLER_SNAP_F, coupler_snap_f);
+  }
+  void add_coupler_snap_r(::flatbuffers::Offset<::flatbuffers::String> coupler_snap_r) {
+    fbb_.AddOffset(FinalParams::VT_COUPLER_SNAP_R, coupler_snap_r);
+  }
+  void add_global_sat_end_options(uint32_t global_sat_end_options) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GLOBAL_SAT_END_OPTIONS, global_sat_end_options, 16);
+  }
+  void add_coupler_snap_length_slack(double coupler_snap_length_slack) {
+    fbb_.AddElement<double>(FinalParams::VT_COUPLER_SNAP_LENGTH_SLACK, coupler_snap_length_slack, 0.0);
+  }
+  void add_chain_optimality_gap(double chain_optimality_gap) {
+    fbb_.AddElement<double>(FinalParams::VT_CHAIN_OPTIMALITY_GAP, chain_optimality_gap, 0.0);
+  }
+  void add_capacity_escape_rounds(uint32_t capacity_escape_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CAPACITY_ESCAPE_ROUNDS, capacity_escape_rounds, 0);
+  }
+  void add_capacity_escape_cells(double capacity_escape_cells) {
+    fbb_.AddElement<double>(FinalParams::VT_CAPACITY_ESCAPE_CELLS, capacity_escape_cells, 0.0);
+  }
+  void add_capacity_merge_fans(bool capacity_merge_fans) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_MERGE_FANS, static_cast<uint8_t>(capacity_merge_fans), 1);
+  }
+  void add_launcher_escape_cells(double launcher_escape_cells) {
+    fbb_.AddElement<double>(FinalParams::VT_LAUNCHER_ESCAPE_CELLS, launcher_escape_cells, 0.0);
+  }
+  void add_capacity_escape_touch(bool capacity_escape_touch) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_ESCAPE_TOUCH, static_cast<uint8_t>(capacity_escape_touch), 0);
+  }
+  void add_capacity_chords(bool capacity_chords) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_CHORDS, static_cast<uint8_t>(capacity_chords), 0);
+  }
+  void add_capacity_chords_routing(bool capacity_chords_routing) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_CHORDS_ROUTING, static_cast<uint8_t>(capacity_chords_routing), 0);
+  }
+  void add_capacity_slot_room(bool capacity_slot_room) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_SLOT_ROOM, static_cast<uint8_t>(capacity_slot_room), 0);
+  }
+  void add_capacity_escape_touch_routing(bool capacity_escape_touch_routing) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_ESCAPE_TOUCH_ROUTING, static_cast<uint8_t>(capacity_escape_touch_routing), 0);
+  }
+  void add_chain_gate_blacklist(bool chain_gate_blacklist) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CHAIN_GATE_BLACKLIST, static_cast<uint8_t>(chain_gate_blacklist), 0);
+  }
+  void add_chain_gate_penalty(uint32_t chain_gate_penalty) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_GATE_PENALTY, chain_gate_penalty, 0);
+  }
+  void add_capacity_prescribe_open_edges(bool capacity_prescribe_open_edges) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_PRESCRIBE_OPEN_EDGES, static_cast<uint8_t>(capacity_prescribe_open_edges), 0);
+  }
+  void add_chain_dive_steps(uint32_t chain_dive_steps) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_DIVE_STEPS, chain_dive_steps, 0);
+  }
+  void add_chain_dive_settle_steps(uint32_t chain_dive_settle_steps) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_DIVE_SETTLE_STEPS, chain_dive_settle_steps, 0);
+  }
+  void add_chain_dive_budget(uint32_t chain_dive_budget) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_CHAIN_DIVE_BUDGET, chain_dive_budget, 0);
+  }
+  void add_released_halo_factor(uint32_t released_halo_factor) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_RELEASED_HALO_FACTOR, released_halo_factor, 1);
+  }
+  void add_released_arrival_box(bool released_arrival_box) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_RELEASED_ARRIVAL_BOX, static_cast<uint8_t>(released_arrival_box), 0);
+  }
+  void add_length_point_soft(::flatbuffers::Offset<::flatbuffers::String> length_point_soft) {
+    fbb_.AddOffset(FinalParams::VT_LENGTH_POINT_SOFT, length_point_soft);
+  }
+  void add_length_point_price(uint32_t length_point_price) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_LENGTH_POINT_PRICE, length_point_price, 0);
+  }
+  void add_length_point_soft_pairs(uint32_t length_point_soft_pairs) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_LENGTH_POINT_SOFT_PAIRS, length_point_soft_pairs, 1);
+  }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -2651,8 +3014,39 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     double coupler_lattice_floor = 0.0,
     double coupler_lattice_near = 0.0,
     bool coupler_lattice_checker = false,
-    uint32_t coupler_lattice_reserve_step = 0) {
+    uint32_t coupler_lattice_reserve_step = 0,
+    double coupler_snap_pitch = 0.0,
+    ::flatbuffers::Offset<::flatbuffers::String> coupler_snap_f = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> coupler_snap_r = 0,
+    uint32_t global_sat_end_options = 16,
+    double coupler_snap_length_slack = 0.0,
+    double chain_optimality_gap = 0.0,
+    uint32_t capacity_escape_rounds = 0,
+    double capacity_escape_cells = 0.0,
+    bool capacity_merge_fans = true,
+    double launcher_escape_cells = 0.0,
+    bool capacity_escape_touch = false,
+    bool capacity_chords = false,
+    bool capacity_chords_routing = false,
+    bool capacity_slot_room = false,
+    bool capacity_escape_touch_routing = false,
+    bool chain_gate_blacklist = false,
+    uint32_t chain_gate_penalty = 0,
+    bool capacity_prescribe_open_edges = false,
+    uint32_t chain_dive_steps = 0,
+    uint32_t chain_dive_settle_steps = 0,
+    uint32_t chain_dive_budget = 0,
+    uint32_t released_halo_factor = 1,
+    bool released_arrival_box = false,
+    ::flatbuffers::Offset<::flatbuffers::String> length_point_soft = 0,
+    uint32_t length_point_price = 0,
+    uint32_t length_point_soft_pairs = 1) {
   FinalParamsBuilder builder_(_fbb);
+  builder_.add_launcher_escape_cells(launcher_escape_cells);
+  builder_.add_capacity_escape_cells(capacity_escape_cells);
+  builder_.add_chain_optimality_gap(chain_optimality_gap);
+  builder_.add_coupler_snap_length_slack(coupler_snap_length_slack);
+  builder_.add_coupler_snap_pitch(coupler_snap_pitch);
   builder_.add_coupler_lattice_near(coupler_lattice_near);
   builder_.add_coupler_lattice_floor(coupler_lattice_floor);
   builder_.add_coupler_lattice_lateral(coupler_lattice_lateral);
@@ -2677,6 +3071,18 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
+  builder_.add_length_point_soft_pairs(length_point_soft_pairs);
+  builder_.add_length_point_price(length_point_price);
+  builder_.add_length_point_soft(length_point_soft);
+  builder_.add_released_halo_factor(released_halo_factor);
+  builder_.add_chain_dive_budget(chain_dive_budget);
+  builder_.add_chain_dive_settle_steps(chain_dive_settle_steps);
+  builder_.add_chain_dive_steps(chain_dive_steps);
+  builder_.add_chain_gate_penalty(chain_gate_penalty);
+  builder_.add_capacity_escape_rounds(capacity_escape_rounds);
+  builder_.add_global_sat_end_options(global_sat_end_options);
+  builder_.add_coupler_snap_r(coupler_snap_r);
+  builder_.add_coupler_snap_f(coupler_snap_f);
   builder_.add_coupler_lattice_reserve_step(coupler_lattice_reserve_step);
   builder_.add_coupler_lattice_reach(coupler_lattice_reach);
   builder_.add_coupler_lattice_bins(coupler_lattice_bins);
@@ -2736,6 +3142,15 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_inner_corridor_spacings(inner_corridor_spacings);
   builder_.add_corridor_spacings(corridor_spacings);
   builder_.add_router(router);
+  builder_.add_released_arrival_box(released_arrival_box);
+  builder_.add_capacity_prescribe_open_edges(capacity_prescribe_open_edges);
+  builder_.add_chain_gate_blacklist(chain_gate_blacklist);
+  builder_.add_capacity_escape_touch_routing(capacity_escape_touch_routing);
+  builder_.add_capacity_slot_room(capacity_slot_room);
+  builder_.add_capacity_chords_routing(capacity_chords_routing);
+  builder_.add_capacity_chords(capacity_chords);
+  builder_.add_capacity_escape_touch(capacity_escape_touch);
+  builder_.add_capacity_merge_fans(capacity_merge_fans);
   builder_.add_coupler_lattice_checker(coupler_lattice_checker);
   builder_.add_capacity_cdt_world(capacity_cdt_world);
   builder_.add_coupler_lattice_shortest(coupler_lattice_shortest);
@@ -2878,7 +3293,33 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     double coupler_lattice_floor = 0.0,
     double coupler_lattice_near = 0.0,
     bool coupler_lattice_checker = false,
-    uint32_t coupler_lattice_reserve_step = 0) {
+    uint32_t coupler_lattice_reserve_step = 0,
+    double coupler_snap_pitch = 0.0,
+    const char *coupler_snap_f = nullptr,
+    const char *coupler_snap_r = nullptr,
+    uint32_t global_sat_end_options = 16,
+    double coupler_snap_length_slack = 0.0,
+    double chain_optimality_gap = 0.0,
+    uint32_t capacity_escape_rounds = 0,
+    double capacity_escape_cells = 0.0,
+    bool capacity_merge_fans = true,
+    double launcher_escape_cells = 0.0,
+    bool capacity_escape_touch = false,
+    bool capacity_chords = false,
+    bool capacity_chords_routing = false,
+    bool capacity_slot_room = false,
+    bool capacity_escape_touch_routing = false,
+    bool chain_gate_blacklist = false,
+    uint32_t chain_gate_penalty = 0,
+    bool capacity_prescribe_open_edges = false,
+    uint32_t chain_dive_steps = 0,
+    uint32_t chain_dive_settle_steps = 0,
+    uint32_t chain_dive_budget = 0,
+    uint32_t released_halo_factor = 1,
+    bool released_arrival_box = false,
+    const char *length_point_soft = nullptr,
+    uint32_t length_point_price = 0,
+    uint32_t length_point_soft_pairs = 1) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
   auto jog_options__ = jog_options ? _fbb.CreateString(jog_options) : 0;
@@ -2886,6 +3327,9 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
   auto chain_search__ = chain_search ? _fbb.CreateString(chain_search) : 0;
   auto coupler_meander_slack_chains__ = coupler_meander_slack_chains ? _fbb.CreateString(coupler_meander_slack_chains) : 0;
   auto capacity_check_chains__ = capacity_check_chains ? _fbb.CreateString(capacity_check_chains) : 0;
+  auto coupler_snap_f__ = coupler_snap_f ? _fbb.CreateString(coupler_snap_f) : 0;
+  auto coupler_snap_r__ = coupler_snap_r ? _fbb.CreateString(coupler_snap_r) : 0;
+  auto length_point_soft__ = length_point_soft ? _fbb.CreateString(length_point_soft) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       router__,
@@ -2995,7 +3439,33 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       coupler_lattice_floor,
       coupler_lattice_near,
       coupler_lattice_checker,
-      coupler_lattice_reserve_step);
+      coupler_lattice_reserve_step,
+      coupler_snap_pitch,
+      coupler_snap_f__,
+      coupler_snap_r__,
+      global_sat_end_options,
+      coupler_snap_length_slack,
+      chain_optimality_gap,
+      capacity_escape_rounds,
+      capacity_escape_cells,
+      capacity_merge_fans,
+      launcher_escape_cells,
+      capacity_escape_touch,
+      capacity_chords,
+      capacity_chords_routing,
+      capacity_slot_room,
+      capacity_escape_touch_routing,
+      chain_gate_blacklist,
+      chain_gate_penalty,
+      capacity_prescribe_open_edges,
+      chain_dive_steps,
+      chain_dive_settle_steps,
+      chain_dive_budget,
+      released_halo_factor,
+      released_arrival_box,
+      length_point_soft__,
+      length_point_price,
+      length_point_soft_pairs);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4312,7 +4782,33 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.coupler_lattice_floor == rhs.coupler_lattice_floor) &&
       (lhs.coupler_lattice_near == rhs.coupler_lattice_near) &&
       (lhs.coupler_lattice_checker == rhs.coupler_lattice_checker) &&
-      (lhs.coupler_lattice_reserve_step == rhs.coupler_lattice_reserve_step);
+      (lhs.coupler_lattice_reserve_step == rhs.coupler_lattice_reserve_step) &&
+      (lhs.coupler_snap_pitch == rhs.coupler_snap_pitch) &&
+      (lhs.coupler_snap_f == rhs.coupler_snap_f) &&
+      (lhs.coupler_snap_r == rhs.coupler_snap_r) &&
+      (lhs.global_sat_end_options == rhs.global_sat_end_options) &&
+      (lhs.coupler_snap_length_slack == rhs.coupler_snap_length_slack) &&
+      (lhs.chain_optimality_gap == rhs.chain_optimality_gap) &&
+      (lhs.capacity_escape_rounds == rhs.capacity_escape_rounds) &&
+      (lhs.capacity_escape_cells == rhs.capacity_escape_cells) &&
+      (lhs.capacity_merge_fans == rhs.capacity_merge_fans) &&
+      (lhs.launcher_escape_cells == rhs.launcher_escape_cells) &&
+      (lhs.capacity_escape_touch == rhs.capacity_escape_touch) &&
+      (lhs.capacity_chords == rhs.capacity_chords) &&
+      (lhs.capacity_chords_routing == rhs.capacity_chords_routing) &&
+      (lhs.capacity_slot_room == rhs.capacity_slot_room) &&
+      (lhs.capacity_escape_touch_routing == rhs.capacity_escape_touch_routing) &&
+      (lhs.chain_gate_blacklist == rhs.chain_gate_blacklist) &&
+      (lhs.chain_gate_penalty == rhs.chain_gate_penalty) &&
+      (lhs.capacity_prescribe_open_edges == rhs.capacity_prescribe_open_edges) &&
+      (lhs.chain_dive_steps == rhs.chain_dive_steps) &&
+      (lhs.chain_dive_settle_steps == rhs.chain_dive_settle_steps) &&
+      (lhs.chain_dive_budget == rhs.chain_dive_budget) &&
+      (lhs.released_halo_factor == rhs.released_halo_factor) &&
+      (lhs.released_arrival_box == rhs.released_arrival_box) &&
+      (lhs.length_point_soft == rhs.length_point_soft) &&
+      (lhs.length_point_price == rhs.length_point_price) &&
+      (lhs.length_point_soft_pairs == rhs.length_point_soft_pairs);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -4437,6 +4933,32 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = coupler_lattice_near(); _o->coupler_lattice_near = _e; }
   { auto _e = coupler_lattice_checker(); _o->coupler_lattice_checker = _e; }
   { auto _e = coupler_lattice_reserve_step(); _o->coupler_lattice_reserve_step = _e; }
+  { auto _e = coupler_snap_pitch(); _o->coupler_snap_pitch = _e; }
+  { auto _e = coupler_snap_f(); if (_e) _o->coupler_snap_f = _e->str(); }
+  { auto _e = coupler_snap_r(); if (_e) _o->coupler_snap_r = _e->str(); }
+  { auto _e = global_sat_end_options(); _o->global_sat_end_options = _e; }
+  { auto _e = coupler_snap_length_slack(); _o->coupler_snap_length_slack = _e; }
+  { auto _e = chain_optimality_gap(); _o->chain_optimality_gap = _e; }
+  { auto _e = capacity_escape_rounds(); _o->capacity_escape_rounds = _e; }
+  { auto _e = capacity_escape_cells(); _o->capacity_escape_cells = _e; }
+  { auto _e = capacity_merge_fans(); _o->capacity_merge_fans = _e; }
+  { auto _e = launcher_escape_cells(); _o->launcher_escape_cells = _e; }
+  { auto _e = capacity_escape_touch(); _o->capacity_escape_touch = _e; }
+  { auto _e = capacity_chords(); _o->capacity_chords = _e; }
+  { auto _e = capacity_chords_routing(); _o->capacity_chords_routing = _e; }
+  { auto _e = capacity_slot_room(); _o->capacity_slot_room = _e; }
+  { auto _e = capacity_escape_touch_routing(); _o->capacity_escape_touch_routing = _e; }
+  { auto _e = chain_gate_blacklist(); _o->chain_gate_blacklist = _e; }
+  { auto _e = chain_gate_penalty(); _o->chain_gate_penalty = _e; }
+  { auto _e = capacity_prescribe_open_edges(); _o->capacity_prescribe_open_edges = _e; }
+  { auto _e = chain_dive_steps(); _o->chain_dive_steps = _e; }
+  { auto _e = chain_dive_settle_steps(); _o->chain_dive_settle_steps = _e; }
+  { auto _e = chain_dive_budget(); _o->chain_dive_budget = _e; }
+  { auto _e = released_halo_factor(); _o->released_halo_factor = _e; }
+  { auto _e = released_arrival_box(); _o->released_arrival_box = _e; }
+  { auto _e = length_point_soft(); if (_e) _o->length_point_soft = _e->str(); }
+  { auto _e = length_point_price(); _o->length_point_price = _e; }
+  { auto _e = length_point_soft_pairs(); _o->length_point_soft_pairs = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -4555,6 +5077,32 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _coupler_lattice_near = _o->coupler_lattice_near;
   auto _coupler_lattice_checker = _o->coupler_lattice_checker;
   auto _coupler_lattice_reserve_step = _o->coupler_lattice_reserve_step;
+  auto _coupler_snap_pitch = _o->coupler_snap_pitch;
+  auto _coupler_snap_f = _o->coupler_snap_f.empty() ? 0 : _fbb.CreateString(_o->coupler_snap_f);
+  auto _coupler_snap_r = _o->coupler_snap_r.empty() ? 0 : _fbb.CreateString(_o->coupler_snap_r);
+  auto _global_sat_end_options = _o->global_sat_end_options;
+  auto _coupler_snap_length_slack = _o->coupler_snap_length_slack;
+  auto _chain_optimality_gap = _o->chain_optimality_gap;
+  auto _capacity_escape_rounds = _o->capacity_escape_rounds;
+  auto _capacity_escape_cells = _o->capacity_escape_cells;
+  auto _capacity_merge_fans = _o->capacity_merge_fans;
+  auto _launcher_escape_cells = _o->launcher_escape_cells;
+  auto _capacity_escape_touch = _o->capacity_escape_touch;
+  auto _capacity_chords = _o->capacity_chords;
+  auto _capacity_chords_routing = _o->capacity_chords_routing;
+  auto _capacity_slot_room = _o->capacity_slot_room;
+  auto _capacity_escape_touch_routing = _o->capacity_escape_touch_routing;
+  auto _chain_gate_blacklist = _o->chain_gate_blacklist;
+  auto _chain_gate_penalty = _o->chain_gate_penalty;
+  auto _capacity_prescribe_open_edges = _o->capacity_prescribe_open_edges;
+  auto _chain_dive_steps = _o->chain_dive_steps;
+  auto _chain_dive_settle_steps = _o->chain_dive_settle_steps;
+  auto _chain_dive_budget = _o->chain_dive_budget;
+  auto _released_halo_factor = _o->released_halo_factor;
+  auto _released_arrival_box = _o->released_arrival_box;
+  auto _length_point_soft = _o->length_point_soft.empty() ? 0 : _fbb.CreateString(_o->length_point_soft);
+  auto _length_point_price = _o->length_point_price;
+  auto _length_point_soft_pairs = _o->length_point_soft_pairs;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -4664,7 +5212,33 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _coupler_lattice_floor,
       _coupler_lattice_near,
       _coupler_lattice_checker,
-      _coupler_lattice_reserve_step);
+      _coupler_lattice_reserve_step,
+      _coupler_snap_pitch,
+      _coupler_snap_f,
+      _coupler_snap_r,
+      _global_sat_end_options,
+      _coupler_snap_length_slack,
+      _chain_optimality_gap,
+      _capacity_escape_rounds,
+      _capacity_escape_cells,
+      _capacity_merge_fans,
+      _launcher_escape_cells,
+      _capacity_escape_touch,
+      _capacity_chords,
+      _capacity_chords_routing,
+      _capacity_slot_room,
+      _capacity_escape_touch_routing,
+      _chain_gate_blacklist,
+      _chain_gate_penalty,
+      _capacity_prescribe_open_edges,
+      _chain_dive_steps,
+      _chain_dive_settle_steps,
+      _chain_dive_budget,
+      _released_halo_factor,
+      _released_arrival_box,
+      _length_point_soft,
+      _length_point_price,
+      _length_point_soft_pairs);
 }
 
 
@@ -5304,6 +5878,32 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     { ::flatbuffers::ET_DOUBLE, 0, -1 },
     { ::flatbuffers::ET_DOUBLE, 0, -1 },
     { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_DOUBLE, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 }
   };
   static const char * const names[] = {
@@ -5414,10 +6014,36 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     "coupler_lattice_floor",
     "coupler_lattice_near",
     "coupler_lattice_checker",
-    "coupler_lattice_reserve_step"
+    "coupler_lattice_reserve_step",
+    "coupler_snap_pitch",
+    "coupler_snap_f",
+    "coupler_snap_r",
+    "global_sat_end_options",
+    "coupler_snap_length_slack",
+    "chain_optimality_gap",
+    "capacity_escape_rounds",
+    "capacity_escape_cells",
+    "capacity_merge_fans",
+    "launcher_escape_cells",
+    "capacity_escape_touch",
+    "capacity_chords",
+    "capacity_chords_routing",
+    "capacity_slot_room",
+    "capacity_escape_touch_routing",
+    "chain_gate_blacklist",
+    "chain_gate_penalty",
+    "capacity_prescribe_open_edges",
+    "chain_dive_steps",
+    "chain_dive_settle_steps",
+    "chain_dive_budget",
+    "released_halo_factor",
+    "released_arrival_box",
+    "length_point_soft",
+    "length_point_price",
+    "length_point_soft_pairs"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 108, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 134, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }
