@@ -10,7 +10,6 @@
 
 #include "mqt-scpd/design/Validation.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
-#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/io/Config.hpp"
@@ -66,9 +65,8 @@ const char* toneName(const mqt::scpd::pipeline::Tone tone) {
   case mqt::scpd::pipeline::Tone::Bad:
     return "bad";
   case mqt::scpd::pipeline::Tone::Plain:
-    break;
+    return "plain";
   }
-  return "plain";
 }
 
 /// Figures as a Python list of (text, tone) pairs.

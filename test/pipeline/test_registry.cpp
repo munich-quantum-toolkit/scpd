@@ -13,7 +13,6 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
-#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
