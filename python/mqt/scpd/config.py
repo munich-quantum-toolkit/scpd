@@ -200,12 +200,16 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "length_point_price": 0,
         "length_point_soft_pairs": 1,
         "greedy_repair_trials": 100,
-        "greedy_repair_workers": 4,
+        "greedy_repair_workers": 0,
         "greedy_trial_rounds": 4,
         "greedy_trial_stale_rounds": 1,
         "greedy_trial_fail_margin": 1,
         "greedy_local_trials": True,
         "greedy_reach_check": True,
+        "threads": 0,
+        "ripup_schedule": "feedline-blocks",
+        "refinement_schedule": "feedline-blocks",
+        "block_size": 0,
         "coupler_meander_slack": False,
         "coupler_meander_slack_chains": "",
         "crossing_reach_cells": 10,
@@ -460,6 +464,12 @@ def _jog_problems(text: str) -> list[str]:
 #: The searches ``[stages.final] chain_search`` names: from the front of a chain alone, from both ends,
 #: or the research prototype's greedy local search over each chain's couplers.
 CHAIN_SEARCHES = ("astar", "bidirectional", "greedy")
+#: How ``[stages.final] ripup_schedule`` runs the rip-up and reroute: wire by wire with the relaxation
+#: levels of a wire searched at once, blocks of the ring at once, or blocks only after the insertion.
+RIPUP_SCHEDULES = ("levels", "blocks", "feedline-blocks")
+#: How ``[stages.final] refinement_schedule`` runs the refinements: wire by wire with the searches of
+#: a wire run at once, blocks of the ring at once, or blocks only in the feedline refinement.
+REFINEMENT_SCHEDULES = ("searches", "blocks", "feedline-blocks")
 #: Where ``[stages.final] length_point_soft`` prices the length-point band rather than closing
 #: it: nowhere, in the outer refinement alone, in the outer routing, its relaxation and the
 #: outer refinement, or only where the closed band would leave a wire with no way.
@@ -576,6 +586,8 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("greedy_trial_rounds", "greedyTrialRounds"),
         ("greedy_trial_stale_rounds", "greedyTrialStaleRounds"),
         ("greedy_trial_fail_margin", "greedyTrialFailMargin"),
+        ("threads", "threads"),
+        ("block_size", "blockSize"),
         ("coupler_box_margin_cells", "couplerBoxMarginCells"),
         ("coupler_shift_cells", "couplerShiftCells"),
         ("coupler_copy_cells", "couplerCopyCells"),
@@ -723,6 +735,17 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     if stages.final.chainSearch not in CHAIN_SEARCHES:
         problems.append(
             f"[stages.final] chain_search: '{stages.final.chainSearch}' is not one of {', '.join(CHAIN_SEARCHES)}"
+        )
+    stages.final.ripupSchedule = take(final, "ripup_schedule", str)
+    if stages.final.ripupSchedule not in RIPUP_SCHEDULES:
+        problems.append(
+            f"[stages.final] ripup_schedule: '{stages.final.ripupSchedule}' is not one of {', '.join(RIPUP_SCHEDULES)}"
+        )
+    stages.final.refinementSchedule = take(final, "refinement_schedule", str)
+    if stages.final.refinementSchedule not in REFINEMENT_SCHEDULES:
+        problems.append(
+            f"[stages.final] refinement_schedule: '{stages.final.refinementSchedule}' is not one of "
+            + ", ".join(REFINEMENT_SCHEDULES)
         )
     final.finish()
 

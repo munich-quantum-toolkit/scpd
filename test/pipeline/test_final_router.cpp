@@ -546,6 +546,35 @@ TEST(FinalRouter, IsDeterministic) {
   }
 }
 
+/// The stage runs its tasks in forked copies of itself, at most `threads`
+/// at once, and what it draws does not depend on how many.
+TEST(FinalRouter, DoesNotDependOnTheThreads) {
+  auto benchmark = nineQubit();
+  const auto planned = plan(benchmark);
+  auto& stages = benchmark.config.stages;
+  if (stages == nullptr) {
+    stages = std::make_unique<flatbuffers::config::StageParamsT>();
+  }
+  if (stages->final == nullptr) {
+    stages->final = std::make_unique<flatbuffers::config::FinalParamsT>();
+  }
+  stages->final->threads = 1;
+  const auto alone = routeFinal(benchmark, planned);
+  stages->final->threads = 4;
+  const auto together = routeFinal(benchmark, planned);
+
+  ASSERT_EQ(alone.wires.size(), together.wires.size());
+  for (std::size_t index = 0; index < alone.wires.size(); ++index) {
+    EXPECT_EQ(alone.wires[index]->path, together.wires[index]->path)
+        << "wire " << index << " came out differently with four threads";
+  }
+  ASSERT_EQ(alone.feedlines.size(), together.feedlines.size());
+  for (std::size_t index = 0; index < alone.feedlines.size(); ++index) {
+    EXPECT_EQ(alone.feedlines[index]->path, together.feedlines[index]->path)
+        << "feedline " << index << " came out differently with four threads";
+  }
+}
+
 /// Every phase leaves a snapshot, so a picture of one can be drawn from the
 /// artifact rather than by running the stage again.
 TEST(FinalRouter, EveryPhaseLeavesASnapshot) {

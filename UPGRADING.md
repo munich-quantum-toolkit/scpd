@@ -6,6 +6,18 @@ of changes including minor and patch releases, please refer to the
 
 ## [Unreleased]
 
+### Parallel tasks in the Final stage
+
+The Final stage now runs its costly parts at once, `[stages.final] threads`
+processes at a time; `0`, the default, takes the performance cores of the
+machine and `1` runs one task after the other. The result does not depend on it.
+After the feedline insertion the feedline routing and its refinement now run in
+blocks of the ring (`ripup_schedule` and `refinement_schedule`,
+`"feedline-blocks"`), which draws other ways than before; set both to `"levels"`
+and `"searches"` for the ways the stage drew wire by wire. The blind repair now
+runs as many trials at once as `threads` allows (`greedy_repair_workers = 0`); a
+configuration that set `greedy_repair_workers` keeps its number.
+
 ### Routing a chip
 
 A run now goes on from the corridors to the two routing stages, `detail` and

@@ -799,10 +799,10 @@ table FinalParams {
   /// unsettles routed again; zero switches the repair off.
   greedy_repair_trials: uint32 = 100;
   /// How many trials of a wave of the blind repair run at once, each in a
-  /// copy of the stage forked off the state the wave tries against; one runs
-  /// them one after the other in the stage itself. The result does not
-  /// depend on it.
-  greedy_repair_workers: uint32 = 4;
+  /// copy of the stage forked off the state the wave tries against; zero
+  /// takes `threads`, one runs them one after the other in the stage
+  /// itself. The result does not depend on it.
+  greedy_repair_workers: uint32 = 0;
   /// The most rounds a trial of the blind repair routes its wires in, and
   /// how many rounds without a new best end it early.
   greedy_trial_rounds: uint32 = 4;
@@ -819,6 +819,28 @@ table FinalParams {
   /// their corridor and skip a search whose target the flood does not reach.
   /// It changes no result, only how long a failing search takes.
   greedy_reach_check: bool = true;
+  /// How many processes the Final stage runs at once: every parallel task
+  /// runs in a copy of the stage forked off the state it starts from, and
+  /// at most this many run together, nested ones included. Zero takes the
+  /// performance cores of the machine; one runs every task after the other.
+  /// The result does not depend on it.
+  threads: uint32 = 0;
+  /// How the rip-up and reroute of the outer and the feedline routing runs
+  /// ("feedline-blocks" when empty): "levels" sweeps the ring wire by wire
+  /// as ever and searches the relaxation levels of a costly wire at once,
+  /// which changes no result; "blocks" sweeps blocks of the ring at once,
+  /// the even blocks and then the odd; "feedline-blocks" does so only after
+  /// the insertion.
+  ripup_schedule: string;
+  /// How the refinements run ("feedline-blocks" when empty): "searches"
+  /// refines the ring wire by wire as ever; "blocks" refines blocks of the
+  /// ring at once, as above; "feedline-blocks" only in the feedline
+  /// refinement.
+  refinement_schedule: string;
+  /// How many ring members a block of the "blocks" schedules holds; zero
+  /// takes the smallest that keeps two blocks of one turn apart, and a
+  /// smaller one is raised to it.
+  block_size: uint32 = 0;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

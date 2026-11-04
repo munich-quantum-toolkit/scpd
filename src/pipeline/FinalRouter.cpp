@@ -32,6 +32,7 @@
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CombinationOrder.hpp"
 #include "mqt-scpd/pipeline/CouplerSession.hpp"
+#include "mqt-scpd/pipeline/Forked.hpp"
 #include "mqt-scpd/pipeline/SlotCheck.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 #include "mqt-scpd/routing/AnalyticDubins.hpp"
@@ -220,6 +221,29 @@ struct Tuning {
   /// (`greedy_reach_check`).
   std::uint32_t greedyRepairTrials = 100;
   std::uint32_t greedyRepairWorkers = 4;
+  /// How many processes the stage runs at once (`threads`, zero resolved to
+  /// the performance cores): every parallel task runs in a forked copy of
+  /// the stage, see `Forked.hpp`. The result does not depend on it.
+  std::uint32_t threads = 1;
+  /// The rip-up and reroute (`ripup_schedule`): wire by wire with the
+  /// relaxation levels of a wire searched at once, or blocks of the ring.
+  bool ripupBlocks = false;
+  /// `ripup_schedule = "feedline-blocks"`: blocks only under the feedline
+  /// constraints, after the insertion; before it the ring is swept wire by
+  /// wire, so the insertion sees the ways it always saw.
+  bool ripupBlocksAfterInsertion = false;
+  /// `ripup_schedule = "levels"`: the relaxation levels of a costly wire
+  /// searched at once.
+  bool ripupLevels = false;
+  /// The refinements (`refinement_schedule`): wire by wire with the searches
+  /// of a wire run at once, or blocks of the ring.
+  bool refinementBlocks = false;
+  /// `refinement_schedule = "feedline-blocks"`: blocks only in the feedline
+  /// refinement.
+  bool refinementBlocksAfterInsertion = false;
+  /// The ring members of a block (`block_size`), zero for the least that
+  /// keeps two blocks of one turn apart.
+  std::uint32_t blockSize = 0;
   std::uint32_t greedyTrialRounds = 4;
   std::uint32_t greedyTrialStaleRounds = 1;
   std::uint32_t greedyTrialFailMargin = 1;
@@ -923,7 +947,33 @@ snapShiftsOf(const std::string& text, std::vector<std::int32_t> fallback) {
     tuning.couplerBox = false;
   }
   tuning.greedyRepairTrials = params.greedy_repair_trials;
-  tuning.greedyRepairWorkers = std::clamp(params.greedy_repair_workers, 1U, 32U);
+  tuning.threads = std::clamp(
+      params.threads == 0 ? forked::defaultThreads() : params.threads, 1U, 64U);
+  tuning.greedyRepairWorkers = std::clamp(params.greedy_repair_workers == 0
+                                              ? tuning.threads
+                                              : params.greedy_repair_workers,
+                                          1U, 32U);
+  tuning.ripupBlocks = params.ripup_schedule == "blocks" ||
+                       params.ripup_schedule == "feedline-blocks";
+  tuning.ripupBlocksAfterInsertion = params.ripup_schedule.empty() ||
+                                     params.ripup_schedule == "feedline-blocks";
+  tuning.ripupBlocks = tuning.ripupBlocks || tuning.ripupBlocksAfterInsertion;
+  tuning.ripupLevels = params.ripup_schedule == "levels";
+  // Under the greedy the feedline routing stays wire by wire: the blind
+  // repair turns couplers against the very state it leaves, and a state
+  // the blocks leave is one the repair may not settle (69q: bad 2 after
+  // 100 trials where wire by wire it settles bad 0).
+  if (tuning.chainGreedy) {
+    tuning.ripupBlocks = false;
+  }
+  tuning.refinementBlocks = params.refinement_schedule == "blocks" ||
+                            params.refinement_schedule == "feedline-blocks";
+  tuning.refinementBlocksAfterInsertion =
+      params.refinement_schedule.empty() ||
+      params.refinement_schedule == "feedline-blocks";
+  tuning.refinementBlocks =
+      tuning.refinementBlocks || tuning.refinementBlocksAfterInsertion;
+  tuning.blockSize = params.block_size;
   tuning.greedyTrialRounds = std::max(params.greedy_trial_rounds, 1U);
   tuning.greedyTrialStaleRounds = std::max(params.greedy_trial_stale_rounds, 1U);
   tuning.greedyTrialFailMargin = params.greedy_trial_fail_margin;
@@ -1941,6 +1991,142 @@ public:
     }
   }
 
+  /// One thing a forked task said while it ran: a line or an entry of the
+  /// report, or a debug record (`text` its kind).
+  struct Spoken {
+    std::uint8_t kind = 0;
+    Detail detail = Detail::Summary;
+    std::string text;
+    std::vector<Figure> figures;
+    std::string record;
+  };
+
+  /// What a forked task handed back, and what it said on the way, in order.
+  struct TaskAnswer {
+    std::string bytes;
+    std::vector<Spoken> said;
+  };
+
+  /// Runs `work(i)` for every `i` below `count`, each in a copy of the stage
+  /// forked off its state now (`forked::map`), and returns the answers in the
+  /// order of `i`. What a task says goes into its answer rather than to the
+  /// report, so that no task calls into the caller; `sayAgain` says it when
+  /// the stage takes the answer. `stop` as in `forked::map`, asked of the
+  /// task's own bytes.
+  [[nodiscard]] std::vector<TaskAnswer> forkTasks(
+      const std::size_t count,
+      const std::function<std::string(std::size_t)>& work,
+      const std::function<bool(std::size_t, const std::string&)>& stop = {}) {
+    const auto inTask = [&](const std::size_t index) {
+      auto said = std::make_shared<std::vector<Spoken>>();
+      speakInto(said);
+      const auto bytes = work(index);
+      forked::Writer out;
+      out.put(std::string_view(bytes));
+      out.put(static_cast<std::uint64_t>(said->size()));
+      for (const auto& spoken : *said) {
+        out.put(spoken.kind);
+        out.put(static_cast<std::uint8_t>(spoken.detail));
+        out.put(std::string_view(spoken.text));
+        out.put(static_cast<std::uint64_t>(spoken.figures.size()));
+        for (const auto& figure : spoken.figures) {
+          out.put(std::string_view(figure.text));
+          out.put(static_cast<std::uint8_t>(figure.tone));
+        }
+        out.put(std::string_view(spoken.record));
+      }
+      return out.take();
+    };
+    std::function<bool(std::size_t, const std::string&)> asked;
+    if (stop) {
+      asked = [&](const std::size_t index, const std::string& bytes) {
+        forked::Reader in(bytes);
+        return stop(index, in.text());
+      };
+    }
+    const auto answers = forked::map(count, inTask, asked);
+    std::vector<TaskAnswer> out(count);
+    for (std::size_t index = 0; index < count; ++index) {
+      if (answers[index].empty()) {
+        continue;
+      }
+      forked::Reader in(answers[index]);
+      out[index].bytes = in.text();
+      const auto said = in.get<std::uint64_t>();
+      out[index].said.resize(static_cast<std::size_t>(said));
+      for (auto& spoken : out[index].said) {
+        spoken.kind = in.get<std::uint8_t>();
+        spoken.detail = static_cast<Detail>(in.get<std::uint8_t>());
+        spoken.text = in.text();
+        spoken.figures.resize(
+            static_cast<std::size_t>(in.get<std::uint64_t>()));
+        for (auto& figure : spoken.figures) {
+          figure.text = in.text();
+          figure.tone = static_cast<Tone>(in.get<std::uint8_t>());
+        }
+        spoken.record = in.text();
+      }
+    }
+    return out;
+  }
+
+  /// Says again, in order, what a forked task said.
+  void sayAgain(const std::vector<Spoken>& said) const {
+    for (const auto& spoken : said) {
+      if (spoken.kind == 0) {
+        report_.line(spoken.detail, spoken.text);
+      } else if (spoken.kind == 1) {
+        report_.entry(spoken.detail, spoken.text, spoken.figures);
+      } else if (debug_) {
+        debug_(spoken.text, spoken.record);
+      }
+    }
+  }
+
+  /// In a forked task: what the stage says from now on goes into `said`, at
+  /// the level the stage's report has, and nothing reaches the caller.
+  void speakInto(const std::shared_ptr<std::vector<Spoken>>& said) {
+    std::optional<Detail> level;
+    for (const auto detail :
+         {Detail::Solver, Detail::Items, Detail::Steps, Detail::Summary}) {
+      if (report_.wants(detail)) {
+        level = detail;
+        break;
+      }
+    }
+    if (level) {
+      report_ = Report(
+          *level,
+          Report::Sinks{
+              .line =
+                  [said](const Detail detail, const std::string_view text) {
+                    said->push_back({.kind = 0,
+                                     .detail = detail,
+                                     .text = std::string(text)});
+                  },
+              .entry =
+                  [said](const Detail detail, const std::string_view label,
+                         const std::vector<Figure>& figures) {
+                    said->push_back({.kind = 1,
+                                     .detail = detail,
+                                     .text = std::string(label),
+                                     .figures = figures});
+                  },
+              .result = {},
+              .progress = {}});
+    } else {
+      report_ = Report();
+    }
+    if (debug_) {
+      debug_ = [said](const std::string_view kind,
+                      const std::string_view record) {
+        said->push_back({.kind = 2,
+                         .text = std::string(kind),
+                         .record = std::string(record)});
+      };
+    }
+  }
+
   /// The phase that runs from now on; the searches of a phase are recorded
   /// when its dashboard asks for them.
   void enterPhase(const std::string_view phase) {
@@ -2513,6 +2699,411 @@ public:
     std::vector<routing::MeanderResult::Alternative> alternatives;
   };
 
+  /// What each round of the pass running now came to, per wire.
+  struct RoundRecord {
+    bool forward = true;
+    std::uint32_t normal = 0;
+    std::uint32_t relaxed = 0;
+    /// Of the failed, the resonators that kept a way too short.
+    std::uint32_t tooShort = 0;
+    std::vector<std::string> failed;
+    /// Every member's way as the round left it, by name; kept for the last
+    /// two rounds of a sweep only.
+    std::vector<std::pair<std::string, Path>> ways;
+  };
+
+  /// The blocks of a round of a ring of `total` members under the "blocks"
+  /// schedules: runs of consecutive ring slots, an even number of them, each
+  /// at least `least` long (or `block_size`, when that is more), so that a
+  /// wire of one block reaches no wire of the block after the next. The
+  /// seams turn with the round, so that no wire stays on a seam. Empty when
+  /// fewer than two blocks fit: the round then runs wire by wire.
+  [[nodiscard]] std::vector<std::vector<std::uint32_t>>
+  blocksOf(const std::uint32_t total, const std::uint32_t round,
+           const std::uint32_t least) const {
+    const auto size = std::max(least, tuning_.blockSize);
+    auto count = size == 0 ? 0U : total / size;
+    count -= count % 2;
+    if (count < 2) {
+      return {};
+    }
+    const auto offset = static_cast<std::uint32_t>(
+        (static_cast<std::uint64_t>(round) * ((size / 2) + 1)) % total);
+    std::vector<std::vector<std::uint32_t>> blocks(count);
+    for (std::uint32_t block = 0; block < count; ++block) {
+      const auto begin = static_cast<std::uint32_t>(
+          static_cast<std::uint64_t>(block) * total / count);
+      const auto end = static_cast<std::uint32_t>(
+          static_cast<std::uint64_t>(block + 1) * total / count);
+      for (auto at = begin; at < end; ++at) {
+        blocks[block].push_back((at + offset) % total);
+      }
+    }
+    return blocks;
+  }
+
+  /// The part of a wire that a sweep or a refinement changes.
+  static void putWireState(forked::Writer& out, const Wire& wire) {
+    out.put(wire.way);
+    out.put(static_cast<std::uint8_t>(wire.drawn));
+    out.put(static_cast<std::uint8_t>(wire.routed));
+    out.put(static_cast<std::uint8_t>(wire.placed));
+    out.put(static_cast<std::uint8_t>(wire.endsOnly));
+    out.put(static_cast<std::uint8_t>(wire.tooShort));
+    out.put(static_cast<std::uint8_t>(wire.tooLong));
+    out.put(static_cast<std::uint8_t>(wire.ripped));
+    out.put(wire.relaxedOut);
+    out.put(wire.meanderRound);
+    out.put(wire.meanderBox);
+    out.put(static_cast<std::uint64_t>(wire.meanderAlternatives.size()));
+    for (const auto& alternative : wire.meanderAlternatives) {
+      out.put(alternative.path);
+      out.put(alternative.lengthAfter);
+      out.put(alternative.meander);
+    }
+    out.put(wire.meanderBare);
+  }
+
+  [[nodiscard]] static bool sameState(const Wire& a, const Wire& b) {
+    const auto sameBox = [](const routing::CellBox& x,
+                            const routing::CellBox& y) {
+      return x.minX == y.minX && x.maxX == y.maxX && x.minY == y.minY &&
+             x.maxY == y.maxY;
+    };
+    if (a.way != b.way || a.drawn != b.drawn || a.routed != b.routed ||
+        a.placed != b.placed || a.endsOnly != b.endsOnly ||
+        a.tooShort != b.tooShort || a.tooLong != b.tooLong ||
+        a.ripped != b.ripped || a.relaxedOut != b.relaxedOut ||
+        a.meanderRound != b.meanderRound ||
+        !sameBox(a.meanderBox, b.meanderBox) ||
+        a.meanderBare != b.meanderBare ||
+        a.meanderAlternatives.size() != b.meanderAlternatives.size()) {
+      return false;
+    }
+    for (std::size_t at = 0; at < a.meanderAlternatives.size(); ++at) {
+      const auto& x = a.meanderAlternatives[at];
+      const auto& y = b.meanderAlternatives[at];
+      if (x.path != y.path || x.lengthAfter != y.lengthAfter ||
+          !sameBox(x.meander, y.meander)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Takes a wire's state from a task: a wire whose way or whose place on
+  /// the canvas changed comes off the canvas and goes back down as the task
+  /// left it, so that the field holds what the task's canvas held.
+  void takeWireState(forked::Reader& in, Wire& wire) {
+    auto way = in.vector<routing::PathPoint>();
+    const bool drawn = in.get<std::uint8_t>() != 0;
+    const bool routed = in.get<std::uint8_t>() != 0;
+    const bool placed = in.get<std::uint8_t>() != 0;
+    const bool endsOnly = in.get<std::uint8_t>() != 0;
+    const bool moved =
+        way != wire.way || placed != wire.placed || endsOnly != wire.endsOnly;
+    if (moved) {
+      lift(wire);
+      wire.way = std::move(way);
+    }
+    wire.drawn = drawn;
+    wire.routed = routed;
+    wire.tooShort = in.get<std::uint8_t>() != 0;
+    wire.tooLong = in.get<std::uint8_t>() != 0;
+    wire.ripped = in.get<std::uint8_t>() != 0;
+    wire.relaxedOut = in.get<std::uint64_t>();
+    wire.meanderRound = in.get<std::uint64_t>();
+    wire.meanderBox = in.get<routing::CellBox>();
+    wire.meanderAlternatives.resize(
+        static_cast<std::size_t>(in.get<std::uint64_t>()));
+    for (auto& alternative : wire.meanderAlternatives) {
+      alternative.path = in.vector<routing::PathPoint>();
+      alternative.lengthAfter = in.get<double>();
+      alternative.meander = in.get<routing::CellBox>();
+    }
+    wire.meanderBare = in.vector<routing::PathPoint>();
+    if (moved) {
+      wire.placed = false;
+      wire.endsOnly = false;
+      if (placed) {
+        place(wire);
+      } else if (endsOnly) {
+        field_.chargeFixed(wire.fixed);
+        wire.endsOnly = true;
+      }
+    }
+  }
+
+  /// Runs a round block by block (`blocksOf`): first the even blocks, each
+  /// in a task forked off the state before them, then the odd ones off the
+  /// state the even ones left. A task visits its slots in the round's
+  /// direction and hands back every wire it changed, the meanders it laid,
+  /// what the stage counted and what `tally` counts for the round; the
+  /// stage takes them in the order of the blocks. The result depends on the
+  /// blocks alone, never on how many tasks run at once.
+  void runBlocks(std::vector<Wire>& wires,
+                 const std::vector<std::vector<std::uint32_t>>& blocks,
+                 const bool forward,
+                 const std::function<void(std::uint32_t)>& visit,
+                 const std::function<void()>& reset,
+                 const std::function<void(forked::Writer*, forked::Reader*,
+                                          const RoundRecord*)>& tally) {
+    for (std::size_t colour = 0; colour < 2; ++colour) {
+      std::vector<std::size_t> mine;
+      for (std::size_t block = colour; block < blocks.size(); block += 2) {
+        mine.push_back(block);
+      }
+      const auto answers = forkTasks(mine.size(), [&](const std::size_t at) {
+        const auto had = wires;
+        const auto hadMeanders = meanders_;
+        const auto hadRecord = rounds_.empty() ? RoundRecord{} : rounds_.back();
+        const auto searches = searchCount_;
+        const auto failed = searchFailed_;
+        const auto expansions = searchExpansions_;
+        const auto refusals = bridgeRefusals_;
+        const auto ripups = meanderRipups_;
+        reset();
+        const auto& block = blocks[mine[at]];
+        if (forward) {
+          for (const auto slot : block) {
+            visit(slot);
+          }
+        } else {
+          for (auto it = block.rbegin(); it != block.rend(); ++it) {
+            visit(*it);
+          }
+        }
+        forked::Writer out;
+        std::vector<std::uint32_t> changed;
+        for (std::uint32_t key = 0; key < wires.size(); ++key) {
+          if (!sameState(had[key], wires[key])) {
+            changed.push_back(key);
+          }
+        }
+        out.put(static_cast<std::uint64_t>(changed.size()));
+        for (const auto key : changed) {
+          out.put(key);
+          putWireState(out, wires[key]);
+        }
+        std::vector<std::uint32_t> laid;
+        for (const auto& [key, kept] : meanders_) {
+          const auto old = hadMeanders.find(key);
+          if (old == hadMeanders.end() || old->second.size() != kept.size() ||
+              !std::ranges::equal(old->second, kept,
+                                  [](const auto& x, const auto& y) {
+                                    return x.first == y.first &&
+                                           x.second.minX == y.second.minX &&
+                                           x.second.maxX == y.second.maxX &&
+                                           x.second.minY == y.second.minY &&
+                                           x.second.maxY == y.second.maxY;
+                                  })) {
+            laid.push_back(key);
+          }
+        }
+        std::ranges::sort(laid);
+        out.put(static_cast<std::uint64_t>(laid.size()));
+        for (const auto key : laid) {
+          out.put(key);
+          const auto& kept = meanders_.at(key);
+          out.put(static_cast<std::uint64_t>(kept.size()));
+          for (const auto& [way, box] : kept) {
+            out.put(way);
+            out.put(box);
+          }
+        }
+        out.put(searchCount_ - searches);
+        out.put(searchFailed_ - failed);
+        out.put(searchExpansions_ - expansions);
+        out.put(bridgeRefusals_ - refusals);
+        out.put(meanderRipups_.tried - ripups.tried);
+        out.put(meanderRipups_.moves - ripups.moves);
+        out.put(meanderRipups_.moved - ripups.moved);
+        out.put(meanderRipups_.cleared - ripups.cleared);
+        out.put(meanderRipups_.remeandered - ripups.remeandered);
+        tally(&out, nullptr, &hadRecord);
+        return out.take();
+      });
+      for (const auto& answer : answers) {
+        forked::Reader in(answer.bytes);
+        const auto changed = in.get<std::uint64_t>();
+        for (std::uint64_t at = 0; at < changed; ++at) {
+          const auto key = in.get<std::uint32_t>();
+          takeWireState(in, wires[key]);
+        }
+        const auto laid = in.get<std::uint64_t>();
+        for (std::uint64_t at = 0; at < laid; ++at) {
+          const auto key = in.get<std::uint32_t>();
+          auto& kept = meanders_[key];
+          kept.clear();
+          const auto count = in.get<std::uint64_t>();
+          for (std::uint64_t entry = 0; entry < count; ++entry) {
+            auto way = in.vector<routing::PathPoint>();
+            kept.emplace_back(std::move(way), in.get<routing::CellBox>());
+          }
+        }
+        searchCount_ += in.get<std::uint64_t>();
+        searchFailed_ += in.get<std::uint64_t>();
+        searchExpansions_ += in.get<std::uint64_t>();
+        bridgeRefusals_ += in.get<std::uint32_t>();
+        meanderRipups_.tried += in.get<std::uint32_t>();
+        meanderRipups_.moves += in.get<std::uint32_t>();
+        meanderRipups_.moved += in.get<std::uint32_t>();
+        meanderRipups_.cleared += in.get<std::uint32_t>();
+        meanderRipups_.remeandered += in.get<std::uint32_t>();
+        tally(nullptr, &in, nullptr);
+        sayAgain(answer.said);
+      }
+    }
+  }
+
+  /// The least time a wire's phase-1 search takes before its relaxation
+  /// levels run in forked tasks at once (`ripup_schedule = "levels"`): a
+  /// task costs the pages it writes, tens of milliseconds on the large
+  /// chips, and a cheaper search is faster run in the stage.
+  static constexpr double LEVEL_TASK_SECONDS = 0.25;
+
+  /// What one relaxation level of a wire's turn came to, as `attempt` keeps
+  /// it: the way found, the way left short and what the lengthening said.
+  struct LevelAnswer {
+    Path found;
+    std::string note;
+    bool plainWritten = false;
+    Path plain;
+    bool plainTooLong = false;
+    Lengthened meandered;
+    Path bare;
+  };
+
+  /// The relaxation levels of a wire's turn at once (`ripup_schedule`):
+  /// level `i` runs in a task forked off the state before the first level,
+  /// `work(i)` letting go of what the levels before it let go of and then
+  /// searching it. The answers come back in the order of the levels and
+  /// `take` takes each until one finds a way, as the levels run one after
+  /// the other would; what a level did to the stage besides — its searches
+  /// counted, the meanders it laid, the corridor it left, its lines and
+  /// records — is done again here, level by level, so the stage ends as if
+  /// it had run them itself. Levels after the first that finds a way are
+  /// never taken.
+  void
+  relaxLevels(const Wire& wire, const std::size_t count,
+              const std::function<LevelAnswer(std::size_t)>& work,
+              const std::function<bool(std::size_t, LevelAnswer&&)>& take) {
+    const auto inTask = [&](const std::size_t index) {
+      const auto searches = searchCount_;
+      const auto failed = searchFailed_;
+      const auto expansions = searchExpansions_;
+      const auto refusals = bridgeRefusals_;
+      meanders_[wire.key].clear();
+      auto answer = work(index);
+      forked::Writer out;
+      out.put(answer.found);
+      out.put(std::string_view(answer.note));
+      out.put(static_cast<std::uint8_t>(answer.plainWritten));
+      out.put(answer.plain);
+      out.put(static_cast<std::uint8_t>(answer.plainTooLong));
+      putLengthened(out, answer.meandered);
+      out.put(answer.bare);
+      out.put(searchCount_ - searches);
+      out.put(searchFailed_ - failed);
+      out.put(searchExpansions_ - expansions);
+      out.put(bridgeRefusals_ - refusals);
+      out.put(lastReach_);
+      out.put(recordedCrossing_);
+      out.put(std::string_view(recordedPhase_));
+      out.put(reinterpret_cast<std::uintptr_t>(recordedWires_));
+      out.put(std::string_view(frame_.kind));
+      out.put(frame_.fence);
+      out.put(frame_.laneCurrent);
+      out.put(frame_.laneBefore);
+      out.put(frame_.laneAfter);
+      const auto& laid = meanders_[wire.key];
+      out.put(static_cast<std::uint64_t>(laid.size()));
+      for (const auto& [way, box] : laid) {
+        out.put(way);
+        out.put(box);
+      }
+      return out.take();
+    };
+    const auto answers = forkTasks(
+        count, inTask, [](const std::size_t, const std::string& bytes) {
+          forked::Reader in(bytes);
+          return in.get<std::uint64_t>() > 0;
+        });
+    for (std::size_t index = 0; index < count; ++index) {
+      if (answers[index].bytes.empty()) {
+        break;
+      }
+      forked::Reader in(answers[index].bytes);
+      LevelAnswer answer;
+      answer.found = in.vector<routing::PathPoint>();
+      answer.note = in.text();
+      answer.plainWritten = in.get<std::uint8_t>() != 0;
+      answer.plain = in.vector<routing::PathPoint>();
+      answer.plainTooLong = in.get<std::uint8_t>() != 0;
+      answer.meandered = getLengthened(in);
+      answer.bare = in.vector<routing::PathPoint>();
+      searchCount_ += in.get<std::uint64_t>();
+      searchFailed_ += in.get<std::uint64_t>();
+      searchExpansions_ += in.get<std::uint64_t>();
+      bridgeRefusals_ += in.get<std::uint32_t>();
+      lastReach_ = in.get<std::uint32_t>();
+      recordedCrossing_ = in.get<std::uint32_t>();
+      recordedPhase_ = in.text();
+      recordedWires_ =
+          reinterpret_cast<const std::vector<Wire>*>(in.get<std::uintptr_t>());
+      frame_.kind = in.text();
+      frame_.fence = in.vector<std::uint32_t>();
+      frame_.laneCurrent = in.vector<routing::PathPoint>();
+      frame_.laneBefore = in.vector<routing::PathPoint>();
+      frame_.laneAfter = in.vector<routing::PathPoint>();
+      const auto laid = in.get<std::uint64_t>();
+      for (std::uint64_t at = 0; at < laid; ++at) {
+        auto way = in.vector<routing::PathPoint>();
+        const auto box = in.get<routing::CellBox>();
+        auto& kept = meanders_[wire.key];
+        kept.emplace_back(std::move(way), box);
+        if (kept.size() > 4) {
+          kept.erase(kept.begin());
+        }
+      }
+      const bool done = take(index, std::move(answer));
+      sayAgain(answers[index].said);
+      if (done) {
+        break;
+      }
+    }
+  }
+
+  static void putLengthened(forked::Writer& out, const Lengthened& made) {
+    out.put(static_cast<std::uint8_t>(made.reached));
+    out.put(static_cast<std::uint8_t>(made.tooLong));
+    out.put(std::string_view(made.note));
+    out.put(static_cast<std::uint8_t>(made.inserted));
+    out.put(made.meander);
+    out.put(static_cast<std::uint64_t>(made.alternatives.size()));
+    for (const auto& alternative : made.alternatives) {
+      out.put(alternative.path);
+      out.put(alternative.lengthAfter);
+      out.put(alternative.meander);
+    }
+  }
+
+  [[nodiscard]] static Lengthened getLengthened(forked::Reader& in) {
+    Lengthened made;
+    made.reached = in.get<std::uint8_t>() != 0;
+    made.tooLong = in.get<std::uint8_t>() != 0;
+    made.note = in.text();
+    made.inserted = in.get<std::uint8_t>() != 0;
+    made.meander = in.get<routing::CellBox>();
+    made.alternatives.resize(static_cast<std::size_t>(in.get<std::uint64_t>()));
+    for (auto& alternative : made.alternatives) {
+      alternative.path = in.vector<routing::PathPoint>();
+      alternative.lengthAfter = in.get<double>();
+      alternative.meander = in.get<routing::CellBox>();
+    }
+    return made;
+  }
+
   /// Lengthen a resonator's way to what it needs: the prototype's meander
   /// insertion, the cheapest placement by the search's own price field and
   /// `MEANDER_BEND_PRICE` per direction change, as the prototype's strict
@@ -2715,6 +3306,52 @@ public:
   std::uint32_t sweep(std::vector<Wire>& wires,
                       const std::vector<std::uint32_t>& members,
                       const Pass& pass) {
+    return sweepOnce(
+        wires, members, pass,
+        tuning_.ripupBlocks && pass.failBudget == 0 &&
+            (pass.feedlines || !tuning_.ripupBlocksAfterInsertion));
+  }
+
+  /// Runs a phase of rip-up and reroute (`work`) under
+  /// `ripup_schedule = "blocks"` and, when it leaves a bad wire (unrouted,
+  /// open or crossing) among `members`, runs it again wire by wire from
+  /// where it began (user, 2026-11-04: the rip-up and reroute must end on
+  /// no fail wherever the stage did before), so the blocks never leave more
+  /// behind than the sweep wire by wire.
+  void ripupPhase(std::vector<Wire>& wires,
+                  const std::vector<std::uint32_t>& members,
+                  const std::string& name, const bool feedlines,
+                  const std::function<void()>& work) {
+    if (!tuning_.ripupBlocks || feedlines ||
+        tuning_.ripupBlocksAfterInsertion) {
+      // After the insertion the feedline phases are run again together
+      // (`DubinsFinalRouter::run`); before it, under "feedline-blocks",
+      // nothing runs in blocks.
+      work();
+      return;
+    }
+    const auto wiresBefore = wires;
+    const auto fieldBefore = field_;
+    const auto meandersBefore = meanders_;
+    work();
+    const auto bad = failsOf(wires, members).broken;
+    if (bad == 0) {
+      return;
+    }
+    say(std::format("{}: {} bad wire{} after the blocks; the phase again "
+                    "wire by wire from where it began",
+                    name, bad, bad == 1 ? "" : "s"));
+    wires = wiresBefore;
+    field_ = fieldBefore;
+    meanders_ = meandersBefore;
+    tuning_.ripupBlocks = false;
+    work();
+    tuning_.ripupBlocks = true;
+  }
+
+  std::uint32_t sweepOnce(std::vector<Wire>& wires,
+                          const std::vector<std::uint32_t>& members,
+                          const Pass& pass, const bool inBlocks) {
     const auto total = static_cast<std::uint32_t>(members.size());
     if (total == 0) {
       // A pass with nothing to draw still ends on its summary, so that every
@@ -2736,6 +3373,10 @@ public:
     say(std::format("{}: {} wires, up to {} rounds, {} relaxations each way",
                     pass.name, total, pass.rounds, pass.maxRelaxation));
     ++sweepSerial_;
+    // Under `ripup_schedule = "blocks"`, once a round of blocks makes no
+    // progress the pass goes on wire by wire: what is left then is a few
+    // wires the blocks drew into each other's room.
+    bool wireByWire = false;
     for (std::uint32_t round = 0; round < pass.rounds; ++round) {
       const bool forward = (round % 2) == 0;
       const auto roundName = std::format("round {} {}", round + 1,
@@ -2747,20 +3388,15 @@ public:
       std::uint32_t tried = 0;
       std::uint32_t won = 0;
       std::uint32_t lost = 0;
-      for (std::uint32_t at = 0; at < total; ++at) {
-        if (pass.failBudget > 0 && lost > pass.failBudget) {
-          aborted = true;
-          break;
-        }
-        report_.progress(pass.name, roundName, at, total);
-        const auto slot = forward ? at : (total - 1 - at);
+      // One wire's turn: drawn again unless it stands settled.
+      const auto visit = [&](const std::uint32_t slot) {
         auto& wire = wires[members[slot]];
         if (wire.feasible && wire.routed && pass.keepDrawn &&
             pass.recheckSettled && !isLegal(wire, wires, nullptr, false)) {
           wire.routed = false;
         }
         if (!wire.feasible || (wire.routed && pass.keepDrawn)) {
-          continue;
+          return;
         }
         ++tried;
         const auto relaxedOut = wire.relaxedOut;
@@ -2779,6 +3415,73 @@ public:
         }
         won += drawn ? 1 : 0;
         lost += drawn ? 0 : 1;
+      };
+      // Under `ripup_schedule = "blocks"` the round runs block by block,
+      // the even blocks of the ring at once and then the odd; a pass with a
+      // budget of fails runs wire by wire, since it stops on a count.
+      const auto blocks =
+          inBlocks && !wireByWire
+              ? blocksOf(total, round,
+                         pass.maxRelaxation + tuning_.fencePairs + 3)
+              : std::vector<std::vector<std::uint32_t>>{};
+      if (!blocks.empty()) {
+        const auto tally = [&](forked::Writer* out, forked::Reader* in,
+                               const RoundRecord* had) {
+          auto& record = rounds_.back();
+          if (out != nullptr) {
+            out->put(tried);
+            out->put(won);
+            out->put(lost);
+            out->put(record.normal - had->normal);
+            out->put(record.relaxed - had->relaxed);
+            out->put(record.tooShort - had->tooShort);
+            out->put(static_cast<std::uint64_t>(record.failed.size() -
+                                                had->failed.size()));
+            for (auto at = had->failed.size(); at < record.failed.size();
+                 ++at) {
+              out->put(std::string_view(record.failed[at]));
+            }
+            return;
+          }
+          tried += in->get<std::uint32_t>();
+          won += in->get<std::uint32_t>();
+          lost += in->get<std::uint32_t>();
+          record.normal += in->get<std::uint32_t>();
+          record.relaxed += in->get<std::uint32_t>();
+          record.tooShort += in->get<std::uint32_t>();
+          const auto failed = in->get<std::uint64_t>();
+          for (std::uint64_t at = 0; at < failed; ++at) {
+            record.failed.push_back(in->text());
+          }
+        };
+        runBlocks(
+            wires, blocks, forward, visit,
+            [&]() {
+              tried = 0;
+              won = 0;
+              lost = 0;
+            },
+            tally);
+        // The blocks of one turn saw each other as they stood before it, and
+        // two blocks far apart on the ring can be near on the chip: a way
+        // now in the room of a wire another block drew is open again, so
+        // that the round counts it and the next one draws it.
+        for (const auto member : members) {
+          auto& wire = wires[member];
+          if (wire.feasible && wire.routed &&
+              !isLegal(wire, wires, nullptr, false)) {
+            wire.routed = false;
+          }
+        }
+      } else {
+        for (std::uint32_t at = 0; at < total; ++at) {
+          if (pass.failBudget > 0 && lost > pass.failBudget) {
+            aborted = true;
+            break;
+          }
+          report_.progress(pass.name, roundName, at, total);
+          visit(forward ? at : (total - 1 - at));
+        }
       }
       // The ways the round leaves, for a picture of it (`roundsJson`); only
       // the last two rounds keep theirs.
@@ -2833,6 +3536,12 @@ public:
       // remaining twenty-eight change no byte of the result.
       stale = fails < fewest ? 0 : stale + 1;
       fewest = std::min(fewest, fails);
+      if (stale > 0 && inBlocks && !wireByWire) {
+        wireByWire = true;
+        say(std::format("{}: a round of blocks without progress; the rest "
+                        "wire by wire",
+                        pass.name));
+      }
       if (stale >= staleLimit) {
         say(std::format("{}: {} rounds without progress, stopping", pass.name,
                         stale));
@@ -3567,6 +4276,39 @@ public:
   /// cannot be routed under the wider constraint keeps the way it had.
   void refine(std::vector<Wire>& wires,
               const std::vector<std::uint32_t>& members, const Pass& pass) {
+    const bool inBlocks =
+        tuning_.refinementBlocks &&
+        (pass.feedlines || !tuning_.refinementBlocksAfterInsertion);
+    if (!inBlocks || (pass.feedlines && tuning_.ripupBlocks)) {
+      // A feedline routing in blocks is run again together with its
+      // refinement (`DubinsFinalRouter::run`).
+      refineOnce(wires, members, pass, inBlocks);
+      return;
+    }
+    // Under the blocks schedules a refinement that leaves more bad wires
+    // than it found is run again wire by wire from where it began: a
+    // refinement wire by wire takes no way that is worse.
+    const auto wiresBefore = wires;
+    const auto fieldBefore = field_;
+    const auto meandersBefore = meanders_;
+    const auto found = failsOf(wires, members).broken;
+    refineOnce(wires, members, pass, true);
+    const auto left = failsOf(wires, members).broken;
+    if (left <= found) {
+      return;
+    }
+    say(std::format("{}: {} bad wire{} after the blocks; the refinement again "
+                    "wire by wire from where it began",
+                    pass.name, left, left == 1 ? "" : "s"));
+    wires = wiresBefore;
+    field_ = fieldBefore;
+    meanders_ = meandersBefore;
+    refineOnce(wires, members, pass, false);
+  }
+
+  void refineOnce(std::vector<Wire>& wires,
+                  const std::vector<std::uint32_t>& members, const Pass& pass,
+                  const bool inBlocks) {
     const auto total = static_cast<std::uint32_t>(members.size());
     if (pass.rounds != 0) {
       say(std::format("{}: {} wires, {} rounds", pass.name, total,
@@ -3595,13 +4337,11 @@ public:
       frame_.round = round;
       frame_.forward = forward;
       std::uint32_t moved = 0;
-      for (std::uint32_t at = 0; at < total; ++at) {
-        report_.progress(pass.name, std::format("round {}", round + 1), at,
-                         total);
-        const auto slot = forward ? at : (total - 1 - at);
+      // One wire's refinement.
+      const auto visit = [&](const std::uint32_t slot) {
         auto& wire = wires[members[slot]];
         if (!wire.drawn || !wire.feasible) {
-          continue;
+          return;
         }
         const auto had = wire.way;
         const auto& before = wires[members[(slot + total - 1) % total]];
@@ -3794,6 +4534,57 @@ public:
         }
         wire.drawn = true;
         place(wire);
+      };
+      // Under `refinement_schedule = "blocks"` the round runs block by
+      // block, the even blocks of the ring at once and then the odd.
+      const auto blocks =
+          inBlocks ? blocksOf(total, round, (2 * tuning_.fencePairs) + 3)
+                   : std::vector<std::vector<std::uint32_t>>{};
+      if (!blocks.empty()) {
+        // A task marks the resonators it fitted: the mark is all the
+        // fallback of a later round reads of it.
+        std::vector<std::uint8_t> fittedBefore;
+        runBlocks(
+            wires, blocks, forward, visit,
+            [&]() {
+              moved = 0;
+              fallbacksTried = 0;
+              fallbacksTaken = 0;
+              bandFallbacksTried = 0;
+              bandFallbacksFound = 0;
+              fittedBefore = fitted;
+            },
+            [&](forked::Writer* out, forked::Reader* in, const RoundRecord*) {
+              if (out != nullptr) {
+                out->put(moved);
+                out->put(fallbacksTried);
+                out->put(fallbacksTaken);
+                out->put(bandFallbacksTried);
+                out->put(bandFallbacksFound);
+                std::vector<std::uint32_t> marked;
+                for (std::uint32_t key = 0; key < fitted.size(); ++key) {
+                  if (fitted[key] != fittedBefore[key]) {
+                    marked.push_back(key);
+                  }
+                }
+                out->put(marked);
+                return;
+              }
+              moved += in->get<std::uint32_t>();
+              fallbacksTried += in->get<std::uint32_t>();
+              fallbacksTaken += in->get<std::uint32_t>();
+              bandFallbacksTried += in->get<std::uint32_t>();
+              bandFallbacksFound += in->get<std::uint32_t>();
+              for (const auto key : in->vector<std::uint32_t>()) {
+                fitted[key] = 1;
+              }
+            });
+      } else {
+        for (std::uint32_t at = 0; at < total; ++at) {
+          report_.progress(pass.name, std::format("round {}", round + 1), at,
+                           total);
+          visit(forward ? at : (total - 1 - at));
+        }
       }
       std::uint32_t crowded = 0;
       for (const auto member : members) {
@@ -18212,20 +19003,31 @@ public:
         recordState(current, std::nullopt,
                     checkChainLocally(before, chain, own, current, paths));
       }
-      for (const auto lo : starts) {
+      // Every segment is searched at once, each in a task forked off the
+      // state here; a task checks the runs its search reaches that it has
+      // not seen, and the runs are taken in the order the segments and
+      // their searches reached them, as one search after the other would
+      // have: a run another segment reached first is not taken again.
+      struct Run {
+        std::vector<std::size_t> options;
+        bool empty = false;
+        LocalChainVerdict judged;
+      };
+      const std::vector<std::size_t> startList(starts.begin(), starts.end());
+      const auto answers = forkTasks(startList.size(), [&](const std::size_t
+                                                               at) {
+        const auto lo = startList[at];
+        std::uint32_t reached = 0;
+        std::vector<Run> found;
         const RunCollector collect = [&](const std::vector<std::size_t>& layer,
                                          const std::vector<Path>& ways) {
-          ++runs;
+          ++reached;
           auto options = current;
           for (std::size_t k = 0; k < layer.size(); ++k) {
             if (!points[lo + k].fixed) {
               options[lo + k] = layer[k];
             }
           }
-          const bool moves =
-              std::ranges::any_of(marked, [&](const std::size_t at) {
-                return options[at] != current[at];
-              });
           if (seen.contains(options) ||
               (!atOver && options[first] == current[first] &&
                options[last] == current[last])) {
@@ -18233,20 +19035,95 @@ public:
           }
           seen.insert(options);
           std::vector<const Path*> paths;
-          for (std::size_t at = 0; at + 1 < points.size(); ++at) {
-            paths.push_back(at >= lo && at < lo + ways.size()
-                                ? &ways[at - lo]
-                                : &chainEdgePaths_[chain][at]);
+          for (std::size_t edge = 0; edge + 1 < points.size(); ++edge) {
+            paths.push_back(edge >= lo && edge < lo + ways.size()
+                                ? &ways[edge - lo]
+                                : &chainEdgePaths_[chain][edge]);
           }
           // A chain with an edge that has no way is no state of it.
           if (std::ranges::any_of(
                   paths, [](const Path* way) { return way->empty(); })) {
+            found.push_back({.options = std::move(options), .empty = true});
             return false;
           }
           // The two local checks (`checkChainLocally`); a state either
           // finds SAT is kept.
-          const auto judged =
-              checkChainLocally(before, chain, own, options, paths);
+          auto judged = checkChainLocally(before, chain, own, options, paths);
+          found.push_back(
+              {.options = std::move(options), .judged = std::move(judged)});
+          return false;
+        };
+        segmentCollect_ = &collect;
+        std::uint32_t badNow = 0;
+        static_cast<void>(researchSegment(wires, {}, {}, Pass{},
+                                          {.chain = chain,
+                                           .lo = lo,
+                                           .hi = lo + span,
+                                           .fails = {},
+                                           .because = {}},
+                                          tuning_.globalSatRuns, badNow));
+        segmentCollect_ = nullptr;
+        forked::Writer task;
+        task.put(reached);
+        task.put(static_cast<std::uint64_t>(found.size()));
+        for (const auto& run : found) {
+          task.put(std::vector<std::uint64_t>(run.options.begin(),
+                                              run.options.end()));
+          task.put(static_cast<std::uint8_t>(run.empty));
+          task.put(static_cast<std::uint64_t>(run.judged.standingLost.size()));
+          for (const auto& name : run.judged.standingLost) {
+            task.put(std::string_view(name));
+          }
+          task.put(static_cast<std::uint8_t>(run.judged.aloneLost.has_value()));
+          if (run.judged.aloneLost.has_value()) {
+            task.put(static_cast<std::uint64_t>(run.judged.aloneLost->size()));
+            for (const auto& name : *run.judged.aloneLost) {
+              task.put(std::string_view(name));
+            }
+          }
+          task.put(run.judged.seconds);
+        }
+        return task.take();
+      });
+      for (std::size_t at = 0; at < startList.size(); ++at) {
+        const auto lo = startList[at];
+        sayAgain(answers[at].said);
+        forked::Reader task(answers[at].bytes);
+        runs += task.get<std::uint32_t>();
+        const auto count = task.get<std::uint64_t>();
+        for (std::uint64_t index = 0; index < count; ++index) {
+          std::vector<std::size_t> options;
+          for (const auto option : task.vector<std::uint64_t>()) {
+            options.push_back(static_cast<std::size_t>(option));
+          }
+          const bool empty = task.get<std::uint8_t>() != 0;
+          LocalChainVerdict judged;
+          judged.standingLost.resize(
+              static_cast<std::size_t>(task.get<std::uint64_t>()));
+          for (auto& name : judged.standingLost) {
+            name = task.text();
+          }
+          if (task.get<std::uint8_t>() != 0) {
+            judged.aloneLost.emplace(
+                static_cast<std::size_t>(task.get<std::uint64_t>()));
+            for (auto& name : *judged.aloneLost) {
+              name = task.text();
+            }
+          }
+          judged.seconds = task.get<double>();
+          const bool moves =
+              std::ranges::any_of(marked, [&](const std::size_t point) {
+                return options[point] != current[point];
+              });
+          if (seen.contains(options) ||
+              (!atOver && options[first] == current[first] &&
+               options[last] == current[last])) {
+            continue;
+          }
+          seen.insert(options);
+          if (empty) {
+            continue;
+          }
           checking += std::chrono::duration<double>(judged.seconds);
           recordState(options, lo, judged);
           const bool fits = judged.standing();
@@ -18265,7 +19142,7 @@ public:
                                "UNSAT on options{} (lost{})",
                                chain, lo, named, lostText));
             }
-            return false;
+            continue;
           }
           ++sat;
           fitting += fits ? 1U : 0U;
@@ -18289,18 +19166,7 @@ public:
           } else {
             others.push_back(options);
           }
-          return false;
-        };
-        segmentCollect_ = &collect;
-        std::uint32_t badNow = 0;
-        static_cast<void>(researchSegment(wires, {}, {}, Pass{},
-                                          {.chain = chain,
-                                           .lo = lo,
-                                           .hi = lo + span,
-                                           .fails = {},
-                                           .because = {}},
-                                          tuning_.globalSatRuns, badNow));
-        segmentCollect_ = nullptr;
+        }
       }
       if (atOver) {
         kept.insert(kept.end(), std::make_move_iterator(moving.begin()),
@@ -18488,8 +19354,12 @@ public:
     const auto before = wiresBeforeTheEdges(wires);
     const auto own = localCheckWires(before, chain);
     std::vector<EndState> alone;
-    for (const auto option : candidates) {
-      out.tried.push_back(option);
+    // One end option: the segment searched with it pinned, until a run of
+    // options the local check finds SAT, with the other chains standing or
+    // with the chain alone.
+    const auto tryOption = [&](const std::size_t option,
+                               std::vector<EndState>& standingStates,
+                               std::vector<EndState>& aloneStates) {
       bool taken = false;
       const RunCollector collect = [&](const std::vector<std::size_t>& layer,
                                        const std::vector<Path>& ways) {
@@ -18513,10 +19383,12 @@ public:
         }
         const auto judged = checkChainLocally(before, chain, own, options, paths);
         if (judged.standing()) {
-          out.states.push_back({.option = option, .options = options, .standing = true});
+          standingStates.push_back(
+              {.option = option, .options = options, .standing = true});
           taken = true;
         } else if (judged.alone()) {
-          alone.push_back({.option = option, .options = options, .standing = false});
+          aloneStates.push_back(
+              {.option = option, .options = options, .standing = false});
           taken = true;
         }
         return false;
@@ -18532,6 +19404,43 @@ public:
                                          .pinned = {{waypoint, option}}},
                                         tuning_.globalSatRuns, badNow));
       segmentCollect_ = nullptr;
+    };
+    // The options are searched at once, each in a task forked off the state
+    // here, and taken in their order: no option's search reads what another
+    // left behind.
+    const auto answers =
+        forkTasks(candidates.size(), [&](const std::size_t at) {
+          std::vector<EndState> standingStates;
+          std::vector<EndState> aloneStates;
+          tryOption(candidates[at], standingStates, aloneStates);
+          forked::Writer task;
+          for (const auto* states : {&standingStates, &aloneStates}) {
+            task.put(static_cast<std::uint64_t>(states->size()));
+            for (const auto& state : *states) {
+              task.put(static_cast<std::uint64_t>(state.option));
+              std::vector<std::uint64_t> options(state.options.begin(),
+                                                 state.options.end());
+              task.put(options);
+            }
+          }
+          return task.take();
+        });
+    for (std::size_t at = 0; at < candidates.size(); ++at) {
+      out.tried.push_back(candidates[at]);
+      forked::Reader task(answers[at].bytes);
+      for (const bool standing : {true, false}) {
+        const auto count = task.get<std::uint64_t>();
+        for (std::uint64_t k = 0; k < count; ++k) {
+          EndState state{
+              .option = static_cast<std::size_t>(task.get<std::uint64_t>()),
+              .standing = standing};
+          for (const auto option : task.vector<std::uint64_t>()) {
+            state.options.push_back(static_cast<std::size_t>(option));
+          }
+          (standing ? out.states : alone).push_back(std::move(state));
+        }
+      }
+      sayAgain(answers[at].said);
     }
     const auto standingCount = out.states.size();
     out.states.insert(out.states.end(), std::make_move_iterator(alone.begin()),
@@ -18925,18 +19834,126 @@ public:
     };
     // Tries the combinations in `picks`, in that order, until one is SAT or
     // the tries run out; a combination tried before is skipped.
+    //
+    // The combinations a call tries are checked at once, each in a task
+    // forked off the chip as the commit left it, and taken in their order:
+    // the first SAT one wins, as it would one after the other, and the stage
+    // then stands on it itself.
     const auto tryAll = [&](const std::vector<std::vector<std::size_t>>& picks,
                             const std::string_view stage,
                             const std::uint32_t limit = UINT32_MAX) {
+      const auto budget = std::min(limit, tuning_.globalSatTries);
+      std::vector<const std::vector<std::size_t>*> queued;
       for (const auto& pick : picks) {
-        if (checks >= std::min(limit, tuning_.globalSatTries)) {
-          return false;
+        if (checks + queued.size() >= budget) {
+          break;
         }
         if (!tried.insert(pick).second) {
           ++repeated;
           continue;
         }
-        if (tryPick(pick, stage)) {
+        queued.push_back(&pick);
+      }
+      const auto base = checks;
+      const auto answers = forkTasks(
+          queued.size(),
+          [&](const std::size_t at) {
+            checks = base + static_cast<std::uint32_t>(at);
+            const auto had = failed.size();
+            const bool sat = tryPick(*queued[at], stage);
+            forked::Writer task;
+            task.put(static_cast<std::uint8_t>(sat));
+            task.put(restoring.count());
+            task.put(moving.count());
+            task.put(judging.count());
+            task.put(combined.count());
+            task.put(std::string_view(satMoved));
+            const bool lost = !sat && failed.size() > had;
+            task.put(static_cast<std::uint8_t>(lost));
+            if (lost) {
+              const auto& entry = failed.back();
+              task.put(std::vector<std::uint64_t>(entry.pick.begin(),
+                                                  entry.pick.end()));
+              task.put(static_cast<std::uint64_t>(entry.against));
+              task.put(std::vector<std::uint32_t>(entry.named.begin(),
+                                                  entry.named.end()));
+              task.put(entry.check);
+              task.put(static_cast<std::uint64_t>(entry.gates.size()));
+              for (const auto& gate : entry.gates) {
+                task.put(std::string_view(gate.name));
+                task.put(static_cast<std::uint64_t>(gate.ends.size()));
+                for (const auto& end : gate.ends) {
+                  task.put(std::string_view(end));
+                }
+                task.put(gate.middle);
+              }
+            }
+            return task.take();
+          },
+          [](const std::size_t, const std::string& bytes) {
+            return !bytes.empty() && bytes[0] != 0;
+          });
+      const auto hadRestoring = restoring;
+      const auto hadMoving = moving;
+      const auto hadJudging = judging;
+      const auto hadCombined = combined;
+      for (std::size_t at = 0; at < queued.size(); ++at) {
+        if (answers[at].bytes.empty()) {
+          break;
+        }
+        forked::Reader task(answers[at].bytes);
+        const bool sat = task.get<std::uint8_t>() != 0;
+        restoring +=
+            std::chrono::duration<double>(task.get<double>()) - hadRestoring;
+        moving += std::chrono::duration<double>(task.get<double>()) - hadMoving;
+        judging +=
+            std::chrono::duration<double>(task.get<double>()) - hadJudging;
+        combined +=
+            std::chrono::duration<double>(task.get<double>()) - hadCombined;
+        const auto moved = task.text();
+        checks = base + static_cast<std::uint32_t>(at) + 1;
+        if (task.get<std::uint8_t>() != 0) {
+          FailedCombination entry;
+          for (const auto option : task.vector<std::uint64_t>()) {
+            entry.pick.push_back(static_cast<std::size_t>(option));
+          }
+          entry.against = static_cast<std::size_t>(task.get<std::uint64_t>());
+          for (const auto chain : task.vector<std::uint32_t>()) {
+            entry.named.insert(chain);
+          }
+          entry.check = task.get<std::uint32_t>();
+          entry.gates.resize(
+              static_cast<std::size_t>(task.get<std::uint64_t>()));
+          for (auto& gate : entry.gates) {
+            gate.name = task.text();
+            gate.ends.resize(
+                static_cast<std::size_t>(task.get<std::uint64_t>()));
+            for (auto& end : gate.ends) {
+              end = task.text();
+            }
+            gate.middle = task.get<std::array<double, 2>>();
+          }
+          failed.push_back(std::move(entry));
+        }
+        sayAgain(answers[at].said);
+        if (sat) {
+          // The stage stands on the SAT combination itself, quietly: the
+          // task already said what it came to.
+          const auto said = report_;
+          const auto debug = debug_;
+          report_ = Report();
+          debug_ = {};
+          const auto counted = checks;
+          const auto times = std::array{restoring, moving, judging, combined};
+          static_cast<void>(tryPick(*queued[at], stage));
+          checks = counted;
+          restoring = times[0];
+          moving = times[1];
+          judging = times[2];
+          combined = times[3];
+          report_ = said;
+          debug_ = debug;
+          satMoved = moved;
           return true;
         }
       }
@@ -19506,6 +20523,45 @@ public:
     return improved;
   }
 
+  /// How many runs the greedy weighs `count` options or pairs in at once:
+  /// one, in the stage, for fewer than two runs of `GREEDY_RUN` each or
+  /// without a budget for more than one process; a run costs a forked task,
+  /// tens of milliseconds, and an option a few edge searches.
+  static constexpr std::size_t GREEDY_RUN = 8;
+  [[nodiscard]] static std::size_t greedyParts(const std::size_t count) {
+    const auto threads = static_cast<std::size_t>(forked::Budget::threads());
+    if (threads < 2 || count < 2 * GREEDY_RUN) {
+      return 1;
+    }
+    return std::min(threads, count / GREEDY_RUN);
+  }
+  /// The run `part` of `parts` over `count` items: consecutive, in order.
+  [[nodiscard]] static std::pair<std::size_t, std::size_t>
+  partOf(const std::size_t count, const std::size_t parts,
+         const std::size_t part) {
+    return {count * part / parts, count * (part + 1) / parts};
+  }
+  static void putGreedyCost(forked::Writer& out, const GreedyCost& cost) {
+    out.put(cost.cost);
+    out.put(static_cast<std::uint64_t>(cost.firstEdge));
+    out.put(static_cast<std::uint64_t>(cost.ways.size()));
+    for (const auto& way : cost.ways) {
+      out.put(way);
+    }
+    out.put(cost.lost);
+  }
+  [[nodiscard]] static GreedyCost getGreedyCost(forked::Reader& in) {
+    GreedyCost cost;
+    cost.cost = in.get<std::uint64_t>();
+    cost.firstEdge = static_cast<std::size_t>(in.get<std::uint64_t>());
+    cost.ways.resize(static_cast<std::size_t>(in.get<std::uint64_t>()));
+    for (auto& way : cost.ways) {
+      way = in.vector<routing::PathPoint>();
+    }
+    cost.lost = in.get<std::uint32_t>();
+    return cost;
+  }
+
   /// How many times the greedy over one chain may escape a local minimum
   /// that leaves an edge without a way (`escapeGreedy`).
   static constexpr std::uint32_t GREEDY_ESCAPES = 3;
@@ -19543,18 +20599,62 @@ public:
       }
       GreedyCost best;
       std::pair<std::size_t, std::size_t> chosen{0, 0};
+      std::vector<std::pair<std::size_t, std::size_t>> pairs;
       for (const auto optionA : openOptionsOf(chain, a)) {
         for (const auto optionB : openOptionsOf(chain, b)) {
+          pairs.emplace_back(optionA, optionB);
+        }
+      }
+      const auto weigh = [&](const std::size_t begin, const std::size_t end,
+                             GreedyCost& runBest,
+                             std::pair<std::size_t, std::size_t>& runPair) {
+        for (auto k = begin; k < end; ++k) {
+          const auto [optionA, optionB] = pairs[k];
           auto stood = standOf(chain, a, optionA);
           const auto second = standOf(chain, b, optionB);
           stood.insert(stood.end(), second.begin(), second.end());
           ++greedyJointTried_;
           auto cost = greedyCostOf(wires, chain, stood);
-          if (cost.valid() && (!best.valid() || cost.cost < best.cost)) {
-            best = std::move(cost);
-            chosen = {optionA, optionB};
+          if (cost.valid() && (!runBest.valid() || cost.cost < runBest.cost)) {
+            runBest = std::move(cost);
+            runPair = {optionA, optionB};
           }
         }
+      };
+      const auto parts = greedyParts(pairs.size());
+      if (parts > 1) {
+        // The pairs weighed at once in runs, the runs taken in order with
+        // the same strict rule: the first cheapest pair wins, as before.
+        const auto answers = forkTasks(parts, [&](const std::size_t part) {
+          const auto routed = greedyRouted_;
+          const auto tried = greedyJointTried_;
+          GreedyCost runBest;
+          std::pair<std::size_t, std::size_t> runPair{0, 0};
+          const auto [begin, end] = partOf(pairs.size(), parts, part);
+          weigh(begin, end, runBest, runPair);
+          forked::Writer out;
+          out.put(static_cast<std::uint64_t>(runPair.first));
+          out.put(static_cast<std::uint64_t>(runPair.second));
+          putGreedyCost(out, runBest);
+          out.put(greedyRouted_ - routed);
+          out.put(greedyJointTried_ - tried);
+          return out.take();
+        });
+        for (std::size_t part = 0; part < parts; ++part) {
+          forked::Reader in(answers[part].bytes);
+          const auto first = static_cast<std::size_t>(in.get<std::uint64_t>());
+          const auto second = static_cast<std::size_t>(in.get<std::uint64_t>());
+          auto cost = getGreedyCost(in);
+          greedyRouted_ += in.get<std::uint64_t>();
+          greedyJointTried_ += in.get<std::uint64_t>();
+          if (cost.valid() && (!best.valid() || cost.cost < best.cost)) {
+            best = std::move(cost);
+            chosen = {first, second};
+          }
+          sayAgain(answers[part].said);
+        }
+      } else {
+        weigh(0, pairs.size(), best, chosen);
       }
       if (!best.valid()) {
         say(std::format("coupler insertion: greedy chain {}: edge {}->{} has "
@@ -19619,18 +20719,64 @@ public:
         auto best = greedyLocalCost(wires, chain, at, current);
         note(current, best);
         auto bestOption = current;
-        if (open.size() > 1 ||
-            (open.size() == 1 && open.front() != current)) {
-          for (const auto option : open) {
-            if (option == current) {
-              continue;
+        std::vector<std::size_t> others;
+        for (const auto option : open) {
+          if (option != current) {
+            others.push_back(option);
+          }
+        }
+        const auto take = [&](const std::size_t option, GreedyCost&& cost) {
+          if (cost.valid() && (!best.valid() || cost.cost <= best.cost)) {
+            best = std::move(cost);
+            bestOption = option;
+          }
+        };
+        const auto parts = greedyParts(others.size());
+        if (parts > 1) {
+          // The options weighed at once, in runs of consecutive options,
+          // each run in a forked task: a run hands back what each of its
+          // options cost and its own best by the same rule, and the runs are
+          // taken in order, so the best is the one the options one after the
+          // other find.
+          const auto answers = forkTasks(parts, [&](const std::size_t part) {
+            const auto routed = greedyRouted_;
+            forked::Writer out;
+            GreedyCost runBest;
+            std::size_t runOption = 0;
+            const auto [begin, end] = partOf(others.size(), parts, part);
+            for (auto k = begin; k < end; ++k) {
+              auto cost = greedyLocalCost(wires, chain, at, others[k]);
+              out.put(cost.cost);
+              if (cost.valid() &&
+                  (!runBest.valid() || cost.cost <= runBest.cost)) {
+                runBest = std::move(cost);
+                runOption = others[k];
+              }
             }
+            out.put(static_cast<std::uint64_t>(runOption));
+            putGreedyCost(out, runBest);
+            out.put(greedyRouted_ - routed);
+            return out.take();
+          });
+          for (std::size_t part = 0; part < parts; ++part) {
+            forked::Reader in(answers[part].bytes);
+            const auto [begin, end] = partOf(others.size(), parts, part);
+            for (auto k = begin; k < end; ++k) {
+              GreedyCost weighed;
+              weighed.cost = in.get<std::uint64_t>();
+              note(others[k], weighed);
+            }
+            const auto option =
+                static_cast<std::size_t>(in.get<std::uint64_t>());
+            take(option, getGreedyCost(in));
+            greedyRouted_ += in.get<std::uint64_t>();
+            sayAgain(answers[part].said);
+          }
+        } else {
+          for (const auto option : others) {
             auto cost = greedyLocalCost(wires, chain, at, option);
             note(option, cost);
-            if (cost.valid() && (!best.valid() || cost.cost <= best.cost)) {
-              best = std::move(cost);
-              bestOption = option;
-            }
+            take(option, std::move(cost));
           }
         }
         store(best);
@@ -19659,6 +20805,393 @@ public:
     return improved;
   }
 
+  /// How many rounds the chains that meet another chain are solved again
+  /// in (`solveChains`).
+  static constexpr std::uint32_t CHAIN_ROUNDS = 3;
+
+  /// The coupler insertion of every chain, each on its own and at once (user,
+  /// 2026-11-04: the chains are independent): every chain is solved in a
+  /// task forked off the state before the insertion, so that it sees the
+  /// other chains as they stood before any of them moved, and the answers
+  /// are taken in the order of the chains. A chain whose edges then run
+  /// through what another chain left standing — its couplers, their leads
+  /// and resonators, its terminal runs — or, with `guardOptions` (the prefix
+  /// search), whose coupler bodies lie on another chain's edges — of a
+  /// chain before it, as the chains one after the other hold it — is solved
+  /// again against the chains before it as they answered and the ones after
+  /// it as they stood, those chains at once, for up to `CHAIN_ROUNDS`
+  /// rounds. The result
+  /// depends on the chains alone, never on how many tasks run at once.
+  /// `solve` says the chain's own lines and returns what the caller counts
+  /// of it.
+  [[nodiscard]] std::vector<std::uint32_t>
+  solveChains(std::vector<Wire>& wires,
+              const std::function<std::uint32_t(std::uint32_t)>& solve,
+              const bool guardOptions) {
+    const auto count = static_cast<std::uint32_t>(chains_.size());
+    std::vector<std::uint32_t> answers(count, 0);
+    startedOptions_.resize(couplers_.size());
+    startedCouplers_.clear();
+    for (std::size_t index = 0; index < couplers_.size(); ++index) {
+      const auto& coupler = couplers_[index];
+      startedOptions_[index] = coupler.chosen;
+      CouplerStart start{.chosen = coupler.chosen,
+                         .jogsUnlocked = coupler.jogsUnlocked,
+                         .reserveOpen = coupler.reserveOpen,
+                         .extensionsUnlocked = coupler.extensionsUnlocked};
+      for (const auto& option : coupler.options) {
+        start.costs.push_back(option.cost);
+        start.guarded.push_back(option.guarded);
+      }
+      startedCouplers_.push_back(std::move(start));
+    }
+    const auto done = forkTasks(count, [&](const std::size_t at) {
+      const auto chain = static_cast<std::uint32_t>(at);
+      const auto counted = insertionCounters();
+      const auto answer = solve(chain);
+      forked::Writer out;
+      out.put(answer);
+      putChainAnswer(out, chain);
+      putInsertionCounters(out, counted);
+      return out.take();
+    });
+    for (std::uint32_t chain = 0; chain < count; ++chain) {
+      report_.progress("coupler insertion", std::format("chain {}", chain + 1),
+                       chain, count);
+      forked::Reader in(done[chain].bytes);
+      answers[chain] = in.get<std::uint32_t>();
+      takeChainAnswer(in, chain);
+      takeInsertionCounters(in);
+      sayAgain(done[chain].said);
+    }
+    foreignRoomStale_ = true;
+    // The start of every chain: its couplers' options and its edges before
+    // the insertion, for a chain solved again as it would be after the
+    // chains before it (`asAfter`).
+    std::vector<std::size_t> started(couplers_.size());
+    for (std::size_t index = 0; index < couplers_.size(); ++index) {
+      started[index] = startedOptions_.empty() ? couplers_[index].chosen
+                                               : startedOptions_[index];
+    }
+    for (std::uint32_t round = 0; round < CHAIN_ROUNDS && count > 1; ++round) {
+      std::vector<std::uint32_t> meeting;
+      for (std::uint32_t chain = 1; chain < count; ++chain) {
+        // Checked against the chains before it alone, as the chains one
+        // after the other hold it: a chain keeps clear of what stands
+        // before it, and the chains after it keep clear of it.
+        const auto hidden = asAfter(chain, started);
+        const bool meets = meetsOtherChains(wires, chain, guardOptions);
+        restoreLater(hidden);
+        if (meets) {
+          meeting.push_back(chain);
+        }
+      }
+      if (meeting.empty()) {
+        break;
+      }
+      std::string names;
+      for (const auto chain : meeting) {
+        names += (names.empty() ? "" : " ") + std::to_string(chain);
+      }
+      say(std::format("coupler insertion: chains {} meet a chain before them "
+                      "— solved again at once, each against the chains before "
+                      "it as they answered and the ones after it as they "
+                      "stood (round {})",
+                      names, round + 1));
+      const auto again = forkTasks(meeting.size(), [&](const std::size_t at) {
+        const auto chain = meeting[at];
+        static_cast<void>(asAfter(chain, started));
+        // Its own couplers back where they started, as the chains one after
+        // the other start it: the greedy walks on from the options it
+        // stands on.
+        for (const auto& point : chains_[chain]) {
+          if (!point.fixed) {
+            restartCoupler(point.coupler);
+          }
+        }
+        // A chain solved again starts as it started the first time: with
+        // no edges of its own standing and nothing of it in the memo.
+        for (auto& way : chainEdgePaths_[chain]) {
+          way.clear();
+        }
+        forgetChainMemo(chain);
+        foreignRoomStale_ = true;
+        const auto counted = insertionCounters();
+        const auto answer = solve(chain);
+        forked::Writer out;
+        out.put(answer);
+        putChainAnswer(out, chain);
+        putInsertionCounters(out, counted);
+        return out.take();
+      });
+      for (std::size_t at = 0; at < meeting.size(); ++at) {
+        const auto chain = meeting[at];
+        forked::Reader in(again[at].bytes);
+        answers[chain] = in.get<std::uint32_t>();
+        takeChainAnswer(in, chain);
+        takeInsertionCounters(in);
+        sayAgain(again[at].said);
+      }
+      foreignRoomStale_ = true;
+    }
+    foreignRoomStale_ = true;
+    return answers;
+  }
+
+  /// The chains after `chain` as they stood before the insertion: their
+  /// couplers back on the options they started on and no edges of theirs,
+  /// so that `chain` sees what it would see solved after the chains before
+  /// it. Returns what it took away, for `restoreLater`.
+  struct Hidden {
+    std::vector<std::pair<std::uint32_t, std::size_t>> chosen;
+    std::vector<std::pair<std::uint32_t, std::vector<Path>>> ways;
+  };
+  Hidden asAfter(const std::uint32_t chain,
+                 const std::vector<std::size_t>& started) {
+    Hidden hidden;
+    for (auto later = chain + 1; later < chains_.size(); ++later) {
+      for (const auto& point : chains_[later]) {
+        if (!point.fixed) {
+          hidden.chosen.emplace_back(point.coupler,
+                                     couplers_[point.coupler].chosen);
+          couplers_[point.coupler].chosen = started[point.coupler];
+        }
+      }
+      hidden.ways.emplace_back(later, chainEdgePaths_[later]);
+      for (auto& way : chainEdgePaths_[later]) {
+        way.clear();
+      }
+    }
+    foreignRoomStale_ = true;
+    return hidden;
+  }
+  void restoreLater(const Hidden& hidden) {
+    for (const auto& [index, chosen] : hidden.chosen) {
+      couplers_[index].chosen = chosen;
+    }
+    for (const auto& [chain, ways] : hidden.ways) {
+      chainEdgePaths_[chain] = ways;
+    }
+    foreignRoomStale_ = true;
+  }
+  /// The options the couplers started the insertion on (`solveChains`).
+  std::vector<std::size_t> startedOptions_;
+  /// What a chain's solve changes of a coupler, as it was before the
+  /// insertion (`solveChains`).
+  struct CouplerStart {
+    std::size_t chosen = 0;
+    bool jogsUnlocked = false;
+    std::uint32_t reserveOpen = 0;
+    bool extensionsUnlocked = false;
+    std::vector<std::uint32_t> costs;
+    std::vector<std::uint32_t> guarded;
+  };
+  std::vector<CouplerStart> startedCouplers_;
+  void restartCoupler(const std::uint32_t index) {
+    if (index >= startedCouplers_.size()) {
+      return;
+    }
+    auto& coupler = couplers_[index];
+    const auto& start = startedCouplers_[index];
+    coupler.chosen = start.chosen;
+    coupler.jogsUnlocked = start.jogsUnlocked;
+    coupler.reserveOpen = start.reserveOpen;
+    coupler.extensionsUnlocked = start.extensionsUnlocked;
+    for (std::size_t at = 0;
+         at < coupler.options.size() && at < start.costs.size(); ++at) {
+      coupler.options[at].cost = start.costs[at];
+      coupler.options[at].guarded = start.guarded[at];
+    }
+  }
+
+  /// Whether a chain's edges run through what another chain left standing —
+  /// its couplers, their leads and resonators (`ensureForeignRoom`), its
+  /// terminal runs (`guardSettledTerminalRuns`) — or, with `guardOptions`,
+  /// whether one of its coupler bodies lies on another chain's edges
+  /// (`feedlineCellsBut`): what the chain, solved after the others, would
+  /// have kept clear of.
+  [[nodiscard]] bool meetsOtherChains(const std::vector<Wire>& wires,
+                                      const std::uint32_t chain,
+                                      const bool guardOptions) {
+    foreignRoomStale_ = true;
+    ensureForeignRoom(wires, chain);
+    grid::BitGrid runs(scene_.router.width, scene_.router.height);
+    const auto width = static_cast<std::int64_t>(scene_.router.width);
+    closeTerminalRunsBut(
+        chain, [&](const std::int64_t x, const std::int64_t y) {
+          runs.set(static_cast<std::size_t>((y * width) + x), true);
+        });
+    for (const auto& way : chainEdgePaths_[chain]) {
+      for (const auto& point : way) {
+        if (point.x >= scene_.router.width || point.y >= scene_.router.height) {
+          continue;
+        }
+        const auto cell = scene_.router.index(point.x, point.y);
+        if (foreignRoom_.test(cell) || runs.test(cell)) {
+          return true;
+        }
+      }
+    }
+    if (guardOptions) {
+      const auto feedlines = feedlineCellsBut(chain);
+      for (const auto& point : chains_[chain]) {
+        if (point.fixed) {
+          continue;
+        }
+        const auto& coupler = couplers_[point.coupler];
+        for (const auto cell : coupler.options[coupler.chosen].body) {
+          if (feedlines.test(cell)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+  /// Forgets what the edge memo holds of a chain (`edgeMemo_`), before the
+  /// chain is solved again against other answers.
+  void forgetChainMemo(const std::uint32_t chain) {
+    std::erase_if(edgeMemo_, [&](const auto& entry) {
+      return ((entry.first >> 56U) & 0xFFU) == (chain & 0xFFU);
+    });
+  }
+
+  /// What a chain's insertion leaves on the stage: the options its couplers
+  /// took and what they unlocked and were priced at, its edges' ways, and
+  /// what the edge memo holds of it.
+  void putChainAnswer(forked::Writer& out, const std::uint32_t chain) const {
+    std::vector<std::uint32_t> mine;
+    for (const auto& point : chains_[chain]) {
+      if (!point.fixed) {
+        mine.push_back(point.coupler);
+      }
+    }
+    out.put(mine);
+    for (const auto index : mine) {
+      const auto& coupler = couplers_[index];
+      out.put(static_cast<std::uint64_t>(coupler.chosen));
+      out.put(static_cast<std::uint8_t>(coupler.jogsUnlocked));
+      out.put(coupler.reserveOpen);
+      out.put(static_cast<std::uint8_t>(coupler.extensionsUnlocked));
+      std::vector<std::uint32_t> costs;
+      std::vector<std::uint32_t> guarded;
+      for (const auto& option : coupler.options) {
+        costs.push_back(option.cost);
+        guarded.push_back(option.guarded);
+      }
+      out.put(costs);
+      out.put(guarded);
+    }
+    out.put(static_cast<std::uint64_t>(chainEdgePaths_[chain].size()));
+    for (const auto& way : chainEdgePaths_[chain]) {
+      out.put(way);
+    }
+    std::vector<std::uint64_t> keys;
+    for (const auto& [key, way] : edgeMemo_) {
+      if (((key >> 56U) & 0xFFU) == (chain & 0xFFU)) {
+        keys.push_back(key);
+      }
+    }
+    std::ranges::sort(keys);
+    out.put(keys);
+    for (const auto key : keys) {
+      out.put(edgeMemo_.at(key));
+    }
+  }
+
+  void takeChainAnswer(forked::Reader& in, const std::uint32_t chain) {
+    for (const auto index : in.vector<std::uint32_t>()) {
+      auto& coupler = couplers_[index];
+      coupler.chosen = static_cast<std::size_t>(in.get<std::uint64_t>());
+      coupler.jogsUnlocked = in.get<std::uint8_t>() != 0;
+      coupler.reserveOpen = in.get<std::uint32_t>();
+      coupler.extensionsUnlocked = in.get<std::uint8_t>() != 0;
+      const auto costs = in.vector<std::uint32_t>();
+      const auto guarded = in.vector<std::uint32_t>();
+      for (std::size_t at = 0; at < coupler.options.size() && at < costs.size();
+           ++at) {
+        coupler.options[at].cost = costs[at];
+        coupler.options[at].guarded = guarded[at];
+      }
+    }
+    auto& ways = chainEdgePaths_[chain];
+    ways.resize(static_cast<std::size_t>(in.get<std::uint64_t>()));
+    for (auto& way : ways) {
+      way = in.vector<routing::PathPoint>();
+    }
+    forgetChainMemo(chain);
+    for (const auto key : in.vector<std::uint64_t>()) {
+      edgeMemo_[key] = in.vector<routing::PathPoint>();
+    }
+  }
+
+  /// The counts of the coupler insertion's summary lines.
+  struct InsertionCounters {
+    std::uint64_t memoHits = 0;
+    std::uint64_t memoMisses = 0;
+    std::uint64_t memoStale = 0;
+    std::uint64_t boundPairs = 0;
+    std::uint64_t boundNanos = 0;
+    std::uint64_t budgetCutoffs = 0;
+    std::uint64_t greedyRouted = 0;
+    std::uint64_t greedyJointTried = 0;
+    std::uint32_t greedyJointTaken = 0;
+    std::uint32_t r1Asked = 0;
+    std::uint32_t r1Refused = 0;
+    std::uint32_t r2Asked = 0;
+    std::uint32_t r2Refused = 0;
+  };
+
+  [[nodiscard]] InsertionCounters insertionCounters() const {
+    return {.memoHits = memoHits_,
+            .memoMisses = memoMisses_,
+            .memoStale = memoStale_,
+            .boundPairs = boundPairs_,
+            .boundNanos = boundNanos_,
+            .budgetCutoffs = budgetCutoffs_,
+            .greedyRouted = greedyRouted_,
+            .greedyJointTried = greedyJointTried_,
+            .greedyJointTaken = greedyJointTaken_,
+            .r1Asked = room_.r1Asked,
+            .r1Refused = room_.r1Refused,
+            .r2Asked = room_.r2Asked,
+            .r2Refused = room_.r2Refused};
+  }
+
+  void putInsertionCounters(forked::Writer& out,
+                            const InsertionCounters& had) const {
+    const auto now = insertionCounters();
+    out.put(now.memoHits - had.memoHits);
+    out.put(now.memoMisses - had.memoMisses);
+    out.put(now.memoStale - had.memoStale);
+    out.put(now.boundPairs - had.boundPairs);
+    out.put(now.boundNanos - had.boundNanos);
+    out.put(now.budgetCutoffs - had.budgetCutoffs);
+    out.put(now.greedyRouted - had.greedyRouted);
+    out.put(now.greedyJointTried - had.greedyJointTried);
+    out.put(now.greedyJointTaken - had.greedyJointTaken);
+    out.put(now.r1Asked - had.r1Asked);
+    out.put(now.r1Refused - had.r1Refused);
+    out.put(now.r2Asked - had.r2Asked);
+    out.put(now.r2Refused - had.r2Refused);
+  }
+
+  void takeInsertionCounters(forked::Reader& in) {
+    memoHits_ += in.get<std::uint64_t>();
+    memoMisses_ += in.get<std::uint64_t>();
+    memoStale_ += in.get<std::uint64_t>();
+    boundPairs_ += in.get<std::uint64_t>();
+    boundNanos_ += in.get<std::uint64_t>();
+    budgetCutoffs_ += in.get<std::uint64_t>();
+    greedyRouted_ += in.get<std::uint64_t>();
+    greedyJointTried_ += in.get<std::uint64_t>();
+    greedyJointTaken_ += in.get<std::uint32_t>();
+    room_.r1Asked += in.get<std::uint32_t>();
+    room_.r1Refused += in.get<std::uint32_t>();
+    room_.r2Asked += in.get<std::uint32_t>();
+    room_.r2Refused += in.get<std::uint32_t>();
+  }
+
   /// The greedy over every chain, one after the other: the prototype's
   /// coupler insertion without the capacity check and the global SAT search
   /// (`chain_search = "greedy"`).
@@ -19668,14 +21201,11 @@ public:
     greedyJointTried_ = 0;
     greedyJointTaken_ = 0;
     std::uint32_t passes = 0;
-    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
-      report_.progress("coupler insertion", std::format("chain {}", chain + 1),
-                       chain, chains_.size());
+    const auto solve = [&](const std::uint32_t chain) {
       edgeSearches_.clear();
       latticeSearches_.clear();
       const auto routedBefore = greedyRouted_;
       const auto moved = optimizeChainGreedy(wires, chain);
-      passes = std::max(passes, moved);
       std::uint32_t missing = 0;
       for (const auto& way : chainEdgePaths_[chain]) {
         missing += way.empty() ? 1 : 0;
@@ -19685,6 +21215,11 @@ public:
                       chain, moved, moved == 1 ? "" : "es",
                       greedyRouted_ - routedBefore, missing,
                       chainEdgePaths_[chain].size()));
+      return moved;
+    };
+    const auto answers = solveChains(wires, solve, false);
+    for (const auto moved : answers) {
+      passes = std::max(passes, moved);
     }
     say(std::format("coupler insertion: greedy local search over {} chains, "
                     "{} edge searches, {} joint moves weighed and {} taken "
@@ -19719,9 +21254,7 @@ public:
     // Every step is checked with no other chain standing: each chain on its
     // own chip, judged by its own feedline's wires.
     const auto none = stepCheckChains();
-    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
-      report_.progress("coupler insertion", std::format("chain {}", chain + 1),
-                       chain, chains_.size());
+    const auto solve = [&](const std::uint32_t chain) -> std::uint32_t {
       soloChain_ = chain;
       const auto own = withTerminalEdges(localCheckWires(wires, chain), chain);
       localWires_ = &own;
@@ -19767,9 +21300,8 @@ public:
                         "joins the chain — leaving it as it stands ({} steps "
                         "routed)",
                         chain, answer.routed));
-        continue;
+        return 0;
       }
-      ++settled;
       for (std::size_t at = 0; at < points.size(); ++at) {
         if (!points[at].fixed) {
           couplers_[points[at].coupler].chosen = answer.chosen[at];
@@ -19794,6 +21326,10 @@ public:
                                                answer.firstRun)
                                  : std::string{})
                : std::string{}));
+      return 1;
+    };
+    for (const auto solved : solveChains(wires, solve, true)) {
+      settled += solved;
     }
     // What the commit is about to find, said once. It decides nothing — with
     // one pass there is no second state to prefer — but it is the number
@@ -22438,15 +23974,26 @@ public:
   /// there say, and its couplers may still move. See `terminalStubGuard`.
   void guardSettledTerminalRuns(const Edge& edge) {
     const auto width = static_cast<std::int64_t>(scene_.router.width);
+    closeTerminalRunsBut(
+        edge.chain, [&](const std::int64_t x, const std::int64_t y) {
+          corridor_.set(static_cast<std::size_t>((y * width) + x), true);
+        });
+  }
+
+  /// The cells of the coupler-end runs of the committed terminal edges of
+  /// every chain but `chain`, with the clearance, as `guardSettledTerminalRuns`
+  /// closes them.
+  void closeTerminalRunsBut(
+      const std::uint32_t chain,
+      const std::function<void(std::int64_t, std::int64_t)>& set,
+      const bool only = false) {
     const auto& stencil = clearanceStencil_;
     const auto close = [&](const Path& cells) {
-      alongDisc(
-          cells, stencil, [&](const std::int64_t x, const std::int64_t y) {
-            corridor_.set(static_cast<std::size_t>((y * width) + x), true);
-          });
+      alongDisc(cells, stencil, set);
     };
     for (std::uint32_t other = 0; other < chains_.size(); ++other) {
-      if (other == edge.chain || other >= chainEdgePaths_.size()) {
+      if ((only ? other != chain : other == chain) ||
+          other >= chainEdgePaths_.size()) {
         continue;
       }
       const auto& points = chains_[other];
@@ -22542,6 +24089,32 @@ public:
     std::vector<PathPoint> anchors;
     grid::BitGrid bodies;
   };
+
+  /// The chip as the insertion leaves it, for the feedline phases run again
+  /// wire by wire (`DubinsFinalRouter::run`).
+  struct FeedlineStart {
+    Snapshot snapshot;
+    Field field;
+    std::unordered_map<std::uint32_t,
+                       std::vector<std::pair<Path, routing::CellBox>>>
+        meanders;
+  };
+  [[nodiscard]] FeedlineStart
+  feedlineStart(const std::vector<Wire>& wires) const {
+    return {
+        .snapshot = snapshot(wires), .field = field_, .meanders = meanders_};
+  }
+  void backToFeedlineStart(std::vector<Wire>& wires,
+                           const FeedlineStart& start) {
+    restore(wires, start.snapshot);
+    field_ = start.field;
+    meanders_ = start.meanders;
+  }
+  /// Every schedule wire by wire from now on.
+  void wireByWire() {
+    tuning_.ripupBlocks = false;
+    tuning_.refinementBlocks = false;
+  }
 
   [[nodiscard]] Snapshot snapshot(const std::vector<Wire>& wires) const {
     Snapshot taken{
@@ -25358,7 +26931,15 @@ private:
     // chains: fenced, and priced around.
     closePhaseOne(wires, members, slot, pass, "normal");
     const bool lengthened = lengthensIn(wire);
+    const auto searchBegan = std::chrono::steady_clock::now();
     auto found = search(wire, pass.straightStart, true, !lengthened);
+    // How long phase 1 searched: the relaxation levels search the same
+    // corridor about as long, and only levels that long are worth a forked
+    // task each. It decides how the levels run, never what they find.
+    const auto phaseOneSeconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                      searchBegan)
+            .count();
     const auto id = wireId(wire);
     const auto where = std::format("round {} {}", frame_.round,
                                    forward ? "forward" : "backward");
@@ -25391,6 +26972,9 @@ private:
     // lengthening said. A way found is kept only when it is long enough.
     Path plain;
     bool plainTooLong = false;
+    // How often a lengthening left a way short in `plain`: a relaxation
+    // level run in a forked task says whether it did (`relaxLevels`).
+    std::uint32_t plainWrites = 0;
     std::string note;
     // What the last lengthening put into the way found, for the meander
     // rip-up of the wire drawn next.
@@ -25414,6 +26998,7 @@ private:
         if (!made.reached) {
           plain = std::move(found);
           plainTooLong = made.tooLong;
+          ++plainWrites;
           found.clear();
         } else if (made.inserted) {
           meandered = std::move(made);
@@ -25539,22 +27124,90 @@ private:
     // (user, 2026-10-27).
     const bool halves = pass.feedlines && tuning_.relaxHalfRips && total > 4;
     std::vector<std::pair<std::uint32_t, bool>> released;
-    for (std::uint32_t level = 1;
-         found.empty() && total > 1 && level <= pass.maxRelaxation; ++level) {
-      const auto reach = halves ? (level + 1) / 2 : level;
-      const bool half = halves && level % 2 == 1;
-      const auto step = forward ? (slot + reach) % total
-                                : (slot + total - (reach % total)) % total;
-      if (step == slot) {
-        continue;
+    const auto thisRound =
+        (static_cast<std::uint64_t>(sweepSerial_) << 32U) | (frame_.round + 1U);
+    // The levels of the relaxation, in the order they are tried until one
+    // finds a way: each lets go of one more neighbour, and the last, when the
+    // round before, the other way round, ended for this wire with no way at
+    // any level either, of both neighbours at once (`relaxBoth`).
+    struct Level {
+      std::uint32_t level = 0;
+      std::uint32_t reach = 0;
+      bool half = false;
+      std::uint32_t step = 0;
+      bool both = false;
+    };
+    std::vector<Level> levels;
+    if (found.empty()) {
+      for (std::uint32_t level = 1; total > 1 && level <= pass.maxRelaxation;
+           ++level) {
+        const auto reach = halves ? (level + 1) / 2 : level;
+        const bool half = halves && level % 2 == 1;
+        const auto step = forward ? (slot + reach) % total
+                                  : (slot + total - (reach % total)) % total;
+        if (step == slot) {
+          continue;
+        }
+        levels.push_back(
+            {.level = level, .reach = reach, .half = half, .step = step});
       }
-      auto& ripped = wires[members[step]];
-      if (std::ranges::none_of(
-              released, [&](const auto& r) { return r.first == ripped.key; })) {
-        released.emplace_back(ripped.key, ripped.routed);
+      if (total > 4 && wire.relaxedOut != 0 &&
+          wire.relaxedOut + 1 == thisRound) {
+        levels.push_back({.level = pass.maxRelaxation + 1, .both = true});
       }
-      ripped.routed = false;
-
+    }
+    // What a level lets go of before its search: the wire `step` round the
+    // ring, or both neighbours. They stay let go of for the levels after.
+    const auto letGo = [&](const Level& at) {
+      const auto release = [&](Wire& other) {
+        if (std::ranges::none_of(released, [&](const auto& r) {
+              return r.first == other.key;
+            })) {
+          released.emplace_back(other.key, other.routed);
+        }
+        other.routed = false;
+      };
+      if (at.both) {
+        auto& ahead = wires[members[(slot + 1) % total]];
+        auto& behind = wires[members[(slot + total - 1) % total]];
+        for (Wire* const other : {&ahead, &behind}) {
+          if (std::ranges::none_of(released, [&](const auto& r) {
+                return r.first == other->key;
+              })) {
+            release(*other);
+          }
+        }
+        frame_.ripped.push_back(ahead.key);
+        frame_.ripped.push_back(behind.key);
+        return;
+      }
+      release(wires[members[at.step]]);
+      frame_.ripped.push_back(wires[members[at.step]].key);
+    };
+    // The ground of a level, up to its search: its corridor, its fences and
+    // its prices. The wires it fenced go into `closed`.
+    const auto prepare = [&](const Level& lv,
+                             std::vector<std::uint32_t>& closed) {
+      closed.clear();
+      if (lv.both) {
+        const auto& farAhead = wires[members[(slot + 2) % total]];
+        const auto& farBehind = wires[members[(slot + total - 2) % total]];
+        buildCorridor(wire, pass.reach);
+        fence(wire, {&farAhead, &farBehind});
+        fenceFixedPlaces(wire, wires, released);
+        letGo_.clear();
+        {
+          for (const auto& [key, routed] : released) {
+            letGo_.push_back(key);
+          }
+        }
+        constrainByFeedlines(wire, wires, pass);
+        letGo_.clear();
+        closed = {farAhead.key, farBehind.key};
+        return;
+      }
+      const auto step = lv.step;
+      const auto& ripped = wires[members[step]];
       buildCorridor(wire, pass.reach);
       // What the fence actually closed, so that the picture and the log can
       // say it. They used to name `{ripped, before/after}` whatever the
@@ -25563,7 +27216,6 @@ private:
       // thing meant to stay crossable — and two of the four that are fenced
       // were never named. A reader then sees a closed band drawn over a
       // crossable wire and no band over two closed ones (user, 2026-10-01).
-      std::vector<std::uint32_t> closed;
       if (pass.feedlines && total > 4) {
         // The prototype fences the wire *after* the one it let go of, not
         // the one it let go of — that one is meant to be crossable — and the
@@ -25613,14 +27265,14 @@ private:
         closeLengthBands(wire, {forward ? &before : &after}, pass);
       }
       // Half let go of: its upper half, toward its source, stays fenced.
-      if (half && ripped.way.size() > 1) {
+      if (lv.half && ripped.way.size() > 1) {
         const Path upper(ripped.way.begin(),
                          ripped.way.begin() + static_cast<std::ptrdiff_t>(
                                                   (ripped.way.size() / 2) + 1));
         closeRoomOf(wire, ripped, upper);
       }
       fenceFixedPlaces(wire, wires, released);
-      priceLane(wires, members, slot, forward, reach);
+      priceLane(wires, members, slot, forward, lv.reach);
       // Under `length_point_soft = "all"` the band of the neighbour on the
       // far side, priced on top of the lane rather than closed above.
       priceLengthBands(wire, {forward ? &before : &after}, pass);
@@ -25632,67 +27284,96 @@ private:
       }
       constrainByFeedlines(wire, wires, pass);
       letGo_.clear();
-      frame_.kind = std::format("relax {}", level);
+    };
+    // The search of a level on its ground, and what it came to.
+    const auto relax = [&](const Level& at,
+                           const std::vector<std::uint32_t>& closed) {
+      frame_.kind = std::format("relax {}", at.level);
       frame_.fence = closed;
-      frame_.ripped.push_back(ripped.key);
       found = search(wire, pass.straightStart, true, !lengthened);
-      refuseTheDetour(std::format("relax {}", level));
+      refuseTheDetour(std::format("relax {}", at.level));
       lengthenFound();
+      if (at.both) {
+        const auto& ahead = wires[members[(slot + 1) % total]];
+        const auto& behind = wires[members[(slot + total - 1) % total]];
+        tell(std::format("wire {} · relax {}: let go of {} and {}, both "
+                         "neighbours, fence {}, {} · {}",
+                         id, at.level, wireId(behind), wireId(ahead),
+                         wireId(wires[closed[1]]), wireId(wires[closed[0]]),
+                         outcome()));
+        return;
+      }
+      const auto& ripped = wires[members[at.step]];
       std::string fenced;
       for (const auto key : closed) {
         fenced += (fenced.empty() ? "" : ", ") + wireId(wires[key]);
       }
-      tell(std::format("wire {} · relax {}: let go of {}{}, fence {} · {}{}",
-                       id, level, wireId(ripped),
-                       half ? " (its lower half; its upper half fenced)" : "",
-                       fenced.empty() ? std::string("nothing") : fenced,
-                       outcome(),
-                       found.empty() && report_.wants(Detail::Items)
-                           ? deadOnArrival(wire, wires, pass.straightStart)
-                           : std::string{}));
-    }
-
-    // Both neighbours at once (`relaxBoth`), when the round before, the other
-    // way round, ended for this wire with no way at any level either.
-    const auto thisRound =
-        (static_cast<std::uint64_t>(sweepSerial_) << 32U) | (frame_.round + 1U);
-    if (found.empty() && total > 4 && wire.relaxedOut != 0 &&
-        wire.relaxedOut + 1 == thisRound) {
-      auto& ahead = wires[members[(slot + 1) % total]];
-      auto& behind = wires[members[(slot + total - 1) % total]];
-      for (Wire* const other : {&ahead, &behind}) {
-        if (std::ranges::none_of(released, [&](const auto& r) {
-              return r.first == other->key;
-            })) {
-          released.emplace_back(other->key, other->routed);
-          other->routed = false;
+      tell(std::format(
+          "wire {} · relax {}: let go of {}{}, fence {} · {}{}", id, at.level,
+          wireId(ripped),
+          at.half ? " (its lower half; its upper half fenced)" : "",
+          fenced.empty() ? std::string("nothing") : fenced, outcome(),
+          found.empty() && report_.wants(Detail::Items)
+              ? deadOnArrival(wire, wires, pass.straightStart)
+              : std::string{}));
+    };
+    if (levels.size() >= 2 && tuning_.ripupLevels &&
+        forked::Budget::threads() > 1 &&
+        phaseOneSeconds >= LEVEL_TASK_SECONDS) {
+      relaxLevels(
+          wire, levels.size(),
+          [&](const std::size_t index) {
+            // In the task: the levels before let go of what they let go of, and
+            // the ground of the one just before stands, as it would after its
+            // search; then this level runs.
+            std::vector<std::uint32_t> closed;
+            for (std::size_t at = 0; at < index; ++at) {
+              letGo(levels[at]);
+            }
+            if (levels[index].both && index > 0) {
+              const auto said = report_;
+              const auto debug = debug_;
+              report_ = Report();
+              debug_ = {};
+              prepare(levels[index - 1], closed);
+              report_ = said;
+              debug_ = debug;
+            }
+            letGo(levels[index]);
+            prepare(levels[index], closed);
+            relax(levels[index], closed);
+            return LevelAnswer{.found = found,
+                               .note = note,
+                               .plainWritten = plainWrites > 0,
+                               .plain = plain,
+                               .plainTooLong = plainTooLong,
+                               .meandered = meandered,
+                               .bare = bare};
+          },
+          [&](const std::size_t index, LevelAnswer&& answer) {
+            letGo(levels[index]);
+            found = std::move(answer.found);
+            note = std::move(answer.note);
+            if (answer.plainWritten) {
+              plain = std::move(answer.plain);
+              plainTooLong = answer.plainTooLong;
+            }
+            meandered = std::move(answer.meandered);
+            if (!found.empty()) {
+              bare = std::move(answer.bare);
+            }
+            return !found.empty();
+          });
+    } else {
+      std::vector<std::uint32_t> closed;
+      for (const auto& at : levels) {
+        if (!found.empty()) {
+          break;
         }
+        letGo(at);
+        prepare(at, closed);
+        relax(at, closed);
       }
-      const auto& farAhead = wires[members[(slot + 2) % total]];
-      const auto& farBehind = wires[members[(slot + total - 2) % total]];
-      buildCorridor(wire, pass.reach);
-      fence(wire, {&farAhead, &farBehind});
-      fenceFixedPlaces(wire, wires, released);
-      letGo_.clear();
-      {
-        for (const auto& [key, routed] : released) {
-          letGo_.push_back(key);
-        }
-      }
-      constrainByFeedlines(wire, wires, pass);
-      letGo_.clear();
-      const auto level = pass.maxRelaxation + 1;
-      frame_.kind = std::format("relax {}", level);
-      frame_.fence = {farAhead.key, farBehind.key};
-      frame_.ripped.push_back(ahead.key);
-      frame_.ripped.push_back(behind.key);
-      found = search(wire, pass.straightStart, true, !lengthened);
-      refuseTheDetour(std::format("relax {}", level));
-      lengthenFound();
-      tell(std::format("wire {} · relax {}: let go of {} and {}, both "
-                       "neighbours, fence {}, {} · {}",
-                       id, level, wireId(behind), wireId(ahead),
-                       wireId(farBehind), wireId(farAhead), outcome()));
     }
     wire.relaxedOut = found.empty() ? thisRound : 0;
 
@@ -29712,18 +31393,6 @@ private:
   std::uint32_t sweepSerial_ = 0;
   /// The ports as the chip carries them, for the pictures.
   std::vector<PortMark> ports_;
-  /// What each round of the pass running now came to, per wire.
-  struct RoundRecord {
-    bool forward = true;
-    std::uint32_t normal = 0;
-    std::uint32_t relaxed = 0;
-    /// Of the failed, the resonators that kept a way too short.
-    std::uint32_t tooShort = 0;
-    std::vector<std::string> failed;
-    /// Every member's way as the round left it, by name; kept for the last
-    /// two rounds of a sweep only.
-    std::vector<std::pair<std::string, Path>> ways;
-  };
   std::vector<RoundRecord> rounds_;
   std::shared_ptr<const MovePrimitives> primitives_;
   routing::AnalyticDubins analytic_;
@@ -30451,8 +32120,10 @@ void routeTheRing(Driver& driver, std::vector<Wire>& wires,
                   const Tuning& tuning) {
   driver.sayOuterSettings();
   const auto outerPass = outerPassOf(tuning);
-  driver.sweep(wires, outer, outerPass);
-  driver.recoverWithoutBands(wires, outer, outerPass);
+  driver.ripupPhase(wires, outer, "outer routing", false, [&]() {
+    driver.sweep(wires, outer, outerPass);
+    driver.recoverWithoutBands(wires, outer, outerPass);
+  });
 }
 
 /// The second phase: the refinement of the ring before the feedlines.
@@ -30490,18 +32161,22 @@ routeTheFeedlines(Driver& driver, std::vector<Wire>& wires,
   driver.checkBridgers(wires);
   auto members = driver.ringWithEdges(wires, outer);
   const auto feedlinePass = feedlinePassOf(tuning);
-  driver.sweep(wires, members, feedlinePass);
-  if (rounds != nullptr) {
-    *rounds = driver.roundsJson();
-  }
-  driver.sweep(wires, inner,
-               {.name = "inner routing under the feedlines",
-                .rounds = tuning.innerRounds,
-                .maxRelaxation = tuning.maxRelaxation,
-                .reach = tuning.innerReach,
-                .straightStart = 0,
-                .keepDrawn = true,
-                .feedlines = true});
+  std::vector<std::uint32_t> swept = members;
+  swept.insert(swept.end(), inner.begin(), inner.end());
+  driver.ripupPhase(wires, swept, "feedline routing", true, [&]() {
+    driver.sweep(wires, members, feedlinePass);
+    if (rounds != nullptr) {
+      *rounds = driver.roundsJson();
+    }
+    driver.sweep(wires, inner,
+                 {.name = "inner routing under the feedlines",
+                  .rounds = tuning.innerRounds,
+                  .maxRelaxation = tuning.maxRelaxation,
+                  .reach = tuning.innerReach,
+                  .straightStart = 0,
+                  .keepDrawn = true,
+                  .feedlines = true});
+  });
   std::vector<std::uint32_t> every(wires.size());
   std::iota(every.begin(), every.end(), 0U);
   driver.repairFeedlines(wires, members, every, feedlinePass);
@@ -30522,7 +32197,10 @@ public:
       throw std::invalid_argument("the detail routing carries no grid");
     }
     const auto scene = buildScene(chip, config);
-    const auto tuning = tuningOf(config, finalRouterGrid(scene.capacity, config));
+    const auto tuning =
+        tuningOf(config, finalRouterGrid(scene.capacity, config));
+    // The process budget of the stage's forked tasks, see `Forked.hpp`.
+    const forked::Budget budget(tuning.threads);
     const auto field = sceneOf(chip, config, scene.capacity);
 
     auto wires = wiresOf(chip, global, assignment, detail, field);
@@ -30626,32 +32304,61 @@ public:
     // with the edges of the chains, then the inner circuit; and the repair,
     // which turns a coupler while the feedlines leave fails.
     if (runs(3)) {
-      driver.enterPhase(PHASES[3]);
-      const auto members =
-          routeTheFeedlines(driver, wires, outer, inner, tuning);
-      routing.phases.push_back(snapshotOf(
-          std::string(PHASES[3]), wires, ring, global.connections.size(),
-          measure, edges, couplersNow(), nullptr, &driver.squeezed()));
-      driver.recordPhase(PHASES[3], wires);
-      endPhase(3);
-
-      // Phase 5. The refinement of the feedline routing.
-      if (runs(4)) {
-        driver.enterPhase(PHASES[4]);
-        driver.refine(wires, members,
-                      {.name = "feedline refinement",
-                       .rounds = tuning.feedlineRefinementRounds,
-                       .maxRelaxation = 0,
-                       .reach = tuning.refinementReach,
-                       .straightStart = tuning.straightStart,
-                       .keepDrawn = false,
-                       .feedlines = true,
-                       .refinement = true});
+      // Under the blocks schedules the phases after the insertion run in
+      // blocks; when they leave a bad wire (unrouted, open or crossing) they
+      // run again wire by wire from the state the insertion left (user,
+      // 2026-11-04: no more bad wires than the stage leaves wire by wire).
+      // Only a feedline routing in blocks is run again here; a refinement
+      // alone in blocks runs itself again (`Driver::refine`).
+      const bool inBlocks = tuning.ripupBlocks && !tuning.chainGreedy;
+      std::optional<Driver::FeedlineStart> start;
+      if (inBlocks) {
+        start = driver.feedlineStart(wires);
+      }
+      const auto recorded = routing.phases.size();
+      const auto feedlinePhases = [&]() {
+        driver.enterPhase(PHASES[3]);
+        const auto members =
+            routeTheFeedlines(driver, wires, outer, inner, tuning);
         routing.phases.push_back(snapshotOf(
-            std::string(PHASES[4]), wires, ring, global.connections.size(),
+            std::string(PHASES[3]), wires, ring, global.connections.size(),
             measure, edges, couplersNow(), nullptr, &driver.squeezed()));
-        driver.recordPhase(PHASES[4], wires);
-        endPhase(4);
+        driver.recordPhase(PHASES[3], wires);
+        endPhase(3);
+
+        // Phase 5. The refinement of the feedline routing.
+        if (runs(4)) {
+          driver.enterPhase(PHASES[4]);
+          driver.refine(wires, members,
+                        {.name = "feedline refinement",
+                         .rounds = tuning.feedlineRefinementRounds,
+                         .maxRelaxation = 0,
+                         .reach = tuning.refinementReach,
+                         .straightStart = tuning.straightStart,
+                         .keepDrawn = false,
+                         .feedlines = true,
+                         .refinement = true});
+          routing.phases.push_back(snapshotOf(
+              std::string(PHASES[4]), wires, ring, global.connections.size(),
+              measure, edges, couplersNow(), nullptr, &driver.squeezed()));
+          driver.recordPhase(PHASES[4], wires);
+          endPhase(4);
+        }
+      };
+      feedlinePhases();
+      if (start.has_value()) {
+        const auto fails = driver.failsOf(wires, everyWire()).broken;
+        if (fails > 0) {
+          driver.say(std::format(
+              "{} bad wire{} after the feedline phases in blocks; both again "
+              "wire by wire from where the insertion left the chip",
+              fails, fails == 1 ? "" : "s"));
+          routing.phases.resize(recorded);
+          driver.backToFeedlineStart(wires, *start);
+          start.reset();
+          driver.wireByWire();
+          feedlinePhases();
+        }
       }
     }
 

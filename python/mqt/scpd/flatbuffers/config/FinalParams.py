@@ -1463,15 +1463,15 @@ class FinalParams(object):
         return 100
 
     # How many trials of a wave of the blind repair run at once, each in a
-    # copy of the stage forked off the state the wave tries against; one runs
-    # them one after the other in the stage itself. The result does not
-    # depend on it.
+    # copy of the stage forked off the state the wave tries against; zero
+    # takes `threads`, one runs them one after the other in the stage
+    # itself. The result does not depend on it.
     # FinalParams
     def GreedyRepairWorkers(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(278))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 4
+        return 0
 
     # The most rounds a trial of the blind repair routes its wires in, and
     # how many rounds without a new best end it early.
@@ -1519,8 +1519,54 @@ class FinalParams(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return True
 
+    # How many processes the Final stage runs at once: every parallel task
+    # runs in a copy of the stage forked off the state it starts from, and
+    # at most this many run together, nested ones included. Zero takes the
+    # performance cores of the machine; one runs every task after the other.
+    # The result does not depend on it.
+    # FinalParams
+    def Threads(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(290))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # How the rip-up and reroute of the outer and the feedline routing runs
+    # ("feedline-blocks" when empty): "levels" sweeps the ring wire by wire
+    # as ever and searches the relaxation levels of a costly wire at once,
+    # which changes no result; "blocks" sweeps blocks of the ring at once,
+    # the even blocks and then the odd; "feedline-blocks" does so only after
+    # the insertion.
+    # FinalParams
+    def RipupSchedule(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(292))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # How the refinements run ("feedline-blocks" when empty): "searches"
+    # refines the ring wire by wire as ever; "blocks" refines blocks of the
+    # ring at once, as above; "feedline-blocks" only in the feedline
+    # refinement.
+    # FinalParams
+    def RefinementSchedule(self) -> Optional[str]:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(294))
+        if o != 0:
+            return self._tab.String(o + self._tab.Pos)
+        return None
+
+    # How many ring members a block of the "blocks" schedules holds; zero
+    # takes the smallest that keeps two blocks of one turn apart, and a
+    # smaller one is raised to it.
+    # FinalParams
+    def BlockSize(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(296))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(143)
+    builder.StartObject(147)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -2348,7 +2394,7 @@ def AddGreedyRepairTrials(builder: flatbuffers.Builder, greedyRepairTrials: int)
     FinalParamsAddGreedyRepairTrials(builder, greedyRepairTrials)
 
 def FinalParamsAddGreedyRepairWorkers(builder: flatbuffers.Builder, greedyRepairWorkers: int):
-    builder.PrependUint32Slot(137, greedyRepairWorkers, 4)
+    builder.PrependUint32Slot(137, greedyRepairWorkers, 0)
 
 def AddGreedyRepairWorkers(builder: flatbuffers.Builder, greedyRepairWorkers: int):
     FinalParamsAddGreedyRepairWorkers(builder, greedyRepairWorkers)
@@ -2382,6 +2428,30 @@ def FinalParamsAddGreedyReachCheck(builder: flatbuffers.Builder, greedyReachChec
 
 def AddGreedyReachCheck(builder: flatbuffers.Builder, greedyReachCheck: bool):
     FinalParamsAddGreedyReachCheck(builder, greedyReachCheck)
+
+def FinalParamsAddThreads(builder: flatbuffers.Builder, threads: int):
+    builder.PrependUint32Slot(143, threads, 0)
+
+def AddThreads(builder: flatbuffers.Builder, threads: int):
+    FinalParamsAddThreads(builder, threads)
+
+def FinalParamsAddRipupSchedule(builder: flatbuffers.Builder, ripupSchedule: int):
+    builder.PrependUOffsetTRelativeSlot(144, flatbuffers.number_types.UOffsetTFlags.py_type(ripupSchedule), 0)
+
+def AddRipupSchedule(builder: flatbuffers.Builder, ripupSchedule: int):
+    FinalParamsAddRipupSchedule(builder, ripupSchedule)
+
+def FinalParamsAddRefinementSchedule(builder: flatbuffers.Builder, refinementSchedule: int):
+    builder.PrependUOffsetTRelativeSlot(145, flatbuffers.number_types.UOffsetTFlags.py_type(refinementSchedule), 0)
+
+def AddRefinementSchedule(builder: flatbuffers.Builder, refinementSchedule: int):
+    FinalParamsAddRefinementSchedule(builder, refinementSchedule)
+
+def FinalParamsAddBlockSize(builder: flatbuffers.Builder, blockSize: int):
+    builder.PrependUint32Slot(146, blockSize, 0)
+
+def AddBlockSize(builder: flatbuffers.Builder, blockSize: int):
+    FinalParamsAddBlockSize(builder, blockSize)
 
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
@@ -2532,12 +2602,16 @@ class FinalParamsT(object):
         localRingNeighbours = 0,
         capacityTerminalNoCross = False,
         greedyRepairTrials = 100,
-        greedyRepairWorkers = 4,
+        greedyRepairWorkers = 0,
         greedyTrialRounds = 4,
         greedyTrialStaleRounds = 1,
         greedyTrialFailMargin = 1,
         greedyLocalTrials = True,
         greedyReachCheck = True,
+        threads = 0,
+        ripupSchedule = None,
+        refinementSchedule = None,
+        blockSize = 0,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -2682,6 +2756,10 @@ class FinalParamsT(object):
         self.greedyTrialFailMargin = greedyTrialFailMargin  # type: int
         self.greedyLocalTrials = greedyLocalTrials  # type: bool
         self.greedyReachCheck = greedyReachCheck  # type: bool
+        self.threads = threads  # type: int
+        self.ripupSchedule = ripupSchedule  # type: Optional[str]
+        self.refinementSchedule = refinementSchedule  # type: Optional[str]
+        self.blockSize = blockSize  # type: int
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -2867,6 +2945,14 @@ class FinalParamsT(object):
         self.greedyTrialFailMargin = finalParams.GreedyTrialFailMargin()
         self.greedyLocalTrials = finalParams.GreedyLocalTrials()
         self.greedyReachCheck = finalParams.GreedyReachCheck()
+        self.threads = finalParams.Threads()
+        self.ripupSchedule = finalParams.RipupSchedule()
+        if self.ripupSchedule is not None:
+            self.ripupSchedule = self.ripupSchedule.decode('utf-8')
+        self.refinementSchedule = finalParams.RefinementSchedule()
+        if self.refinementSchedule is not None:
+            self.refinementSchedule = self.refinementSchedule.decode('utf-8')
+        self.blockSize = finalParams.BlockSize()
 
     # FinalParamsT
     def Pack(self, builder):
@@ -2890,6 +2976,10 @@ class FinalParamsT(object):
             couplerSnapR = builder.CreateString(self.couplerSnapR)
         if self.lengthPointSoft is not None:
             lengthPointSoft = builder.CreateString(self.lengthPointSoft)
+        if self.ripupSchedule is not None:
+            ripupSchedule = builder.CreateString(self.ripupSchedule)
+        if self.refinementSchedule is not None:
+            refinementSchedule = builder.CreateString(self.refinementSchedule)
         FinalParamsStart(builder)
         if self.router is not None:
             FinalParamsAddRouter(builder, router)
@@ -3044,5 +3134,11 @@ class FinalParamsT(object):
         FinalParamsAddGreedyTrialFailMargin(builder, self.greedyTrialFailMargin)
         FinalParamsAddGreedyLocalTrials(builder, self.greedyLocalTrials)
         FinalParamsAddGreedyReachCheck(builder, self.greedyReachCheck)
+        FinalParamsAddThreads(builder, self.threads)
+        if self.ripupSchedule is not None:
+            FinalParamsAddRipupSchedule(builder, ripupSchedule)
+        if self.refinementSchedule is not None:
+            FinalParamsAddRefinementSchedule(builder, refinementSchedule)
+        FinalParamsAddBlockSize(builder, self.blockSize)
         finalParams = FinalParamsEnd(builder)
         return finalParams

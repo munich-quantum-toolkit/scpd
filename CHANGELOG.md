@@ -12,6 +12,31 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add `[stages.final] threads`, `0` (the performance cores) by default: the
+  Final stage runs its costly parts as tasks at once, each in a copy of the
+  stage forked off the state it starts from, at most `threads` at once with
+  nested tasks sharing one budget (a make-style jobserver,
+  `mqt-scpd/pipeline/Forked.hpp`), and the answers taken in a fixed order, so
+  the result never depends on `threads`. The chains of the coupler insertion
+  (prefix A* and greedy) are solved at once against the chip before the
+  insertion, and a chain that meets one before it is solved again as it would be
+  after it — on the 14 benchmarks the prefix A* comes out byte-identical to the
+  chains one after the other; the end options, the segments and the combinations
+  of the global SAT search run at once, the first SAT combination in its order
+  winning as before; the greedy weighs the options of a coupler and its escape
+  pairs in runs at once; the blind repair takes its workers from `threads`
+  (`greedy_repair_workers = 0`, the new default). Add `ripup_schedule` and
+  `refinement_schedule`, `"feedline-blocks"` by default: after the insertion the
+  feedline routing and its refinement run in blocks of the ring, the even blocks
+  at once and then the odd (`block_size`), each block swept wire by wire, a wire
+  a block drew into another's room drawn again, and the two phases run again
+  wire by wire when they leave a bad wire; before the insertion everything runs
+  wire by wire as ever, and under the greedy the feedline routing does too.
+  `"blocks"` runs the routing and the refinement before the insertion in blocks
+  as well, and `"levels"` searches the relaxation levels of a costly wire at
+  once. The 14 benchmarks end on the bad wires they ended on before; the A*
+  total goes from 1993 s to 1199 s on 8 cores (69q 718 s to 406 s), the greedy
+  total from 2416 s to 1665 s ([#XXX]) ([**@FeldmeierMichael**])
 - ✨ Add `[stages.final] capacity_cdt_world`, `true` by default together with
   `capacity_cdt`: the bottlenecks of every capacity pass of the coupler
   insertion come from one constrained Delaunay triangulation kept over the

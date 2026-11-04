@@ -647,6 +647,43 @@ With `greedy_reach_check` a search first floods the open cells of its corridor
 and is skipped when the flood does not reach its target, which changes no
 result but makes the many failing searches of the trials cheap.
 
+## Parallel Tasks
+
+The stage runs its costly parts as tasks at once (`threads`). A task is a copy
+of the stage forked off the state it starts from: it shares every page of the
+stage until it writes one, so it sees exactly that state whatever its siblings
+do, and nothing it does reaches the stage but what it hands back — the wires it
+changed, the options its couplers took, its counts and the lines and records it
+said, which the stage says again when it takes the answer. The answers are taken
+in a fixed order, so the result depends on the schedule alone and never on how
+many tasks run at once. How many run at once is one budget for the whole process
+tree, nested tasks included: a pipe holds a token for every process beyond the
+first, as a make jobserver does.
+
+- **The chains of the coupler insertion.** Every chain is solved in a task
+  forked off the state before the insertion, its edge searches marking the tiles
+  of the chip they read. The answers are taken in the order of the chains; a
+  chain whose tiles meet what a chain before it changed of the others' couplers,
+  leads, resonator copper, terminal runs or, under the option guard, edges is
+  solved again in the stage against the chains before it as they answered. The
+  insertion therefore comes to what the chains one after the other come to.
+- **The global SAT search.** The end options of a chain end, the segments whose
+  runs give a chain's states, and the combinations of one call are searched at
+  once; the runs and states are taken in the order the search would have reached
+  them, and the first SAT combination in its order wins.
+- **The rip-up and reroute** (`ripup_schedule`). Under `levels` the ring is
+  swept wire by wire, and a wire whose phase-1 search took long searches its
+  relaxation levels at once; the lowest level that finds a way is taken, as the
+  levels one after the other would, so nothing changes. Under `blocks` a round
+  splits the ring into an even number of blocks (`block_size`) whose seams turn
+  from round to round; the even blocks run at once off the state before them,
+  then the odd ones off what the even ones left, each block swept wire by wire
+  inside.
+- **The refinements** (`refinement_schedule`): wire by wire under `searches`, by
+  blocks as above under `blocks`.
+- **The blind repair** runs the trials of a wave at once
+  (`greedy_repair_workers`, `0` for `threads`).
+
 ## Reading a Run
 
 The Final stage ends every pass on one line and the stage on one over every

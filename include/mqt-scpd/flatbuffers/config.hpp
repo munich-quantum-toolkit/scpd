@@ -1327,12 +1327,16 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t local_ring_neighbours = 0;
   bool capacity_terminal_no_cross = false;
   uint32_t greedy_repair_trials = 100;
-  uint32_t greedy_repair_workers = 4;
+  uint32_t greedy_repair_workers = 0;
   uint32_t greedy_trial_rounds = 4;
   uint32_t greedy_trial_stale_rounds = 1;
   uint32_t greedy_trial_fail_margin = 1;
   bool greedy_local_trials = true;
   bool greedy_reach_check = true;
+  uint32_t threads = 0;
+  std::string ripup_schedule{};
+  std::string refinement_schedule{};
+  uint32_t block_size = 0;
 };
 
 /// What the Final stage is allowed to do.
@@ -1493,7 +1497,11 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_GREEDY_TRIAL_STALE_ROUNDS = 282,
     VT_GREEDY_TRIAL_FAIL_MARGIN = 284,
     VT_GREEDY_LOCAL_TRIALS = 286,
-    VT_GREEDY_REACH_CHECK = 288
+    VT_GREEDY_REACH_CHECK = 288,
+    VT_THREADS = 290,
+    VT_RIPUP_SCHEDULE = 292,
+    VT_REFINEMENT_SCHEDULE = 294,
+    VT_BLOCK_SIZE = 296
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -2376,11 +2384,11 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint32_t>(VT_GREEDY_REPAIR_TRIALS, 100);
   }
   /// How many trials of a wave of the blind repair run at once, each in a
-  /// copy of the stage forked off the state the wave tries against; one runs
-  /// them one after the other in the stage itself. The result does not
-  /// depend on it.
+  /// copy of the stage forked off the state the wave tries against; zero
+  /// takes `threads`, one runs them one after the other in the stage
+  /// itself. The result does not depend on it.
   uint32_t greedy_repair_workers() const {
-    return GetField<uint32_t>(VT_GREEDY_REPAIR_WORKERS, 4);
+    return GetField<uint32_t>(VT_GREEDY_REPAIR_WORKERS, 0);
   }
   /// The most rounds a trial of the blind repair routes its wires in, and
   /// how many rounds without a new best end it early.
@@ -2407,6 +2415,36 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// It changes no result, only how long a failing search takes.
   bool greedy_reach_check() const {
     return GetField<uint8_t>(VT_GREEDY_REACH_CHECK, 1) != 0;
+  }
+  /// How many processes the Final stage runs at once: every parallel task
+  /// runs in a copy of the stage forked off the state it starts from, and
+  /// at most this many run together, nested ones included. Zero takes the
+  /// performance cores of the machine; one runs every task after the other.
+  /// The result does not depend on it.
+  uint32_t threads() const {
+    return GetField<uint32_t>(VT_THREADS, 0);
+  }
+  /// How the rip-up and reroute of the outer and the feedline routing runs
+  /// ("feedline-blocks" when empty): "levels" sweeps the ring wire by wire
+  /// as ever and searches the relaxation levels of a costly wire at once,
+  /// which changes no result; "blocks" sweeps blocks of the ring at once,
+  /// the even blocks and then the odd; "feedline-blocks" does so only after
+  /// the insertion.
+  const ::flatbuffers::String *ripup_schedule() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_RIPUP_SCHEDULE);
+  }
+  /// How the refinements run ("feedline-blocks" when empty): "searches"
+  /// refines the ring wire by wire as ever; "blocks" refines blocks of the
+  /// ring at once, as above; "feedline-blocks" only in the feedline
+  /// refinement.
+  const ::flatbuffers::String *refinement_schedule() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_REFINEMENT_SCHEDULE);
+  }
+  /// How many ring members a block of the "blocks" schedules holds; zero
+  /// takes the smallest that keeps two blocks of one turn apart, and a
+  /// smaller one is raised to it.
+  uint32_t block_size() const {
+    return GetField<uint32_t>(VT_BLOCK_SIZE, 0);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -2564,6 +2602,12 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_GREEDY_TRIAL_FAIL_MARGIN, 4) &&
            VerifyField<uint8_t>(verifier, VT_GREEDY_LOCAL_TRIALS, 1) &&
            VerifyField<uint8_t>(verifier, VT_GREEDY_REACH_CHECK, 1) &&
+           VerifyField<uint32_t>(verifier, VT_THREADS, 4) &&
+           VerifyOffset(verifier, VT_RIPUP_SCHEDULE) &&
+           verifier.VerifyString(ripup_schedule()) &&
+           VerifyOffset(verifier, VT_REFINEMENT_SCHEDULE) &&
+           verifier.VerifyString(refinement_schedule()) &&
+           VerifyField<uint32_t>(verifier, VT_BLOCK_SIZE, 4) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2987,7 +3031,7 @@ struct FinalParamsBuilder {
     fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_REPAIR_TRIALS, greedy_repair_trials, 100);
   }
   void add_greedy_repair_workers(uint32_t greedy_repair_workers) {
-    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_REPAIR_WORKERS, greedy_repair_workers, 4);
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_REPAIR_WORKERS, greedy_repair_workers, 0);
   }
   void add_greedy_trial_rounds(uint32_t greedy_trial_rounds) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_TRIAL_ROUNDS, greedy_trial_rounds, 4);
@@ -3003,6 +3047,18 @@ struct FinalParamsBuilder {
   }
   void add_greedy_reach_check(bool greedy_reach_check) {
     fbb_.AddElement<uint8_t>(FinalParams::VT_GREEDY_REACH_CHECK, static_cast<uint8_t>(greedy_reach_check), 1);
+  }
+  void add_threads(uint32_t threads) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_THREADS, threads, 0);
+  }
+  void add_ripup_schedule(::flatbuffers::Offset<::flatbuffers::String> ripup_schedule) {
+    fbb_.AddOffset(FinalParams::VT_RIPUP_SCHEDULE, ripup_schedule);
+  }
+  void add_refinement_schedule(::flatbuffers::Offset<::flatbuffers::String> refinement_schedule) {
+    fbb_.AddOffset(FinalParams::VT_REFINEMENT_SCHEDULE, refinement_schedule);
+  }
+  void add_block_size(uint32_t block_size) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_BLOCK_SIZE, block_size, 0);
   }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -3154,12 +3210,16 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     uint32_t local_ring_neighbours = 0,
     bool capacity_terminal_no_cross = false,
     uint32_t greedy_repair_trials = 100,
-    uint32_t greedy_repair_workers = 4,
+    uint32_t greedy_repair_workers = 0,
     uint32_t greedy_trial_rounds = 4,
     uint32_t greedy_trial_stale_rounds = 1,
     uint32_t greedy_trial_fail_margin = 1,
     bool greedy_local_trials = true,
-    bool greedy_reach_check = true) {
+    bool greedy_reach_check = true,
+    uint32_t threads = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> ripup_schedule = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> refinement_schedule = 0,
+    uint32_t block_size = 0) {
   FinalParamsBuilder builder_(_fbb);
   builder_.add_launcher_escape_cells(launcher_escape_cells);
   builder_.add_capacity_escape_cells(capacity_escape_cells);
@@ -3190,6 +3250,10 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
+  builder_.add_block_size(block_size);
+  builder_.add_refinement_schedule(refinement_schedule);
+  builder_.add_ripup_schedule(ripup_schedule);
+  builder_.add_threads(threads);
   builder_.add_greedy_trial_fail_margin(greedy_trial_fail_margin);
   builder_.add_greedy_trial_stale_rounds(greedy_trial_stale_rounds);
   builder_.add_greedy_trial_rounds(greedy_trial_rounds);
@@ -3451,12 +3515,16 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t local_ring_neighbours = 0,
     bool capacity_terminal_no_cross = false,
     uint32_t greedy_repair_trials = 100,
-    uint32_t greedy_repair_workers = 4,
+    uint32_t greedy_repair_workers = 0,
     uint32_t greedy_trial_rounds = 4,
     uint32_t greedy_trial_stale_rounds = 1,
     uint32_t greedy_trial_fail_margin = 1,
     bool greedy_local_trials = true,
-    bool greedy_reach_check = true) {
+    bool greedy_reach_check = true,
+    uint32_t threads = 0,
+    const char *ripup_schedule = nullptr,
+    const char *refinement_schedule = nullptr,
+    uint32_t block_size = 0) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
   auto jog_options__ = jog_options ? _fbb.CreateString(jog_options) : 0;
@@ -3467,6 +3535,8 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
   auto coupler_snap_f__ = coupler_snap_f ? _fbb.CreateString(coupler_snap_f) : 0;
   auto coupler_snap_r__ = coupler_snap_r ? _fbb.CreateString(coupler_snap_r) : 0;
   auto length_point_soft__ = length_point_soft ? _fbb.CreateString(length_point_soft) : 0;
+  auto ripup_schedule__ = ripup_schedule ? _fbb.CreateString(ripup_schedule) : 0;
+  auto refinement_schedule__ = refinement_schedule ? _fbb.CreateString(refinement_schedule) : 0;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       router__,
@@ -3611,7 +3681,11 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       greedy_trial_stale_rounds,
       greedy_trial_fail_margin,
       greedy_local_trials,
-      greedy_reach_check);
+      greedy_reach_check,
+      threads,
+      ripup_schedule__,
+      refinement_schedule__,
+      block_size);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4963,7 +5037,11 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.greedy_trial_stale_rounds == rhs.greedy_trial_stale_rounds) &&
       (lhs.greedy_trial_fail_margin == rhs.greedy_trial_fail_margin) &&
       (lhs.greedy_local_trials == rhs.greedy_local_trials) &&
-      (lhs.greedy_reach_check == rhs.greedy_reach_check);
+      (lhs.greedy_reach_check == rhs.greedy_reach_check) &&
+      (lhs.threads == rhs.threads) &&
+      (lhs.ripup_schedule == rhs.ripup_schedule) &&
+      (lhs.refinement_schedule == rhs.refinement_schedule) &&
+      (lhs.block_size == rhs.block_size);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -5123,6 +5201,10 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = greedy_trial_fail_margin(); _o->greedy_trial_fail_margin = _e; }
   { auto _e = greedy_local_trials(); _o->greedy_local_trials = _e; }
   { auto _e = greedy_reach_check(); _o->greedy_reach_check = _e; }
+  { auto _e = threads(); _o->threads = _e; }
+  { auto _e = ripup_schedule(); if (_e) _o->ripup_schedule = _e->str(); }
+  { auto _e = refinement_schedule(); if (_e) _o->refinement_schedule = _e->str(); }
+  { auto _e = block_size(); _o->block_size = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -5276,6 +5358,10 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _greedy_trial_fail_margin = _o->greedy_trial_fail_margin;
   auto _greedy_local_trials = _o->greedy_local_trials;
   auto _greedy_reach_check = _o->greedy_reach_check;
+  auto _threads = _o->threads;
+  auto _ripup_schedule = _o->ripup_schedule.empty() ? 0 : _fbb.CreateString(_o->ripup_schedule);
+  auto _refinement_schedule = _o->refinement_schedule.empty() ? 0 : _fbb.CreateString(_o->refinement_schedule);
+  auto _block_size = _o->block_size;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -5420,7 +5506,11 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _greedy_trial_stale_rounds,
       _greedy_trial_fail_margin,
       _greedy_local_trials,
-      _greedy_reach_check);
+      _greedy_reach_check,
+      _threads,
+      _ripup_schedule,
+      _refinement_schedule,
+      _block_size);
 }
 
 
@@ -6095,7 +6185,11 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_BOOL, 0, -1 },
-    { ::flatbuffers::ET_BOOL, 0, -1 }
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
   };
   static const char * const names[] = {
     "router",
@@ -6240,10 +6334,14 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     "greedy_trial_stale_rounds",
     "greedy_trial_fail_margin",
     "greedy_local_trials",
-    "greedy_reach_check"
+    "greedy_reach_check",
+    "threads",
+    "ripup_schedule",
+    "refinement_schedule",
+    "block_size"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 143, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 147, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }
