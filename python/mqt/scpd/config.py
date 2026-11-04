@@ -220,6 +220,8 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "chain_end_blacklist": True,
         "chain_slot_blacklist": True,
         "local_ring_order": True,
+        "local_ring_neighbours": 0,
+        "capacity_terminal_no_cross": False,
         "edge_launcher_guard": True,
         "wire_launcher_guard": 0,
         "wire_launcher_turn_cells": 5,
@@ -595,6 +597,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("released_halo_factor", "releasedHaloFactor"),
         ("length_point_price", "lengthPointPrice"),
         ("length_point_soft_pairs", "lengthPointSoftPairs"),
+        ("local_ring_neighbours", "localRingNeighbours"),
         ("chain_dead_prefix_refusals", "chainDeadPrefixRefusals"),
         ("coupler_lattice_options", "couplerLatticeOptions"),
         ("coupler_lattice_reserve", "couplerLatticeReserve"),
@@ -688,6 +691,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.final.chainEndBlacklist = take(final, "chain_end_blacklist", bool)
     stages.final.chainSlotBlacklist = take(final, "chain_slot_blacklist", bool)
     stages.final.localRingOrder = take(final, "local_ring_order", bool)
+    stages.final.capacityTerminalNoCross = take(final, "capacity_terminal_no_cross", bool)
     stages.final.edgeLauncherGuard = take(final, "edge_launcher_guard", bool)
     stages.final.couplerMerge = take(final, "coupler_merge", bool)
     stages.final.relaxHalfRips = take(final, "relax_half_rips", bool)

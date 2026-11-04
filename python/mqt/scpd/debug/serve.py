@@ -726,7 +726,6 @@ class CouplerServer:
         start = {int(c["chain"]): list(c["options"]) for c in listed}
         recorded = self.records.committed()
         self.committed = {chain: recorded.get(chain, options) for chain, options in start.items()}
-        self.verdict = self._check_chip()
         self.graph, said = self._analyse()
         self.last = {
             "action": "the coupler insertion",
@@ -793,20 +792,23 @@ class CouplerServer:
         """
         return {int(c["chain"]): list(c["options"]) for c in self._chains()}
 
-    def _check_chip(self) -> dict[str, Any]:
-        checked = json.loads(self._session().insertion_check())
-        return {"verdict": checked["verdict"], "lost": checked.get("lost", []), "over": checked.get("over", [])}
-
     def _analyse(self) -> tuple[dict[str, Any], list[str]]:
-        """Analyse the chip as it stands.
+        """Analyse the chip as it stands: the whole-chip check, which the global mover shows.
+
+        The page of the global mover shows the graph of the whole-chip check the global SAT search
+        judges by, crossing slots, chords and all (user, 2026-11-02), and no longer the graph by the
+        stretches, which only reports. The verdict of that check is kept in ``verdict``.
 
         Returns:
-            The capacity graph, and the summary lines the analysis said.
+            The capacity graph of the whole-chip check, and the summary lines the analysis said.
         """
         start = len(self.lines)
-        graph = json.loads(self._session().graph())
+        # The graph by the stretches still says its lines, which the page lists.
+        self._session().graph()
+        checked = json.loads(self._session().insertion_check())
+        self.verdict = {"verdict": checked["verdict"], "lost": checked.get("lost", []), "over": checked.get("over", [])}
         said = [line for line in self.lines[start:] if "CAPACITY GRAPH" in line]
-        return graph, said
+        return checked["graph"], said
 
     def live(self) -> pages.Live:
         """What the session adds to the SAT dashboards.
@@ -833,7 +835,12 @@ class CouplerServer:
             "chains": sorted(self.standing()),
             "scope": None,
         }
-        return page_text(self.graph, session, banner=self._mover_banner(None), tone="note")
+        verdict = self.verdict.get("verdict", "")
+        over = ", ".join(self.verdict.get("over", []))
+        banner = self._mover_banner(None) + f" · the whole-chip check: <b>{html.escape(verdict)}</b>"
+        if over:
+            banner += f" · over: {html.escape(over)}"
+        return page_text(self.graph, session, banner=banner, tone=verdict or "note")
 
     def _mover_banner(self, chain: int | None) -> str:
         """The line above a mover page: which mover it is, and the links to the others.
@@ -993,7 +1000,6 @@ class CouplerServer:
         chains = sorted({self.chain_of[c] for c in moved})
         local = [_verdicts(json.loads(self._session().local_check(c, standing[c]))) for c in chains]
         self.checked = {check["chain"]: check for check in local}
-        self.verdict = self._check_chip()
         self.graph, analysed = self._analyse()
         self.last = {
             "action": action,

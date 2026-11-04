@@ -1324,6 +1324,8 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   std::string length_point_soft{};
   uint32_t length_point_price = 0;
   uint32_t length_point_soft_pairs = 1;
+  uint32_t local_ring_neighbours = 0;
+  bool capacity_terminal_no_cross = false;
 };
 
 /// What the Final stage is allowed to do.
@@ -1475,7 +1477,9 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_RELEASED_ARRIVAL_BOX = 264,
     VT_LENGTH_POINT_SOFT = 266,
     VT_LENGTH_POINT_PRICE = 268,
-    VT_LENGTH_POINT_SOFT_PAIRS = 270
+    VT_LENGTH_POINT_SOFT_PAIRS = 270,
+    VT_LOCAL_RING_NEIGHBOURS = 272,
+    VT_CAPACITY_TERMINAL_NO_CROSS = 274
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -2334,6 +2338,19 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t length_point_soft_pairs() const {
     return GetField<uint32_t>(VT_LENGTH_POINT_SOFT_PAIRS, 1);
   }
+  /// How many ring neighbours to either side of its wires a local check
+  /// routes as well, plain wires and resonators alike, from the ends the
+  /// insertion gives them; other chains' edges stay out; 0 for none.
+  uint32_t local_ring_neighbours() const {
+    return GetField<uint32_t>(VT_LOCAL_RING_NEIGHBOURS, 0);
+  }
+  /// Whether the ways of the capacity graph's SAT routing may not cross the
+  /// terminal edges (from a launcher to the first or last coupler) on the
+  /// lines they are drawn on, though they may share gates with them: every
+  /// wire but the edges themselves and the wires that must cross them.
+  bool capacity_terminal_no_cross() const {
+    return GetField<uint8_t>(VT_CAPACITY_TERMINAL_NO_CROSS, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -2481,6 +2498,8 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyString(length_point_soft()) &&
            VerifyField<uint32_t>(verifier, VT_LENGTH_POINT_PRICE, 4) &&
            VerifyField<uint32_t>(verifier, VT_LENGTH_POINT_SOFT_PAIRS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_LOCAL_RING_NEIGHBOURS, 4) &&
+           VerifyField<uint8_t>(verifier, VT_CAPACITY_TERMINAL_NO_CROSS, 1) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2894,6 +2913,12 @@ struct FinalParamsBuilder {
   void add_length_point_soft_pairs(uint32_t length_point_soft_pairs) {
     fbb_.AddElement<uint32_t>(FinalParams::VT_LENGTH_POINT_SOFT_PAIRS, length_point_soft_pairs, 1);
   }
+  void add_local_ring_neighbours(uint32_t local_ring_neighbours) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_LOCAL_RING_NEIGHBOURS, local_ring_neighbours, 0);
+  }
+  void add_capacity_terminal_no_cross(bool capacity_terminal_no_cross) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_TERMINAL_NO_CROSS, static_cast<uint8_t>(capacity_terminal_no_cross), 0);
+  }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -3040,7 +3065,9 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     bool released_arrival_box = false,
     ::flatbuffers::Offset<::flatbuffers::String> length_point_soft = 0,
     uint32_t length_point_price = 0,
-    uint32_t length_point_soft_pairs = 1) {
+    uint32_t length_point_soft_pairs = 1,
+    uint32_t local_ring_neighbours = 0,
+    bool capacity_terminal_no_cross = false) {
   FinalParamsBuilder builder_(_fbb);
   builder_.add_launcher_escape_cells(launcher_escape_cells);
   builder_.add_capacity_escape_cells(capacity_escape_cells);
@@ -3071,6 +3098,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
+  builder_.add_local_ring_neighbours(local_ring_neighbours);
   builder_.add_length_point_soft_pairs(length_point_soft_pairs);
   builder_.add_length_point_price(length_point_price);
   builder_.add_length_point_soft(length_point_soft);
@@ -3142,6 +3170,7 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_inner_corridor_spacings(inner_corridor_spacings);
   builder_.add_corridor_spacings(corridor_spacings);
   builder_.add_router(router);
+  builder_.add_capacity_terminal_no_cross(capacity_terminal_no_cross);
   builder_.add_released_arrival_box(released_arrival_box);
   builder_.add_capacity_prescribe_open_edges(capacity_prescribe_open_edges);
   builder_.add_chain_gate_blacklist(chain_gate_blacklist);
@@ -3319,7 +3348,9 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     bool released_arrival_box = false,
     const char *length_point_soft = nullptr,
     uint32_t length_point_price = 0,
-    uint32_t length_point_soft_pairs = 1) {
+    uint32_t length_point_soft_pairs = 1,
+    uint32_t local_ring_neighbours = 0,
+    bool capacity_terminal_no_cross = false) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
   auto jog_options__ = jog_options ? _fbb.CreateString(jog_options) : 0;
@@ -3465,7 +3496,9 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       released_arrival_box,
       length_point_soft__,
       length_point_price,
-      length_point_soft_pairs);
+      length_point_soft_pairs,
+      local_ring_neighbours,
+      capacity_terminal_no_cross);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4808,7 +4841,9 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.released_arrival_box == rhs.released_arrival_box) &&
       (lhs.length_point_soft == rhs.length_point_soft) &&
       (lhs.length_point_price == rhs.length_point_price) &&
-      (lhs.length_point_soft_pairs == rhs.length_point_soft_pairs);
+      (lhs.length_point_soft_pairs == rhs.length_point_soft_pairs) &&
+      (lhs.local_ring_neighbours == rhs.local_ring_neighbours) &&
+      (lhs.capacity_terminal_no_cross == rhs.capacity_terminal_no_cross);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -4959,6 +4994,8 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = length_point_soft(); if (_e) _o->length_point_soft = _e->str(); }
   { auto _e = length_point_price(); _o->length_point_price = _e; }
   { auto _e = length_point_soft_pairs(); _o->length_point_soft_pairs = _e; }
+  { auto _e = local_ring_neighbours(); _o->local_ring_neighbours = _e; }
+  { auto _e = capacity_terminal_no_cross(); _o->capacity_terminal_no_cross = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -5103,6 +5140,8 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _length_point_soft = _o->length_point_soft.empty() ? 0 : _fbb.CreateString(_o->length_point_soft);
   auto _length_point_price = _o->length_point_price;
   auto _length_point_soft_pairs = _o->length_point_soft_pairs;
+  auto _local_ring_neighbours = _o->local_ring_neighbours;
+  auto _capacity_terminal_no_cross = _o->capacity_terminal_no_cross;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -5238,7 +5277,9 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _released_arrival_box,
       _length_point_soft,
       _length_point_price,
-      _length_point_soft_pairs);
+      _length_point_soft_pairs,
+      _local_ring_neighbours,
+      _capacity_terminal_no_cross);
 }
 
 
@@ -5904,7 +5945,9 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     { ::flatbuffers::ET_BOOL, 0, -1 },
     { ::flatbuffers::ET_STRING, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_UINT, 0, -1 }
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const char * const names[] = {
     "router",
@@ -6040,10 +6083,12 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     "released_arrival_box",
     "length_point_soft",
     "length_point_price",
-    "length_point_soft_pairs"
+    "length_point_soft_pairs",
+    "local_ring_neighbours",
+    "capacity_terminal_no_cross"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 134, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 136, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }

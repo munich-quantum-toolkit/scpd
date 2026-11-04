@@ -107,6 +107,26 @@ std::vector<std::uint32_t> groupsOf(const std::size_t edges,
   return group;
 }
 
+/// Whether an edge entered from chamber `from` leads into chamber `to`: by
+/// a bottleneck with sides only to a chamber across its line (21q_dense:
+/// g924, among four chambers at the apex of a fan of gates, led 45 and f14
+/// straight into the chamber beyond g397 and g357, 2026-11-02); otherwise
+/// to every chamber of it.
+[[nodiscard]] bool leadsTo(const FlowEdge& edge, const std::uint32_t from,
+                           const std::uint32_t to) {
+  if (!edge.sides.has_value()) {
+    return true;
+  }
+  const auto& [one, other] = *edge.sides;
+  if (std::ranges::find(one, from) != one.end()) {
+    return std::ranges::find(other, to) != other.end();
+  }
+  if (std::ranges::find(other, from) != other.end()) {
+    return std::ranges::find(one, to) != one.end();
+  }
+  return true;
+}
+
 /// The way of one demand with the fewest edges over the edges open to it
 /// that `usable` lets it take; nothing when there is none.
 ///
@@ -174,7 +194,8 @@ fewestEdges(const std::uint32_t chambers, const std::vector<FlowEdge>& edges,
       const bool loop = std::ranges::all_of(
           sides, [chamber](const std::uint32_t c) { return c == chamber; });
       for (const auto next : sides) {
-        if (next == chamber && !loop) {
+        if ((next == chamber && !loop) ||
+            !leadsTo(edges[index], chamber, next)) {
           continue;
         }
         const auto reached = stateOf(next, onward);
@@ -267,7 +288,8 @@ shortestWay(const std::vector<FlowEdge>& edges,
     const bool loop = std::ranges::all_of(
         sides, [chamber](const std::uint32_t c) { return c == chamber; });
     for (std::size_t k = 0; k < sides.size(); ++k) {
-      if (sides[k] == chamber && !loop) {
+      if ((sides[k] == chamber && !loop) ||
+          !leadsTo(edges[index], chamber, sides[k])) {
         continue;
       }
       const auto state = ((first[index] + k) * masks) + onward;

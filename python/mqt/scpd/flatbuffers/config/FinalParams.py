@@ -1427,8 +1427,29 @@ class FinalParams(object):
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 1
 
+    # How many ring neighbours to either side of its wires a local check
+    # routes as well, plain wires and resonators alike, from the ends the
+    # insertion gives them; other chains' edges stay out; 0 for none.
+    # FinalParams
+    def LocalRingNeighbours(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(272))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 0
+
+    # Whether the ways of the capacity graph's SAT routing may not cross the
+    # terminal edges (from a launcher to the first or last coupler) on the
+    # lines they are drawn on, though they may share gates with them: every
+    # wire but the edges themselves and the wires that must cross them.
+    # FinalParams
+    def CapacityTerminalNoCross(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(274))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return False
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(134)
+    builder.StartObject(136)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -2237,6 +2258,18 @@ def FinalParamsAddLengthPointSoftPairs(builder: flatbuffers.Builder, lengthPoint
 def AddLengthPointSoftPairs(builder: flatbuffers.Builder, lengthPointSoftPairs: int):
     FinalParamsAddLengthPointSoftPairs(builder, lengthPointSoftPairs)
 
+def FinalParamsAddLocalRingNeighbours(builder: flatbuffers.Builder, localRingNeighbours: int):
+    builder.PrependUint32Slot(134, localRingNeighbours, 0)
+
+def AddLocalRingNeighbours(builder: flatbuffers.Builder, localRingNeighbours: int):
+    FinalParamsAddLocalRingNeighbours(builder, localRingNeighbours)
+
+def FinalParamsAddCapacityTerminalNoCross(builder: flatbuffers.Builder, capacityTerminalNoCross: bool):
+    builder.PrependBoolSlot(135, capacityTerminalNoCross, 0)
+
+def AddCapacityTerminalNoCross(builder: flatbuffers.Builder, capacityTerminalNoCross: bool):
+    FinalParamsAddCapacityTerminalNoCross(builder, capacityTerminalNoCross)
+
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -2383,6 +2416,8 @@ class FinalParamsT(object):
         lengthPointSoft = None,
         lengthPointPrice = 0,
         lengthPointSoftPairs = 1,
+        localRingNeighbours = 0,
+        capacityTerminalNoCross = False,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -2518,6 +2553,8 @@ class FinalParamsT(object):
         self.lengthPointSoft = lengthPointSoft  # type: Optional[str]
         self.lengthPointPrice = lengthPointPrice  # type: int
         self.lengthPointSoftPairs = lengthPointSoftPairs  # type: int
+        self.localRingNeighbours = localRingNeighbours  # type: int
+        self.capacityTerminalNoCross = capacityTerminalNoCross  # type: bool
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -2694,6 +2731,8 @@ class FinalParamsT(object):
             self.lengthPointSoft = self.lengthPointSoft.decode('utf-8')
         self.lengthPointPrice = finalParams.LengthPointPrice()
         self.lengthPointSoftPairs = finalParams.LengthPointSoftPairs()
+        self.localRingNeighbours = finalParams.LocalRingNeighbours()
+        self.capacityTerminalNoCross = finalParams.CapacityTerminalNoCross()
 
     # FinalParamsT
     def Pack(self, builder):
@@ -2862,5 +2901,7 @@ class FinalParamsT(object):
             FinalParamsAddLengthPointSoft(builder, lengthPointSoft)
         FinalParamsAddLengthPointPrice(builder, self.lengthPointPrice)
         FinalParamsAddLengthPointSoftPairs(builder, self.lengthPointSoftPairs)
+        FinalParamsAddLocalRingNeighbours(builder, self.localRingNeighbours)
+        FinalParamsAddCapacityTerminalNoCross(builder, self.capacityTerminalNoCross)
         finalParams = FinalParamsEnd(builder)
         return finalParams

@@ -96,6 +96,13 @@ struct SlotGraph {
   /// chords in its way search and negotiates their overflow as it does a
   /// gate's; off, they are counted and only judged once it is done.
   bool chordsRouting = false;
+  /// Whether no way of the SAT routing crosses a terminal edge on the line it
+  /// is drawn on (`capacity_terminal_no_cross`, user, 2026-11-03), though it
+  /// may share its gates: every wire but the terminal edges and the wires
+  /// that may cross them (`Wire::mayCross`). A resonator or a free wire
+  /// so stays on its side of the feedline's start and end and does not
+  /// enter its partition round the end of the chain.
+  bool terminalNoCross = false;
   /// Whether a crossing slot needs room past the crossing on both sides
   /// (`capacity_slot_room`, user, 2026-11-01): a free cell, reached
   /// straight from the slot's end, more than a clearance from every
@@ -232,6 +239,11 @@ struct SlotGraph {
     /// stands at, as every terminal edge does, but takes no room and is
     /// neither lost nor shown. JSON key `standing`.
     bool standing = false;
+    /// Of a terminal edge under `terminalNoCross`: the line it is drawn on,
+    /// and the wires that may cross it (those that must, `bridgers`). JSON
+    /// keys `path` and `mayCross`.
+    std::vector<std::array<double, 2>> line;
+    std::vector<std::string> mayCross;
     bool operator==(const Wire&) const = default;
   };
   std::vector<Wire> wires;

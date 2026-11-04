@@ -12,6 +12,7 @@
 
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -40,6 +41,11 @@ struct FlowEdge {
   /// its first cell to its last.
   FlowPoint from;
   FlowPoint to;
+  /// For a bottleneck among several chambers, the chambers on either side
+  /// of its line: a way crosses it from one side to the other only, never
+  /// between two chambers of one side. None: it joins every two of
+  /// `chambers`.
+  std::optional<std::array<std::vector<std::uint32_t>, 2>> sides;
 };
 
 /// One wire to carry: the chambers it may start in and the ones it may end

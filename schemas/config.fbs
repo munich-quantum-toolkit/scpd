@@ -781,6 +781,15 @@ table FinalParams {
   /// side of a wire have their band priced for it — 1 the pair beside it
   /// alone, as the closed band; 2 the pair beyond it as well, and so on.
   length_point_soft_pairs: uint32 = 1;
+  /// How many ring neighbours to either side of its wires a local check
+  /// routes as well, plain wires and resonators alike, from the ends the
+  /// insertion gives them; other chains' edges stay out; 0 for none.
+  local_ring_neighbours: uint32 = 0;
+  /// Whether the ways of the capacity graph's SAT routing may not cross the
+  /// terminal edges (from a launcher to the first or last coupler) on the
+  /// lines they are drawn on, though they may share gates with them: every
+  /// wire but the edges themselves and the wires that must cross them.
+  capacity_terminal_no_cross: bool = false;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

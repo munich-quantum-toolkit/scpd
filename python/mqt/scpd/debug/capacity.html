@@ -331,6 +331,10 @@
         border-bottom: none;
         border-radius: 6px 6px 0 0;
       }
+      .tabs button.alert {
+        color: var(--over);
+        font-weight: 600;
+      }
       .tabs button.on {
         background: var(--page);
         font-weight: 600;
@@ -504,6 +508,28 @@
       }
       .pad:hover {
         fill-opacity: 0.5;
+      }
+      /* A merged pair (coupler_merge): the partner's pad of a unit, dashed,
+         and the link between the two pads. */
+      .pad.pad-partner {
+        stroke-dasharray: 3 2;
+      }
+      .merge-link {
+        fill: none;
+        stroke: #7c3aed;
+        stroke-width: 1.5;
+        stroke-opacity: 0.55;
+        pointer-events: stroke;
+        cursor: pointer;
+      }
+      .merge-link.pad-chosen {
+        stroke-width: 3;
+        stroke-opacity: 1;
+      }
+      .merge-link.hot {
+        stroke: var(--over);
+        stroke-width: 3.5;
+        stroke-opacity: 1;
       }
       .lead {
         fill: none;
@@ -897,6 +923,28 @@
         stroke: #0f766e;
         stroke-width: 1.5;
       }
+      .chord {
+        fill: none;
+        stroke: #b45309;
+        stroke-width: 1.5;
+        stroke-dasharray: 4 2;
+      }
+      .chord.over {
+        stroke: var(--over);
+        stroke-width: 2.5;
+      }
+      .chord.sel {
+        stroke-width: 4;
+        stroke-dasharray: none;
+      }
+      .chord-label {
+        font-size: 7px;
+        fill: #b45309;
+      }
+      .chord-label.over {
+        fill: var(--over);
+        font-weight: 600;
+      }
       .escape-band {
         fill: none;
         stroke: #22d3ee;
@@ -1053,6 +1101,7 @@
       #overlay.no-slots .slot,
       #overlay.no-xslots .xslots,
       #overlay.no-escapes .escapes,
+      #overlay.no-chords .chords,
       #overlay.no-ezones .escape-zones,
       #overlay.no-estubs .escape-stubs,
       #overlay.no-cruns .coupler-runs,
@@ -1157,6 +1206,7 @@
           <button type="button" data-pane="feedlines">Feedline edges</button>
           <button type="button" data-pane="wires">Wires</button>
           <button type="button" data-pane="partitions">Partitions</button>
+          <button type="button" data-pane="chords" id="tab-chords">Chords</button>
           <button type="button" data-pane="layers">Layers</button>
           <button type="button" data-pane="couplers" id="tab-couplers" hidden>
             Couplers
@@ -1201,6 +1251,24 @@
             </select>
           </div>
           <div class="scroll"><table id="wire-table"></table></div>
+        </section>
+        <section class="pane" id="pane-chords">
+          <p class="note">
+            The chords of the slot check (capacity_chords): a line between two
+            wall corners, through one chamber or a chain of them, that the
+            gates do not count. Holds is its capacity less the slots of the
+            ways out that touch it; the chip is UNSAT when one is over.
+          </p>
+          <div class="filters">
+            <input type="search" id="chord-find" placeholder="Chamber or wire" />
+            <select id="chord-state">
+              <option value="over">over</option>
+              <option value="tight">full or over</option>
+              <option value="used">carrying a wire</option>
+              <option value="all">every chord</option>
+            </select>
+          </div>
+          <div class="scroll"><table id="chord-table"></table></div>
         </section>
         <section class="pane" id="pane-partitions">
           <p class="note">
@@ -1307,6 +1375,8 @@
       const edges = data.edges;
       const wires = data.wires;
       const wireByName = new Map(wires.map((w) => [w.name, w]));
+      const chordLines = data.chordLines || [];
+      chordLines.forEach((c, i) => (c.name = `chord${i}`));
       const edgesOfChamber = Array.from({ length: chamberCount }, () => []);
       for (const e of edges) {
         e.state = stateOf(e);
@@ -1680,6 +1750,12 @@
           for (const e of edgesOfChamber[c]) f.edges.add(e);
           for (const w of portsInChamber[c].target) f.wires.add(w);
           for (const w of portsInChamber[c].source) f.wires.add(w);
+        } else if (sel.kind === "chord") {
+          const ch = sel.item;
+          f.chambers.add(ch.chamber);
+          for (const name of ch.wires.concat(ch.touching))
+            if (wireByName.has(name)) f.wires.add(wireByName.get(name));
+            else if (feedlines.has(name)) f.feedlines.add(name);
         } else if (sel.kind === "feedline") {
           const fl = sel.item;
           f.feedlines.add(fl.name);
@@ -1707,6 +1783,16 @@
       }
       function boxOfSelection() {
         if (!focus) return null;
+        if (selection.kind === "chord") {
+          // Around the chord only: its wires' ports may lie across the chip.
+          const [[ax, ay], [bx, by]] = selection.item.line;
+          return {
+            x0: Math.min(ax, bx) - 120,
+            x1: Math.max(ax, bx) + 120,
+            y0: Math.min(ay, by) - 120,
+            y1: Math.max(ay, by) + 120,
+          };
+        }
         const pts = [];
         for (const e of focus.edges) pts.push(...e.line);
         for (const c of focus.chambers) pts.push(nodeAt(c));
@@ -1769,6 +1855,11 @@
             [
               "escapes",
               "ways out of the crossing slots (SCPD_SLOT_ESCAPE)",
+              true,
+            ],
+            [
+              "chords",
+              "chords inside a chamber that wires cross (capacity_chords): load/holds, red when over",
               true,
             ],
             [
@@ -1932,7 +2023,8 @@
       // ---- Drawing --------------------------------------------------------------
       function badgeText(e) {
         const extra = e.overflow > 0 ? ` +${e.overflow}` : "";
-        return `${e.load}/${e.capacity}${extra}`;
+        const escape = e.escape ? ` ↓${e.capacityBefore}` : "";
+        return `${e.load}/${e.capacity}${escape}${extra}`;
       }
       // The load/capacity of an edge in a pill, the state's glyph in front.
       function badge(e, label, dim, parent) {
@@ -2163,6 +2255,42 @@
               },
               es,
             );
+          }
+        }
+        // The chords of the chambers (`capacity_chords`): a line between two
+        // corner points of a chamber that parts no chambers but bounds the
+        // wires that cross it inside the chamber; dashed, red when over.
+        if (data.chordLines && data.chordLines.length) {
+          const cg = el("g", { class: "chords" }, world);
+          for (const chord of data.chordLines) {
+            const pts = worldPoints(chord.line);
+            const line = el(
+              "polyline",
+              {
+                points: pts,
+                class:
+                  (chord.over ? "chord over" : "chord") +
+                  (selection && selection.item === chord ? " sel" : ""),
+              },
+              cg,
+            );
+            const by = chord.touching.length
+              ? `, ${chord.touching.length} by ways out (${chord.touching.join(" ")})`
+              : "";
+            line.dataset.tip =
+              `chord in c${chord.chamber}, ${chord.length.toFixed(1)} cells: ` +
+              `${chord.load}/${chord.holds} (capacity ${chord.capacity}${by}); ` +
+              `crossing ${chord.wires.join(" ")}`;
+            const label = el(
+              "text",
+              {
+                x: (wx(chord.line[0][0]) + wx(chord.line[1][0])) / 2,
+                y: (wy(chord.line[0][1]) + wy(chord.line[1][1])) / 2,
+                class: chord.over ? "chord-label over" : "chord-label",
+              },
+              cg,
+            );
+            label.textContent = `${chord.load}/${chord.holds}`;
           }
         }
         // Each target port to the node of the partition its terminal lies in.
@@ -2465,6 +2593,13 @@
           );
           row(dl, "state", `${GLYPH[e.state] || ""}${STATE_NAME[e.state]}`);
           row(dl, "spare", `${e.spare}`);
+          if (e.escape) {
+            row(
+              dl,
+              "escape routes",
+              `capacity ${e.capacityBefore} → ${e.capacity}: the ways out of the crossing slots take ${e.escape} wires of the gate`,
+            );
+          }
           if (e.kind === "stretch") {
             row(
               dl,
@@ -2603,6 +2738,39 @@
               ? portsInChamber[c].source.map((w) => wireChip(w.name))
               : ["none"]),
           );
+        } else if (kind === "chord") {
+          const ch = item;
+          const pt = (p) => `(${p[0]},${p[1]})`;
+          h.textContent = `Chord in c${ch.chamber}${ch.over ? " — over" : ""}`;
+          row(
+            dl,
+            "load / holds",
+            `${ch.load} / ${ch.holds}`,
+            ch.load > ch.holds ? ` (+${ch.load - ch.holds} over)` : "",
+          );
+          row(
+            dl,
+            "capacity",
+            `${ch.capacity}` +
+              (ch.touching.length
+                ? `, ${ch.touching.length} slot${ch.touching.length === 1 ? "" : "s"} to ways out that touch it`
+                : ""),
+          );
+          row(dl, "line", `${pt(ch.line[0])} – ${pt(ch.line[1])}`);
+          row(dl, "length", cells(ch.length));
+          row(
+            dl,
+            "crossed by",
+            ...(ch.wires.length
+              ? ch.wires.map((n) =>
+                  feedlines.has(n)
+                    ? chip(n, () => select("feedline", feedlines.get(n), true))
+                    : wireChip(n),
+                )
+              : ["no wire"]),
+          );
+          if (ch.touching.length)
+            row(dl, "touched by", ...ch.touching.map(wireChip));
         } else if (kind === "feedline") {
           const fl = item;
           h.textContent = `Feedline edge ${fl.name}`;
@@ -2766,6 +2934,54 @@
         );
         markRows();
       }
+      function chordTable() {
+        const find = document
+          .getElementById("chord-find")
+          .value.trim()
+          .toLowerCase();
+        const which = document.getElementById("chord-state").value;
+        const items = chordLines.filter((c) => {
+          if (which === "over" && !c.over) return false;
+          if (which === "tight" && c.load < c.holds) return false;
+          if (which === "used" && c.load === 0) return false;
+          if (!find) return true;
+          return [`c${c.chamber}`, ...c.wires, ...c.touching]
+            .join(" ")
+            .toLowerCase()
+            .includes(find);
+        });
+        const pt = (p) => `${p[0]},${p[1]}`;
+        table(
+          "chord-table",
+          [
+            { name: "Chord", value: (c) => `c${c.chamber}` },
+            {
+              name: "Line",
+              value: (c) => `${pt(c.line[0])} – ${pt(c.line[1])}`,
+              wrap: true,
+            },
+            { name: "Load", value: (c) => c.load, num: true },
+            { name: "Holds", value: (c) => c.holds, num: true },
+            { name: "Cap", value: (c) => c.capacity, num: true },
+            {
+              name: "Spare",
+              value: (c) => c.holds - c.load,
+              num: true,
+              sort: true,
+            },
+            {
+              name: "Wires",
+              value: (c) => c.wires.join(" "),
+              wrap: true,
+            },
+          ],
+          items,
+          (c) => select("chord", c, true),
+          (c) => `chord:${c.name}`,
+          (a, b) => a.holds - a.load - (b.holds - b.load) || b.load - a.load,
+        );
+        markRows();
+      }
       function feedTable() {
         table(
           "feed-table",
@@ -2920,6 +3136,12 @@
         .getElementById("edge-state")
         .addEventListener("change", edgeTable);
       document.getElementById("wire-find").addEventListener("input", wireTable);
+      document
+        .getElementById("chord-find")
+        .addEventListener("input", chordTable);
+      document
+        .getElementById("chord-state")
+        .addEventListener("change", chordTable);
       document
         .getElementById("wire-kind")
         .addEventListener("change", wireTable);
@@ -3283,13 +3505,16 @@
       }
       function placeGraphMarks() {
         for (const m of gplaced)
-          m.el.setAttribute(
+          if (m.p)
+            m.el.setAttribute(
             "transform",
             `translate(${gsx(m.p).toFixed(1)},${gsy(m.p).toFixed(1)})`,
           );
       }
       function gpath(points) {
+        // A chamber may have no node of its own (merged away): leave it out.
         return points
+          .filter(Boolean)
           .map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`)
           .join(" ");
       }
@@ -3645,6 +3870,13 @@
       }
       edgeTable();
       feedTable();
+      chordTable();
+      {
+        const over = chordLines.filter((c) => c.over).length;
+        const tab = document.getElementById("tab-chords");
+        tab.textContent = over ? `Chords (${over} over)` : "Chords";
+        if (over) tab.classList.add("alert");
+      }
       wireTable();
       partTable();
       {
@@ -3716,10 +3948,26 @@
             if (o.secondPort) parts.push("second port");
             if (o.jog) parts.push(`jog ${o.jog}`);
             if (o.custom) parts.push("placed by hand");
+            if (o.merge) parts.push(mergeText(o));
             parts.push(`resonator ${o.resonator} units`);
             return `${c.resonator}: ${parts.join(" · ")}`;
           }
 
+          // A merged option (coupler_merge): the partner it is built with,
+          // the turn of the link between the two pads and how much longer
+          // than the straight run the link is.
+          function mergeText(o) {
+            const m = o.merge;
+            const partner = byIndex.get(m.with);
+            const who = partner ? `${partner.resonator} (coupler ${m.with})` : `coupler ${m.with}`;
+            return `merged with ${who} option ${m.option} · link turn ${m.turn}°${m.extra ? ` · link +${m.extra} cells` : ""}`;
+          }
+          function partnerOption(o) {
+            if (!o.merge) return null;
+            const partner = byIndex.get(o.merge.with);
+            return partner ? partner.options[o.merge.option] || null : null;
+          }
+          const isMergedCoupler = (c) => c.options.some((o) => o.merge);
           function drawCouplers() {
             const layer = el("g", { class: "couplers" }, world);
             for (const c of couplers) {
@@ -3755,6 +4003,38 @@
                 pad.dataset.coupler = c.index;
                 pad.dataset.option = o.index;
                 el("title", {}, pad).textContent = optionText(c, o);
+                // The whole unit of a merged option of the coupler picked:
+                // the link and the partner's pad, both a click on the unit.
+                const other = all ? partnerOption(o) : null;
+                if (other) {
+                  if (o.merge.link && o.merge.link.length > 1) {
+                    const link = el(
+                      "polyline",
+                      {
+                        points: worldPoints(o.merge.link),
+                        class: `merge-link ${kind}`,
+                      },
+                      layer,
+                    );
+                    link.dataset.coupler = c.index;
+                    link.dataset.option = o.index;
+                    el("title", {}, link).textContent = optionText(c, o);
+                  }
+                  if (other.pad.length) {
+                    const twin = el(
+                      "polygon",
+                      {
+                        points: worldPoints(other.pad),
+                        class: `pad ${kind} pad-partner`,
+                      },
+                      layer,
+                    );
+                    twin.dataset.coupler = c.index;
+                    twin.dataset.option = o.index;
+                    el("title", {}, twin).textContent =
+                      `partner pad of ${optionText(c, o)}`;
+                  }
+                }
               }
             }
           }
@@ -4005,6 +4285,7 @@
           const KINDS = [
             ["all", "every option and candidate"],
             ["offered", "chosen and offered"],
+            ["merged", "merged units (coupler_merge)"],
             ["closed", "closed by the search"],
             ["refused", "refused by the generator"],
           ];
@@ -4015,7 +4296,7 @@
           });
           function hot(c, index, on) {
             for (const pad of world.querySelectorAll(
-              `.pad[data-coupler="${c.index}"][data-option="${index}"]`,
+              `[data-coupler="${c.index}"][data-option="${index}"]`,
             ))
               pad.classList.toggle("hot", on);
           }
@@ -4049,6 +4330,7 @@
               closed: c.options.filter((o) => !o.open && o.index !== c.chosen)
                 .length,
               refused: refused.length,
+              merged: c.options.filter((o) => o.merge).length,
             };
             const kind = KINDS.some(([k]) => k === kindSelect.value)
               ? kindSelect.value
@@ -4087,9 +4369,12 @@
             for (const o of c.options) {
               const state = stateOf(c, o);
               if (kind === "refused") break;
+              if (kind === "merged" && !o.merge) continue;
               if (kind === "offered" && state === "closed") continue;
               if (kind === "closed" && state !== "closed") continue;
               let why = o.closed ? o.closed.why : "";
+              if (!why && !o.merge && isMergedCoupler(c))
+                why = "not offered: the coupler is merged and takes only its pair's units";
               if (!o.closed && o.onFeedline && o.onFeedline.length)
                 why = `the body lies on feedline ${o.onFeedline.join(", ")}; the guard stands down`;
               const search = searchText(c, o);
@@ -4122,7 +4407,9 @@
                       o.jog,
                       o.reversed,
                       o.orientation,
-                    ) + (o.custom ? " · placed by hand" : ""),
+                    ) +
+                    (o.custom ? " · placed by hand" : "") +
+                    (o.merge ? ` · ${mergeText(o)}` : ""),
                 },
                 o.resonator,
               ];
