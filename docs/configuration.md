@@ -34,6 +34,11 @@ port label. Every port must match exactly one of the role patterns `launcher`,
 A chip with `bridge_pair` ports needs the `component` pattern, and the
 `component` pattern has to match every `bridge_pair` port.
 
+A `resonator`, `conventional` or `bridge_pair` port has to face a multiple of
+45°, so that its approach runs along an axis or a diagonal of the grid. `plan`
+and `doctor` refuse any other orientation before the capacity step and name the
+port.
+
 ## `[ports.sequences]`
 
 | Key           | Default | Meaning                                                                         |

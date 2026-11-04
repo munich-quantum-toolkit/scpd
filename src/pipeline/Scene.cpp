@@ -62,6 +62,11 @@ constexpr double BACKWARD_BAND_FACTOR = 3.0;
 /// free space surrounds takes no part in the capacity chains.
 constexpr double BRIDGE_FORWARD_FACTOR = 2.0;
 
+/// How far an orientation may lie from a multiple of 45°, in degrees, and
+/// still count as one. It absorbs the rounding of an angle that a layout
+/// tool computed.
+constexpr double ORIENTATION_TOLERANCE = 1e-6;
+
 /// The capacity grid a configuration asks for.
 grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
                                const flatbuffers::config::GridParamsT& params) {
@@ -141,6 +146,28 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
                      factor, MAX_DETAIL_CELLS);
 }
 
+std::optional<std::string> orientationProblem(const ChipT& chip) {
+  std::string ports;
+  for (const auto& port : chip.ports) {
+    if (!design::isRoutable(port->role)) {
+      continue;
+    }
+    const auto remainder = std::abs(std::fmod(port->orientation, 45.0));
+    // An orientation that is not a number fails the comparison too.
+    if (std::min(remainder, 45.0 - remainder) <= ORIENTATION_TOLERANCE) {
+      continue;
+    }
+    ports += std::format("{}{} faces {}°", ports.empty() ? "" : ", ",
+                         port->label, port->orientation);
+  }
+  if (ports.empty()) {
+    return std::nullopt;
+  }
+  return "the orientation of a routable port has to be a multiple of 45°, so "
+         "that its approach runs along an axis or a diagonal of the grid; " +
+         ports;
+}
+
 double crossingPitch(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
     return config.stages->capacity->crossing_pitch;
@@ -211,6 +238,9 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     throw std::invalid_argument("the configuration carries no design rules");
   }
   const auto& rules = *config.rules;
+  if (auto problem = orientationProblem(chip)) {
+    throw std::invalid_argument(*std::move(problem));
+  }
 
   CapacityScene scene;
   std::tie(scene.capacity, scene.detail) = gridsOf(chip, config);
@@ -246,9 +276,6 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       continue;
     }
     const auto step = grid::orientationStep(port.orientation);
-    if (step.x == 0 && step.y == 0) {
-      continue;
-    }
     const auto center = scene.detail.clampToCell(port.center);
     const grid::PortBand band{
         .center = center,
@@ -275,13 +302,19 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       }
     }
 
+    // Without a target the port would be on no chain, and the plan would
+    // never count its wire.
     const auto target =
         grid::placeTargetBeyondBand(scene.blocked, beforeBands, stamped, step);
-    if (target.has_value()) {
-      scene.reserved.set(*target, false);
-      scene.targetCell.push_back(*target);
-      scene.targetPort.push_back(index);
+    if (!target.has_value()) {
+      throw std::invalid_argument(
+          std::format("the port {} has no target: chip artwork covers every "
+                      "cell of the detail grid",
+                      port.label));
     }
+    scene.reserved.set(*target, false);
+    scene.targetCell.push_back(*target);
+    scene.targetPort.push_back(index);
   }
 
   // A chain reaches a target through its cell and puts the port of that cell

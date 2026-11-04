@@ -377,6 +377,43 @@ TEST(BorderSlots, KeepsTheSpacingOnAStaircase) {
   }
 }
 
+TEST(BorderSlots, KeepsTheSpacingBetweenTwoRunsSideBySideBelowTheOrigin) {
+  // Two runs two cells apart on a layout that lies around the origin, so that
+  // half of the slots have negative coordinates. Every sample that is no slot
+  // lies closer than one spacing to a slot, and no two slots lie closer.
+  const auto grid = GridMetrics::fit(
+      {.minX = -20.0, .minY = -20.0, .maxX = 20.0, .maxY = 20.0}, 41, 41);
+  PartitionBorder border{
+      .first = FIRST_PARTITION_LABEL,
+      .second = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1),
+      .samples = {}};
+  for (std::uint32_t x = 0; x < 40; ++x) {
+    border.samples.emplace_back(static_cast<double>(x) + 0.5, 20.0);
+    border.samples.emplace_back(static_cast<double>(x) + 0.5, 22.0);
+  }
+  constexpr double spacing = 3.5;
+
+  const auto slots = borderSlots(border, grid, spacing);
+
+  const auto distance = [&grid](const Point& a, const Point& b) {
+    const auto first = grid.toLayout(a.x(), a.y());
+    const auto second = grid.toLayout(b.x(), b.y());
+    return std::hypot(first.x() - second.x(), first.y() - second.y());
+  };
+  ASSERT_FALSE(slots.empty());
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    for (std::size_t j = i + 1; j < slots.size(); ++j) {
+      EXPECT_GE(distance(slots[i], slots[j]), spacing) << i << " and " << j;
+    }
+  }
+  for (const auto& sample : border.samples) {
+    EXPECT_TRUE(std::ranges::any_of(
+        slots,
+        [&](const Point& slot) { return distance(sample, slot) < spacing; }))
+        << "sample (" << sample.x() << ", " << sample.y() << ")";
+  }
+}
+
 TEST(BorderSlots, GivesABorderShorterThanOneSpacingASingleSlot) {
   const auto grid = GridMetrics::fit(
       {.minX = 0.0, .minY = 0.0, .maxX = 10.0, .maxY = 10.0}, 10, 10);

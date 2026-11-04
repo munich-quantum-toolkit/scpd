@@ -263,8 +263,9 @@ class RunDirectory:
             The configuration and the chip input.
 
         Raises:
-            RunError: If the path is a file, or if the directory holds a config.toml of its own and
-                no chip copy, so that it is not a run directory.
+            RunError: If the path is a file, or if the directory holds files and no chip copy, so
+                that it is not a run directory. A new run deletes the artifacts of the run it
+                replaces, and these could be files of another task.
             ChipError: If the chip input is not a file.
         """
         config = load_config(config_path)
@@ -272,8 +273,8 @@ class RunDirectory:
         if self.path.exists() and not self.path.is_dir():
             msg = f"{self.path} is not a run directory: it is a file"
             raise RunError(msg)
-        if self.config.exists() and not self.chip.exists():
-            msg = f"{self.path} is not a run directory: it holds a config.toml of its own and no 00-chip.json"
+        if self.path.is_dir() and not self.chip.exists() and any(self.path.iterdir()):
+            msg = f"{self.path} is not a run directory: it holds files and no {RUN_CHIP}"
             raise RunError(msg)
         if not chip.is_file():
             msg = f"cannot read the chip input {chip}: there is no such file"
@@ -283,8 +284,9 @@ class RunDirectory:
     def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
         """Create the directory, or start it afresh, and copy the inputs into it.
 
-        Every artifact of an earlier run in the directory is deleted first, so no artifact stays
-        beside inputs it was not made from.
+        The directory has to be new, empty or a run directory, as :meth:`inputs` checks. Every
+        artifact of an earlier run in the directory is deleted first, so no artifact stays beside
+        inputs it was not made from.
 
         Args:
             config_path: The configuration to run.

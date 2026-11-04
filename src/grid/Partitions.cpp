@@ -21,11 +21,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -50,6 +53,57 @@ struct Corner {
     }
     return x <=> other.x;
   }
+};
+
+/// Points sorted into square buckets of one side. A point closer to another
+/// than one side lies in one of the nine buckets around it, so a query visits
+/// those nine and no other point.
+class PointBuckets {
+public:
+  explicit PointBuckets(const double side) : side(side) {}
+
+  void add(const Point& point, const std::size_t index) {
+    buckets[bucketOf(point)].push_back(index);
+  }
+
+  /// Calls the visitor with the index of every point in the nine buckets
+  /// around a point.
+  template <typename Visitor>
+  void forEachNear(const Point& point, const Visitor& visit) const {
+    const auto [x, y] = bucketOf(point);
+    for (std::int64_t dy = -1; dy <= 1; ++dy) {
+      for (std::int64_t dx = -1; dx <= 1; ++dx) {
+        if (const auto found = buckets.find({x + dx, y + dy});
+            found != buckets.end()) {
+          for (const auto index : found->second) {
+            visit(index);
+          }
+        }
+      }
+    }
+  }
+
+private:
+  using Bucket = std::pair<std::int64_t, std::int64_t>;
+
+  struct BucketHash {
+    std::size_t operator()(const Bucket& bucket) const noexcept {
+      // The multiplier of Fibonacci hashing spreads the column over the bits
+      // before the row joins it.
+      constexpr std::uint64_t spread = 0x9E3779B97F4A7C15ULL;
+      return std::hash<std::uint64_t>{}(
+          (static_cast<std::uint64_t>(bucket.first) * spread) ^
+          static_cast<std::uint64_t>(bucket.second));
+    }
+  };
+
+  [[nodiscard]] Bucket bucketOf(const Point& point) const {
+    return {static_cast<std::int64_t>(std::floor(point.x() / side)),
+            static_cast<std::int64_t>(std::floor(point.y() / side))};
+  }
+
+  double side;
+  std::unordered_map<Bucket, std::vector<std::size_t>, BucketHash> buckets;
 };
 
 /// The key of an unordered pair of labels.
@@ -457,61 +511,71 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   // samples are offered as slots. Each piece is walked from one of its ends, so
   // that the slots follow the run once instead of starting from its middle.
   const auto count = border.samples.size();
-  const auto adjacent = [&](const std::size_t a, const std::size_t b) {
+  const auto squaredDistance = [&](const std::size_t a, const std::size_t b) {
     const auto dx = border.samples[a].x() - border.samples[b].x();
     const auto dy = border.samples[a].y() - border.samples[b].y();
-    return (dx * dx) + (dy * dy) <= ADJACENT_SAMPLE_SQUARED;
+    return (dx * dx) + (dy * dy);
   };
+  // The adjacent samples of each sample. Buckets one step wide restrict the
+  // comparisons to the samples nearby.
+  PointBuckets sampleBuckets(std::sqrt(ADJACENT_SAMPLE_SQUARED));
+  for (std::size_t index = 0; index < count; ++index) {
+    sampleBuckets.add(border.samples[index], index);
+  }
+  std::vector<std::vector<std::size_t>> adjacent(count);
+  for (std::size_t a = 0; a < count; ++a) {
+    sampleBuckets.forEachNear(border.samples[a], [&](const std::size_t b) {
+      if (b != a && squaredDistance(a, b) <= ADJACENT_SAMPLE_SQUARED) {
+        adjacent[a].push_back(b);
+      }
+    });
+  }
   // For each sample, how many adjacent samples the walk has not reached yet.
   std::vector<std::size_t> open(count, 0);
-  for (std::size_t a = 0; a < count; ++a) {
-    for (std::size_t b = a + 1; b < count; ++b) {
-      if (adjacent(a, b)) {
-        ++open[a];
-        ++open[b];
-      }
+  // The samples not yet walked with at most one such neighbor: the ends of
+  // the runs, in index order.
+  std::set<std::size_t> ends;
+  for (std::size_t index = 0; index < count; ++index) {
+    open[index] = adjacent[index].size();
+    if (open[index] <= 1) {
+      ends.insert(index);
     }
   }
   std::vector<bool> walked(count, false);
   const auto walk = [&](const std::size_t sample) {
     walked[sample] = true;
-    for (std::size_t other = 0; other < count; ++other) {
-      if (!walked[other] && adjacent(sample, other)) {
-        --open[other];
+    ends.erase(sample);
+    for (const auto other : adjacent[sample]) {
+      if (!walked[other] && --open[other] == 1) {
+        ends.insert(other);
       }
     }
   };
   // The first sample not yet walked that ends a run, or on a closed loop,
   // which has no end, the first sample not yet walked.
+  std::size_t firstUnwalked = 0;
   const auto startOfPiece = [&] {
-    auto loop = count;
-    for (std::size_t i = 0; i < count; ++i) {
-      if (walked[i]) {
-        continue;
-      }
-      if (open[i] <= 1) {
-        return i;
-      }
-      loop = std::min(loop, i);
+    while (firstUnwalked < count && walked[firstUnwalked]) {
+      ++firstUnwalked;
     }
-    return loop;
+    return ends.empty() ? firstUnwalked : *ends.begin();
   };
-  // The nearest sample the walk has not reached, when it touches the sample.
+  // The nearest adjacent sample the walk has not reached; of two at the same
+  // distance, the first.
   const auto step = [&](const std::size_t from) {
     auto nearest = count;
     auto best = std::numeric_limits<double>::infinity();
-    for (std::size_t i = 0; i < count; ++i) {
-      if (walked[i]) {
+    for (const auto other : adjacent[from]) {
+      if (walked[other]) {
         continue;
       }
-      const auto dx = border.samples[i].x() - border.samples[from].x();
-      const auto dy = border.samples[i].y() - border.samples[from].y();
-      if (const auto squared = (dx * dx) + (dy * dy); squared < best) {
+      const auto squared = squaredDistance(other, from);
+      if (squared < best || (squared == best && other < nearest)) {
         best = squared;
-        nearest = i;
+        nearest = other;
       }
     }
-    return best <= ADJACENT_SAMPLE_SQUARED ? nearest : count;
+    return nearest;
   };
 
   const auto layout = [&](const std::size_t index) {
@@ -523,16 +587,21 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   // taken so far. The walk sets the order in which the samples are offered,
   // and the distance to every slot, not only to the last one, keeps the
   // spacing where the walk ends a piece early and starts another next to it,
-  // or where the border bends back towards itself.
+  // or where the border bends back towards itself. Buckets one spacing wide
+  // restrict the comparisons to the slots nearby.
   std::vector<Point> slots;
   std::vector<Point> taken;
+  PointBuckets slotBuckets(spacing);
   const auto offer = [&](const std::size_t index) {
     const auto here = layout(index);
-    if (std::ranges::all_of(taken, [&](const Point& slot) {
-          return std::hypot(here.x() - slot.x(), here.y() - slot.y()) >=
-                 spacing;
-        })) {
+    bool clear = true;
+    slotBuckets.forEachNear(here, [&](const std::size_t slot) {
+      clear = clear && std::hypot(here.x() - taken[slot].x(),
+                                  here.y() - taken[slot].y()) >= spacing;
+    });
+    if (clear) {
       slots.push_back(border.samples[index]);
+      slotBuckets.add(here, taken.size());
       taken.push_back(here);
     }
   };

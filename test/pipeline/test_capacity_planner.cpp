@@ -12,6 +12,7 @@
 // what its plan holds, that it is the same on every run, and what it reports.
 
 #include "MiniFixture.hpp"
+#include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
@@ -725,6 +726,65 @@ TEST(CapacityScene, RefusesTwoTargetsOnOneCell) {
                  "cell of the detail grid; a larger [grid] detail_factor "
                  "makes the cells smaller");
   }
+}
+
+TEST(CapacityPlanner, RefusesAPortThatHasNoTarget) {
+  // Artwork covers the whole chip, so no cell is free for the target of Q1.
+  // A plan without that target would never count the wire of Q1.
+  const auto config = twoPinchConfig();
+  const auto chip = io::loadChip(
+      R"({"sampleSpacing": 1.0, "nets": [],
+  "obstacles": [{"polygon": [[0.0, 0.0], [310.0, 0.0], [310.0, 110.0],
+                             [0.0, 110.0]]}],
+  "ports": {
+    "Chip.port0": {"center": [310.0, 55.0], "orientation": 180.0},
+    "Q1.port0": {"center": [40.0, 55.0], "orientation": 0.0}}})",
+      config);
+
+  try {
+    static_cast<void>(makeWatershedPlanner()->run(chip, config, {}));
+    FAIL() << "a port without a target was accepted";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(), "the port Q1.port0 has no target: chip artwork "
+                               "covers every cell of the detail grid");
+  }
+}
+
+TEST(CapacityScene, RefusesAPortThatFacesNoStepOfTheGrid) {
+  // At 10°, the nearest step of the grid is along x, and a threshold on the
+  // components of the direction would take the diagonal. Either band would
+  // miss the actual approach of the port.
+  auto chip = test::miniChip();
+  for (auto& port : chip.ports) {
+    if (port->label == "Q1.port0") {
+      port->orientation = 10.0;
+    }
+  }
+
+  try {
+    static_cast<void>(buildScene(chip, test::miniConfig()));
+    FAIL() << "a port at 10° was accepted";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(),
+                 "the orientation of a routable port has to be a multiple of "
+                 "45°, so that its approach runs along an axis or a diagonal "
+                 "of the grid; Q1.port0 faces 10°");
+  }
+}
+
+TEST(CapacityScene, TakesEveryMultipleOf45DegreesAsAStepOfTheGrid) {
+  // The benchmark chips give orientations beyond a full turn and below zero.
+  auto chip = test::miniChip();
+  const std::vector<double> orientations{-270.0, 45.0, 405.0, 180.0 + 1e-9,
+                                         315.0};
+  std::size_t next = 0;
+  for (auto& port : chip.ports) {
+    if (design::isRoutable(port->role)) {
+      port->orientation = orientations.at(next++ % orientations.size());
+    }
+  }
+  ASSERT_GT(next, 0U);
+  EXPECT_EQ(orientationProblem(chip), std::nullopt);
 }
 
 /// A border along the middle row of the detail grid, from one edge of the

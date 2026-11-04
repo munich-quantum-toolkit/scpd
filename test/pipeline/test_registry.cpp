@@ -170,6 +170,28 @@ TEST(PlanProblems, CountTheDetailCellsAlongYFromTheAspectRatio) {
                 "detail_factor 10; the limit is 25000000 cells"});
 }
 
+TEST(PlanProblems, NameEveryRoutablePortThatFacesNoStepOfTheGrid) {
+  auto chip = test::miniChip();
+  for (auto& port : chip.ports) {
+    if (port->label == "Q1.port0") {
+      port->orientation = 10.0;
+    } else if (port->label == "Q2.port1") {
+      port->orientation = -100.0;
+    } else if (port->label == "Chip.port0") {
+      // A launcher has no band, so its orientation does not count.
+      port->orientation = 30.0;
+    }
+  }
+
+  EXPECT_EQ(planProblems(chip, test::miniConfig(), allSteps()),
+            std::vector<std::string>{
+                "the orientation of a routable port has to be a multiple of "
+                "45°, so that its approach runs along an axis or a diagonal "
+                "of the grid; Q1.port0 faces 10°, Q2.port1 faces -100°"});
+  // A run that does not take the capacity step stamps no band.
+  EXPECT_TRUE(planProblems(chip, test::miniConfig(), {}).empty());
+}
+
 TEST(PlanProblems, RefuseADetailGridBeyondTheRangeOfAnAxis) {
   // 2^32 detail cells along x do not fit the 32-bit cell coordinate.
   auto config = test::miniConfig();

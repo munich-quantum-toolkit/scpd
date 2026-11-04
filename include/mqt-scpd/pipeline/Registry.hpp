@@ -131,7 +131,9 @@ selectedCapacityPlanner(const ConfigT& config);
  *
  * - every step names an implementation this build registers;
  * - a run through the capacity step asks for a detail grid of at most
- *   MAX_DETAIL_CELLS cells, as detailGridProblem() checks.
+ *   MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - a run through the capacity step has every routable port face a step of
+ *   the grid, as orientationProblem() checks.
  *
  * @param chip The classified chip.
  * @param config The run configuration.

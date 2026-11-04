@@ -44,8 +44,9 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
   /// The cells a port band blocked that were free before. They are obstacles
   /// but not chip artwork, and a bottleneck that ends on one is budgeted
   /// differently. Where the stage took a band back to place the target of its
-  /// port beyond artwork, the cells of the band are free again but stay
-  /// reserved: they belong to no partition.
+  /// port beyond artwork or inside the grid, the cells of the band are free
+  /// again, so that a chain can reach the target, but stay reserved for the
+  /// approach of the port: they belong to no partition.
   grid::BitGrid reserved;
   /// Every cell the approaches of the ports took from the free space: the
   /// bands of the routable ports, before the targets were dug back out. It
@@ -145,6 +146,21 @@ inline constexpr std::uint64_t MAX_DETAIL_CELLS = 25'000'000;
 detailGridProblem(const ChipT& chip, const ConfigT& config);
 
 /**
+ * @brief Checks that the approach of every routable port runs along the grid.
+ *
+ * The band and the target of a port follow one of the eight steps of the
+ * grid. Only an orientation at a multiple of 45° matches such a step; any
+ * other orientation would put the band and the target beside the actual
+ * approach of the port.
+ *
+ * @param chip The classified chip.
+ * @return The problem, naming every routable port whose orientation is not a
+ * multiple of 45°, or none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+orientationProblem(const ChipT& chip);
+
+/**
  * @brief Builds the grids and masks of a run.
  *
  * A configuration without a grid section takes the grid defaults of the
@@ -155,6 +171,8 @@ detailGridProblem(const ChipT& chip, const ConfigT& config);
  * @return The scene.
  * @throws std::invalid_argument When the configuration carries no design
  * rules, when its detail grid has no cells or more than MAX_DETAIL_CELLS,
+ * when a routable port faces no step of the grid, as orientationProblem()
+ * checks, when chip artwork leaves no cell free for the target of a port,
  * when the targets of two ports lie on one detail cell, or when the chip has
  * no launcher.
  */

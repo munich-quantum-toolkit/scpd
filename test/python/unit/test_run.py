@@ -191,6 +191,35 @@ def test_preparing_refuses_a_directory_that_holds_a_configuration_of_its_own(tmp
         RunDirectory(FIXTURE).prepare(CONFIG)
 
 
+def test_preparing_refuses_a_directory_that_holds_files_of_another_task(tmp_path: Path) -> None:
+    """A directory without the chip copy of a run keeps its files, even those with artifact names."""
+    foreign = tmp_path / "other"
+    foreign.mkdir()
+    directory = RunDirectory(foreign)
+    files = {
+        directory.artifact("capacity"): b"not an artifact of a run",
+        directory.record("capacity"): b"{}",
+        foreign / "notes.txt": b"notes",
+    }
+    for path, content in files.items():
+        path.write_bytes(content)
+
+    with pytest.raises(RunError, match=r"is not a run directory: it holds files and no 00-chip\.json"):
+        directory.prepare(CONFIG)
+
+    assert {path: path.read_bytes() for path in foreign.iterdir()} == files
+
+
+def test_preparing_takes_an_empty_directory(tmp_path: Path) -> None:
+    """An empty directory holds nothing a run could delete, so it becomes the run directory."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.path.mkdir()
+
+    directory.prepare(CONFIG)
+
+    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+
+
 @pytest.mark.usefixtures("later_step")
 def test_a_step_writes_its_artifact_and_removes_the_later_ones(tmp_path: Path) -> None:
     """Running a step again leaves no artifact behind that came from the old one."""

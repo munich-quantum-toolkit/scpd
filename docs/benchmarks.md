@@ -69,6 +69,10 @@ The run directory also keeps a copy of the configuration and of the chip input,
 `config.toml` with the chip copy beside it, so
 `mqt-scpd doctor -c runs/33q/config.toml` checks the inputs of the run.
 
+A new run starts afresh and deletes the artifacts of the run it replaces. `plan`
+therefore takes a directory that does not exist, an empty directory or a run
+directory, which holds `00-chip.json`, and refuses any other directory.
+
 `--stop-after <step>`, or `stop_after` in the `[run]` section of the
 configuration, ends a run after a step. `--stage <step>` runs one step again on
 the copies a run carries and deletes the artifacts of every later step:
