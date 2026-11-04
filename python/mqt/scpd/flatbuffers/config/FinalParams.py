@@ -706,7 +706,10 @@ class FinalParams(object):
     # waypoint; "bidirectional" grows the suffixes from its last waypoint as
     # well, one priced step each in turn, and lays the run of a prefix and a
     # suffix that meet on an option again from the front. The search from the
-    # front decides the answer either way.
+    # front decides the answer either way. Both run the capacity check
+    # (`capacity_check`). "greedy" is the research prototype's greedy local
+    # search instead, with its blind repair (the `greedy_*` keys): it always
+    # runs without the capacity check, the coupler box and the coupler snap.
     # FinalParams
     def ChainSearch(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(144))
@@ -1448,8 +1451,76 @@ class FinalParams(object):
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
         return False
 
+    # `chain_search = "greedy"` only — the research prototype's greedy local
+    # search with its blind repair. How many trials the blind repair may run
+    # per chip, each a coupler turned to another of its options and what it
+    # unsettles routed again; zero switches the repair off.
+    # FinalParams
+    def GreedyRepairTrials(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(276))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 100
+
+    # How many trials of a wave of the blind repair run at once, each in a
+    # copy of the stage forked off the state the wave tries against; one runs
+    # them one after the other in the stage itself. The result does not
+    # depend on it.
+    # FinalParams
+    def GreedyRepairWorkers(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(278))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 4
+
+    # The most rounds a trial of the blind repair routes its wires in, and
+    # how many rounds without a new best end it early.
+    # FinalParams
+    def GreedyTrialRounds(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(280))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 4
+
+    # FinalParams
+    def GreedyTrialStaleRounds(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(282))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 1
+
+    # A trial of the blind repair gives up once a round leaves more wires
+    # without a way than the bad wires it is tried against and this many.
+    # FinalParams
+    def GreedyTrialFailMargin(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(284))
+        if o != 0:
+            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
+        return 1
+
+    # Whether a trial of the blind repair draws again only the wires its turn
+    # unsettles and the bad ones, every other keeping its way (a local
+    # rip-up and reroute, as the prototype's); off, a trial routes all the
+    # feedline wires again. The winner of a wave is always routed in full.
+    # FinalParams
+    def GreedyLocalTrials(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(286))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
+    # Whether the searches of the blind repair first flood the open cells of
+    # their corridor and skip a search whose target the flood does not reach.
+    # It changes no result, only how long a failing search takes.
+    # FinalParams
+    def GreedyReachCheck(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(288))
+        if o != 0:
+            return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
+        return True
+
 def FinalParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(136)
+    builder.StartObject(143)
 
 def Start(builder: flatbuffers.Builder):
     FinalParamsStart(builder)
@@ -2270,6 +2341,48 @@ def FinalParamsAddCapacityTerminalNoCross(builder: flatbuffers.Builder, capacity
 def AddCapacityTerminalNoCross(builder: flatbuffers.Builder, capacityTerminalNoCross: bool):
     FinalParamsAddCapacityTerminalNoCross(builder, capacityTerminalNoCross)
 
+def FinalParamsAddGreedyRepairTrials(builder: flatbuffers.Builder, greedyRepairTrials: int):
+    builder.PrependUint32Slot(136, greedyRepairTrials, 100)
+
+def AddGreedyRepairTrials(builder: flatbuffers.Builder, greedyRepairTrials: int):
+    FinalParamsAddGreedyRepairTrials(builder, greedyRepairTrials)
+
+def FinalParamsAddGreedyRepairWorkers(builder: flatbuffers.Builder, greedyRepairWorkers: int):
+    builder.PrependUint32Slot(137, greedyRepairWorkers, 4)
+
+def AddGreedyRepairWorkers(builder: flatbuffers.Builder, greedyRepairWorkers: int):
+    FinalParamsAddGreedyRepairWorkers(builder, greedyRepairWorkers)
+
+def FinalParamsAddGreedyTrialRounds(builder: flatbuffers.Builder, greedyTrialRounds: int):
+    builder.PrependUint32Slot(138, greedyTrialRounds, 4)
+
+def AddGreedyTrialRounds(builder: flatbuffers.Builder, greedyTrialRounds: int):
+    FinalParamsAddGreedyTrialRounds(builder, greedyTrialRounds)
+
+def FinalParamsAddGreedyTrialStaleRounds(builder: flatbuffers.Builder, greedyTrialStaleRounds: int):
+    builder.PrependUint32Slot(139, greedyTrialStaleRounds, 1)
+
+def AddGreedyTrialStaleRounds(builder: flatbuffers.Builder, greedyTrialStaleRounds: int):
+    FinalParamsAddGreedyTrialStaleRounds(builder, greedyTrialStaleRounds)
+
+def FinalParamsAddGreedyTrialFailMargin(builder: flatbuffers.Builder, greedyTrialFailMargin: int):
+    builder.PrependUint32Slot(140, greedyTrialFailMargin, 1)
+
+def AddGreedyTrialFailMargin(builder: flatbuffers.Builder, greedyTrialFailMargin: int):
+    FinalParamsAddGreedyTrialFailMargin(builder, greedyTrialFailMargin)
+
+def FinalParamsAddGreedyLocalTrials(builder: flatbuffers.Builder, greedyLocalTrials: bool):
+    builder.PrependBoolSlot(141, greedyLocalTrials, 1)
+
+def AddGreedyLocalTrials(builder: flatbuffers.Builder, greedyLocalTrials: bool):
+    FinalParamsAddGreedyLocalTrials(builder, greedyLocalTrials)
+
+def FinalParamsAddGreedyReachCheck(builder: flatbuffers.Builder, greedyReachCheck: bool):
+    builder.PrependBoolSlot(142, greedyReachCheck, 1)
+
+def AddGreedyReachCheck(builder: flatbuffers.Builder, greedyReachCheck: bool):
+    FinalParamsAddGreedyReachCheck(builder, greedyReachCheck)
+
 def FinalParamsEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -2418,6 +2531,13 @@ class FinalParamsT(object):
         lengthPointSoftPairs = 1,
         localRingNeighbours = 0,
         capacityTerminalNoCross = False,
+        greedyRepairTrials = 100,
+        greedyRepairWorkers = 4,
+        greedyTrialRounds = 4,
+        greedyTrialStaleRounds = 1,
+        greedyTrialFailMargin = 1,
+        greedyLocalTrials = True,
+        greedyReachCheck = True,
     ):
         self.router = router  # type: Optional[str]
         self.corridorSpacings = corridorSpacings  # type: int
@@ -2555,6 +2675,13 @@ class FinalParamsT(object):
         self.lengthPointSoftPairs = lengthPointSoftPairs  # type: int
         self.localRingNeighbours = localRingNeighbours  # type: int
         self.capacityTerminalNoCross = capacityTerminalNoCross  # type: bool
+        self.greedyRepairTrials = greedyRepairTrials  # type: int
+        self.greedyRepairWorkers = greedyRepairWorkers  # type: int
+        self.greedyTrialRounds = greedyTrialRounds  # type: int
+        self.greedyTrialStaleRounds = greedyTrialStaleRounds  # type: int
+        self.greedyTrialFailMargin = greedyTrialFailMargin  # type: int
+        self.greedyLocalTrials = greedyLocalTrials  # type: bool
+        self.greedyReachCheck = greedyReachCheck  # type: bool
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -2733,6 +2860,13 @@ class FinalParamsT(object):
         self.lengthPointSoftPairs = finalParams.LengthPointSoftPairs()
         self.localRingNeighbours = finalParams.LocalRingNeighbours()
         self.capacityTerminalNoCross = finalParams.CapacityTerminalNoCross()
+        self.greedyRepairTrials = finalParams.GreedyRepairTrials()
+        self.greedyRepairWorkers = finalParams.GreedyRepairWorkers()
+        self.greedyTrialRounds = finalParams.GreedyTrialRounds()
+        self.greedyTrialStaleRounds = finalParams.GreedyTrialStaleRounds()
+        self.greedyTrialFailMargin = finalParams.GreedyTrialFailMargin()
+        self.greedyLocalTrials = finalParams.GreedyLocalTrials()
+        self.greedyReachCheck = finalParams.GreedyReachCheck()
 
     # FinalParamsT
     def Pack(self, builder):
@@ -2903,5 +3037,12 @@ class FinalParamsT(object):
         FinalParamsAddLengthPointSoftPairs(builder, self.lengthPointSoftPairs)
         FinalParamsAddLocalRingNeighbours(builder, self.localRingNeighbours)
         FinalParamsAddCapacityTerminalNoCross(builder, self.capacityTerminalNoCross)
+        FinalParamsAddGreedyRepairTrials(builder, self.greedyRepairTrials)
+        FinalParamsAddGreedyRepairWorkers(builder, self.greedyRepairWorkers)
+        FinalParamsAddGreedyTrialRounds(builder, self.greedyTrialRounds)
+        FinalParamsAddGreedyTrialStaleRounds(builder, self.greedyTrialStaleRounds)
+        FinalParamsAddGreedyTrialFailMargin(builder, self.greedyTrialFailMargin)
+        FinalParamsAddGreedyLocalTrials(builder, self.greedyLocalTrials)
+        FinalParamsAddGreedyReachCheck(builder, self.greedyReachCheck)
         finalParams = FinalParamsEnd(builder)
         return finalParams

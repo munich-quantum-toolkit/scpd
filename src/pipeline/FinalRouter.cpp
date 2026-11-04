@@ -65,6 +65,9 @@
 #include <iterator>
 #include <limits>
 #include <cctype>
+#include <cerrno>
+#include <cstdio>
+#include <deque>
 #include <map>
 #include <memory>
 #include <numbers>
@@ -84,6 +87,12 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <poll.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace mqt::scpd::pipeline {
 namespace {
@@ -201,6 +210,21 @@ struct Tuning {
   /// How many times a placed coupler may be turned to another of its
   /// options while the feedlines do not route.
   std::uint32_t repairTrials = 0;
+  /// The blind repair of `chain_search = "greedy"`: how many trials it may
+  /// run (`greedy_repair_trials`), how many at once (`greedy_repair_workers`),
+  /// a trial's rounds and the rounds without a new best that end it
+  /// (`greedy_trial_rounds`, `greedy_trial_stale_rounds`), how many wires
+  /// without a way above the bad ones abort it (`greedy_trial_fail_margin`),
+  /// whether it draws only what its turn unsettles (`greedy_local_trials`)
+  /// and whether the searches flood for reachability first
+  /// (`greedy_reach_check`).
+  std::uint32_t greedyRepairTrials = 100;
+  std::uint32_t greedyRepairWorkers = 4;
+  std::uint32_t greedyTrialRounds = 4;
+  std::uint32_t greedyTrialStaleRounds = 1;
+  std::uint32_t greedyTrialFailMargin = 1;
+  bool greedyLocalTrials = true;
+  bool greedyReachCheck = true;
   /// The targeted repair: how many ring members beside a segment are drawn
   /// again and how many local rip-up rounds it runs.
   std::uint32_t researchRingMembers = 2;
@@ -463,6 +487,13 @@ struct Tuning {
   /// Whether the chain search searches from the back of a chain as well
   /// (`chain_search = "bidirectional"`).
   bool chainBidirectional = false;
+  /// Whether every chain is settled by the research prototype's greedy local
+  /// search instead of the prefix search (`chain_search = "greedy"`): no
+  /// capacity check, no global SAT search, no coupler box, no coupler snap.
+  bool chainGreedy = false;
+  /// Whether couplers and the edges between them keep inside the rectangle
+  /// the launcher stubs leave open: always, but under the greedy.
+  bool couplerBox = true;
   /// Whether the option generator adds the line options of a chain
   /// (`coupler_line_options`).
   bool lineOptions = false;
@@ -883,6 +914,21 @@ snapShiftsOf(const std::string& text, std::vector<std::int32_t> fallback) {
       std::min(params.feedline_source_guard_cells, 200U);
   tuning.feedlineTargetStub = std::min(params.feedline_target_stub_cells, 200U);
   tuning.chainBidirectional = params.chain_search == "bidirectional";
+  tuning.chainGreedy = params.chain_search == "greedy";
+  // The greedy is the research prototype's insertion as it was benchmarked:
+  // it never runs the capacity check and knows neither the coupler box nor
+  // the coupler snap (below), whatever the keys of those say.
+  if (tuning.chainGreedy) {
+    tuning.capacityCheck = false;
+    tuning.couplerBox = false;
+  }
+  tuning.greedyRepairTrials = params.greedy_repair_trials;
+  tuning.greedyRepairWorkers = std::clamp(params.greedy_repair_workers, 1U, 32U);
+  tuning.greedyTrialRounds = std::max(params.greedy_trial_rounds, 1U);
+  tuning.greedyTrialStaleRounds = std::max(params.greedy_trial_stale_rounds, 1U);
+  tuning.greedyTrialFailMargin = params.greedy_trial_fail_margin;
+  tuning.greedyLocalTrials = params.greedy_local_trials;
+  tuning.greedyReachCheck = params.greedy_reach_check;
   tuning.lineOptions = params.coupler_line_options;
   tuning.crossingReach =
       std::clamp(static_cast<int>(params.crossing_reach_cells), 1, 200);
@@ -954,7 +1000,7 @@ snapShiftsOf(const std::string& text, std::vector<std::int32_t> fallback) {
       rules.min_wire_spacing, router, grid::Step{.x = 1, .y = 1});
   // The snap options take the place of the plain options and of every other
   // generator of them: no jogs, copies, grid, centred or line options.
-  if (params.coupler_snap_pitch > 0.0) {
+  if (params.coupler_snap_pitch > 0.0 && !tuning.chainGreedy) {
     const double pitch = params.coupler_snap_pitch;
     const double cells = pitch / router.cellWidth;
     if (std::abs(params.router_grid_snap - pitch) > 1e-9 * pitch ||
@@ -1601,6 +1647,20 @@ struct Pass {
   /// flag is what tells `lengthensIn` that `SCPD_REFINE_MEANDER` applies
   /// and the checks at the end of the pass which name to say.
   bool refinement = false;
+  /// How many rounds without progress end the pass; zero is `STALE_ROUNDS`.
+  /// A trial of the blind repair ends after two, as the prototype's
+  /// (`FG_TRIAL_EARLY_EXIT`).
+  std::uint32_t staleRounds = 0;
+  /// The trial's fail budget, the prototype's `tl_trial_fail_budget`: a
+  /// round in which more wires than this find no way aborts the pass, which
+  /// can no longer beat the state it is a trial against. Zero is no budget.
+  std::uint32_t failBudget = 0;
+  /// With `onlyUnsettled`: whether a settled member is asked, when its turn
+  /// comes, whether its way still holds against what the pass has drawn so
+  /// far, and drawn again when it does not — as the full pass, which draws
+  /// every member and keeps a way that holds, would. Only its room and its
+  /// crossings are asked, not its length.
+  bool recheckSettled = false;
 };
 
 // ------------------------------------------------------------ Joining cells
@@ -2670,6 +2730,9 @@ public:
     meanderRipups_ = {};
     auto fewest = std::numeric_limits<std::uint32_t>::max();
     std::uint32_t stale = 0;
+    bool aborted = false;
+    const auto staleLimit =
+        pass.staleRounds > 0 ? pass.staleRounds : STALE_ROUNDS;
     say(std::format("{}: {} wires, up to {} rounds, {} relaxations each way",
                     pass.name, total, pass.rounds, pass.maxRelaxation));
     ++sweepSerial_;
@@ -2683,10 +2746,19 @@ public:
       rounds_.push_back({.forward = forward});
       std::uint32_t tried = 0;
       std::uint32_t won = 0;
+      std::uint32_t lost = 0;
       for (std::uint32_t at = 0; at < total; ++at) {
+        if (pass.failBudget > 0 && lost > pass.failBudget) {
+          aborted = true;
+          break;
+        }
         report_.progress(pass.name, roundName, at, total);
         const auto slot = forward ? at : (total - 1 - at);
         auto& wire = wires[members[slot]];
+        if (wire.feasible && wire.routed && pass.keepDrawn &&
+            pass.recheckSettled && !isLegal(wire, wires, nullptr, false)) {
+          wire.routed = false;
+        }
         if (!wire.feasible || (wire.routed && pass.keepDrawn)) {
           continue;
         }
@@ -2706,6 +2778,7 @@ public:
           });
         }
         won += drawn ? 1 : 0;
+        lost += drawn ? 0 : 1;
       }
       // The ways the round leaves, for a picture of it (`roundsJson`); only
       // the last two rounds keep theirs.
@@ -2746,6 +2819,12 @@ public:
       if (fails == 0) {
         break;
       }
+      if (aborted) {
+        say(std::format("{}: more than {} wires without a way in a round, "
+                        "aborted",
+                        pass.name, pass.failBudget));
+        break;
+      }
       // A round that leaves as many fails as the best round before it has
       // moved nothing that the next round can use. The rounds are there for
       // a wire to take room a later one has not claimed yet, and once that
@@ -2754,7 +2833,7 @@ public:
       // remaining twenty-eight change no byte of the result.
       stale = fails < fewest ? 0 : stale + 1;
       fewest = std::min(fewest, fails);
-      if (stale >= STALE_ROUNDS) {
+      if (stale >= staleLimit) {
         say(std::format("{}: {} rounds without progress, stopping", pass.name,
                         stale));
         break;
@@ -4004,6 +4083,7 @@ public:
     std::string note;
     PathPoint from;
     PathPoint to;
+    std::vector<std::uint32_t> keys;
   };
   [[nodiscard]] const std::unordered_map<std::uint32_t, Squeeze>&
   squeezed() const {
@@ -4096,6 +4176,18 @@ public:
     bodies_ = grid::BitGrid(scene_.router.width, scene_.router.height);
     aimAtTarget(true);
     couplerBox_ = couplerBoxOf();
+    // Under the greedy (`chain_search = "greedy"`) the coupler insertion and
+    // everything after it take the whole grid for the rectangle: a coupler then stands wherever
+    // its other rules let it, as in the prototype. The routing before it
+    // keeps the rectangle, so that it is the routing of every other run.
+    if (!tuning_.couplerBox) {
+      couplerBox_ = {.minX = 0,
+                     .maxX = static_cast<std::int64_t>(scene_.router.width) - 1,
+                     .minY = 0,
+                     .maxY = static_cast<std::int64_t>(scene_.router.height) - 1};
+      say("coupler insertion: no coupler box (chain_search = \"greedy\") — "
+          "the rectangle is the whole grid");
+    }
     closeMeanders(wires);
     say(std::format(
         "couplers sit inside x {}..{} y {}..{}, which is what the "
@@ -4485,7 +4577,9 @@ public:
             : jogsText(tuning_.jogOptions),
         extensionsText(tuning_.optionExtensions),
         tuning_.couplerMaxShortfall * 100.0, tuning_.couplerShift,
-        tuning_.chainBidirectional ? "bidirectional" : "astar",
+        tuning_.chainGreedy           ? "greedy"
+        : tuning_.chainBidirectional ? "bidirectional"
+                                     : "astar",
         tuning_.lineOptions ? std::format("{} added", lineOptionsAdded_)
                             : std::string("off"),
         roomPitch(), tuning_.roomMargin, tuning_.roomChannelReach));
@@ -4506,7 +4600,8 @@ public:
     }
 
     // The search for the options: every chain on its own, by the prefix A*.
-    const auto passes = optimizeChainsPrefix(wires);
+    const auto passes = tuning_.chainGreedy ? optimizeChainsGreedy(wires)
+                                            : optimizeChainsPrefix(wires);
 
     // The commit: the chosen options, then the edges.
     for (std::uint32_t index = 0; index < couplers_.size(); ++index) {
@@ -4686,8 +4781,8 @@ public:
     }
     // Under `capacity_check_chains` only the chains it names were checked,
     // and a global search would judge the others too.
-    if (tuning_.capacityCheck && tuning_.capacityCheckChains.empty() &&
-        searchGlobalSat(wires)) {
+    if (!tuning_.chainGreedy && tuning_.capacityCheck &&
+        tuning_.capacityCheckChains.empty() && searchGlobalSat(wires)) {
       // The edges of the couplers the search moved were drawn again.
       drawn = 0;
       angle = 0;
@@ -10133,6 +10228,7 @@ public:
           worst = shortfall;
           std::vector<std::uint32_t> keys(owners.begin(), owners.end());
           std::ranges::sort(keys);
+          found.keys = keys;
           found.from = cell;
           found.to = {.x = static_cast<std::uint32_t>(x),
                       .y = static_cast<std::uint32_t>(y),
@@ -19178,6 +19274,429 @@ public:
     }
   }
 
+  /// What the greedy's local cost of a coupler came to: the price, the ways
+  /// of the edges it routed (one per edge from `firstEdge` on, empty where
+  /// an edge found no way), and how many of them found none.
+  struct GreedyCost {
+    std::uint64_t cost = routing::TRELLIS_UNREACHABLE;
+    std::size_t firstEdge = 0;
+    std::vector<Path> ways;
+    std::uint32_t lost = 0;
+    [[nodiscard]] bool valid() const {
+      return cost != routing::TRELLIS_UNREACHABLE;
+    }
+  };
+
+  /// The research prototype's `calculate_local_cost`, for the coupler at
+  /// waypoint `at` of `chain` on `option` — and, when that coupler is the
+  /// first of a merged pair (`coupler_merge`), its partner on the option the
+  /// merge ties to it.
+  ///
+  /// The coupler's edges are routed one after the other, the first to its
+  /// predecessor, each later one with the ways laid before it closed at the
+  /// clearance (the prototype's `feedline_mindist`: both feedline edges of a
+  /// coupler keep the wire clearance from each other). When that order
+  /// leaves an edge without a way, the other order is tried; the option is
+  /// valid when one of the two orders lays every edge. Every other edge of
+  /// the chain stands as it stands now; no edge of another chain stands
+  /// (`fenceCommittedEdges`), as in the prefix search.
+  ///
+  /// The price is the prototype's: ten thousand an eighth turn of every
+  /// edge, plus the cells of the edges, plus the difference of the first
+  /// two, plus 20000 for every option with a second dogleg. An option whose
+  /// pad meets a neighbour's is invalid.
+  [[nodiscard]] GreedyCost greedyLocalCost(const std::vector<Wire>& wires,
+                                           const std::uint32_t chain,
+                                           const std::size_t at,
+                                           const std::size_t option) {
+    return greedyCostOf(wires, chain, standOf(chain, at, option));
+  }
+
+  /// The waypoints one option of the coupler at `at` stands: the coupler,
+  /// and its partner on the option the merge ties to it when the two are a
+  /// merged pair (`coupler_merge`).
+  [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>>
+  standOf(const std::uint32_t chain, const std::size_t at,
+          const std::size_t option) const {
+    const auto& points = chains_[chain];
+    std::vector<std::pair<std::size_t, std::size_t>> stood{{at, option}};
+    if (mergedPairAt(chain, at)) {
+      const auto& mine = couplers_[points[at].coupler].options[option];
+      if (mine.mergedWith == points[at + 1].coupler) {
+        stood.emplace_back(at + 1, mine.mergedOption);
+      }
+    }
+    return stood;
+  }
+
+  /// `greedyLocalCost` for any run of waypoints standing on named options,
+  /// in chain order: the edges from the one into the first to the one out of
+  /// the last are laid, as `greedyLocalCost` says.
+  [[nodiscard]] GreedyCost
+  greedyCostOf(const std::vector<Wire>& wires, const std::uint32_t chain,
+               const std::vector<std::pair<std::size_t, std::size_t>>& stood) {
+    GreedyCost out;
+    auto& points = chains_[chain];
+    const std::size_t at = stood.front().first;
+    const std::size_t hi = stood.back().first;
+    std::vector<std::size_t> kept;
+    for (const auto& [where, which] : stood) {
+      auto& coupler = couplers_[points[where].coupler];
+      kept.push_back(coupler.chosen);
+      coupler.chosen = which;
+    }
+    const auto restore = [&]() {
+      for (std::size_t k = 0; k < stood.size(); ++k) {
+        couplers_[points[stood[k].first].coupler].chosen = kept[k];
+      }
+    };
+    // The pads against the neighbours' pads.
+    const auto bodyOf = [&](const std::size_t where) -> const std::vector<std::size_t>& {
+      const auto& coupler = couplers_[points[where].coupler];
+      return coupler.options[coupler.chosen].body;
+    };
+    for (const auto& [where, which] : stood) {
+      for (const auto other : {where == 0 ? NO_OWNER : where - 1, where + 1}) {
+        const bool inStood =
+            std::ranges::any_of(stood, [other](const auto& one) {
+              return one.first == other;
+            });
+        if (other == NO_OWNER || other >= points.size() ||
+            points[other].fixed ||
+            (inStood && mergedPairAt(chain, std::min(where, other)))) {
+          continue;
+        }
+        const auto& theirs = bodyOf(other);
+        const std::unordered_set<std::size_t> cells(theirs.begin(),
+                                                    theirs.end());
+        if (std::ranges::any_of(bodyOf(where), [&](const std::size_t cell) {
+              return cells.contains(cell);
+            })) {
+          restore();
+          out.lost = 2;
+          return out;
+        }
+      }
+    }
+    // The edges to route: from the one into `at` to the one out of `hi`.
+    const std::size_t first = at > 0 ? at - 1 : at;
+    const std::size_t last = std::min(hi, points.size() - 2);
+    out.firstEdge = first;
+    std::vector<std::size_t> edges;
+    for (std::size_t from = first; from <= last; ++from) {
+      edges.push_back(from);
+    }
+    const auto lay = [&](const std::vector<std::size_t>& order,
+                         std::vector<Path>& ways) {
+      ways.assign(edges.size(), Path{});
+      std::vector<const Path*> laid;
+      std::uint32_t lost = 0;
+      for (const auto from : order) {
+        auto& way = ways[from - first];
+        const RoutingObjective objective{.source = sourceOf(points[from]),
+                                         .target = targetOf(points[from + 1])};
+        const Edge edge{.chain = chain,
+                        .from = from,
+                        .to = from + 1,
+                        .terminal =
+                            points[from].fixed || points[from + 1].fixed};
+        prefixFence_ = laid.empty() ? nullptr : &laid;
+        way = routeEdge(wires, objective, edge);
+        prefixFence_ = nullptr;
+        ++greedyRouted_;
+        if (way.empty()) {
+          ++lost;
+          continue;
+        }
+        laid.push_back(&way);
+      }
+      return lost;
+    };
+    // Every other edge of the chain stands, as it stands now; the edges this
+    // option re-lays stand open, and the ones laid before them in `lay` are
+    // fenced through `prefixFence_`. Edges of other chains never stand.
+    fenceEverything_ = true;
+    openChain_ = chain;
+    openLo_ = first;
+    openHi_ = last + 1;
+    std::vector<Path> ways;
+    out.lost = lay(edges, ways);
+    if (out.lost > 0 && edges.size() > 1) {
+      std::vector<Path> other;
+      std::vector<std::size_t> reversed(edges.rbegin(), edges.rend());
+      const auto lostOther = lay(reversed, other);
+      if (lostOther < out.lost) {
+        out.lost = lostOther;
+        ways = std::move(other);
+      }
+    }
+    fenceEverything_ = false;
+    openChain_ = NO_OWNER;
+    openLo_ = 0;
+    openHi_ = 0;
+    out.ways = std::move(ways);
+    if (out.lost == 0) {
+      std::uint64_t cost = 0;
+      std::vector<std::uint64_t> lengths;
+      for (std::size_t k = 0; k < edges.size(); ++k) {
+        const auto from = edges[k];
+        const auto& way = out.ways[k];
+        cost += bendUnit() *
+                angleCostOf(way, targetOf(points[from + 1]).heading);
+        cost += way.size();
+        lengths.push_back(way.size());
+      }
+      if (lengths.size() >= 2) {
+        cost += lengths[0] > lengths[1] ? lengths[0] - lengths[1]
+                                        : lengths[1] - lengths[0];
+      }
+      for (const auto& [where, which] : stood) {
+        const auto& coupler = couplers_[points[where].coupler];
+        if (coupler.options[which].secondStraight > 0) {
+          cost += GREEDY_DOGLEG_PENALTY;
+        }
+      }
+      out.cost = cost;
+    }
+    restore();
+    return out;
+  }
+
+  /// What the prototype's greedy adds to an option with a second dogleg.
+  static constexpr std::uint64_t GREEDY_DOGLEG_PENALTY = 20000;
+  /// How many passes the greedy makes over a chain at most.
+  static constexpr std::uint32_t GREEDY_PASSES = 5;
+  /// The edge searches the greedy made, for its line.
+  std::uint64_t greedyRouted_ = 0;
+
+  /// The research prototype's greedy local search over one chain
+  /// (`optimize_chain` / `run_greedy_pass`): up to five passes; in each,
+  /// every coupler of the chain is weighed on every option it offers, its
+  /// own first, with its neighbours as they stand, and takes the cheapest
+  /// valid one — a tie included, so that the search can walk sideways off a
+  /// plateau. The ways of the edges the winner laid are what the chain holds
+  /// for them from then on. A pass that moves nothing ends the search.
+  ///
+  /// Every option is offered, the jogs and the centred ones with them, as
+  /// the prototype weighs all of them (`jogsUnlocked`, `extensionsUnlocked`).
+  ///
+  /// @returns How many passes moved a coupler.
+  [[nodiscard]] std::uint32_t optimizeChainGreedy(const std::vector<Wire>& wires,
+                                                  const std::uint32_t chain) {
+    auto& points = chains_[chain];
+    for (const auto& point : points) {
+      if (!point.fixed) {
+        auto& coupler = couplers_[point.coupler];
+        coupler.jogsUnlocked = true;
+        coupler.extensionsUnlocked = true;
+      }
+    }
+    const auto store = [&](const GreedyCost& taken) {
+      for (std::size_t k = 0; k < taken.ways.size(); ++k) {
+        chainEdgePaths_[chain][taken.firstEdge + k] = taken.ways[k];
+      }
+    };
+    std::uint32_t improved = 0;
+    for (std::uint32_t round = 0; round < GREEDY_ESCAPES + 1; ++round) {
+      if (round > 0 && !escapeGreedy(wires, chain)) {
+        break;
+      }
+      improved += greedyPasses(wires, chain, store);
+    }
+    return improved;
+  }
+
+  /// How many times the greedy over one chain may escape a local minimum
+  /// that leaves an edge without a way (`escapeGreedy`).
+  static constexpr std::uint32_t GREEDY_ESCAPES = 3;
+  /// The joint moves `escapeGreedy` tried and took, for the insertion's line.
+  std::uint64_t greedyJointTried_ = 0;
+  std::uint32_t greedyJointTaken_ = 0;
+
+  /// **The escape of the greedy**, which the prototype does not have: an
+  /// edge left without a way by the passes is a local minimum of the
+  /// coordinate descent when no single coupler has an option that lays it
+  /// — 17q, chain 0: the merged pair took an option one cell further out
+  /// for its first edge, after which its edge to the next coupler would
+  /// need a one-cell jog nothing has room for. Both couplers at such an
+  /// edge are moved together: every pair of their options is weighed by
+  /// `greedyCostOf` over every edge the two touch, and the cheapest valid
+  /// pair is taken. An edge at a launcher has one coupler only, and the
+  /// passes have already weighed it.
+  ///
+  /// @returns Whether a pair was moved.
+  bool escapeGreedy(const std::vector<Wire>& wires, const std::uint32_t chain) {
+    auto& points = chains_[chain];
+    const auto head = [&](const std::size_t at) {
+      return at > 0 && mergedPairAt(chain, at - 1) ? at - 1 : at;
+    };
+    bool any = false;
+    for (std::size_t from = 0; from + 1 < points.size(); ++from) {
+      if (!chainEdgePaths_[chain][from].empty() || points[from].fixed ||
+          points[from + 1].fixed) {
+        continue;
+      }
+      const auto a = head(from);
+      const auto b = from + 1;
+      if (a == head(b)) {
+        continue;
+      }
+      GreedyCost best;
+      std::pair<std::size_t, std::size_t> chosen{0, 0};
+      for (const auto optionA : openOptionsOf(chain, a)) {
+        for (const auto optionB : openOptionsOf(chain, b)) {
+          auto stood = standOf(chain, a, optionA);
+          const auto second = standOf(chain, b, optionB);
+          stood.insert(stood.end(), second.begin(), second.end());
+          ++greedyJointTried_;
+          auto cost = greedyCostOf(wires, chain, stood);
+          if (cost.valid() && (!best.valid() || cost.cost < best.cost)) {
+            best = std::move(cost);
+            chosen = {optionA, optionB};
+          }
+        }
+      }
+      if (!best.valid()) {
+        say(std::format("coupler insertion: greedy chain {}: edge {}->{} has "
+                        "no way, and no pair of options of its two couplers "
+                        "lays it",
+                        chain, from, from + 1));
+        continue;
+      }
+      for (const auto& [where, which] : [&] {
+             auto stood = standOf(chain, a, chosen.first);
+             const auto second = standOf(chain, b, chosen.second);
+             stood.insert(stood.end(), second.begin(), second.end());
+             return stood;
+           }()) {
+        couplers_[points[where].coupler].chosen = which;
+      }
+      for (std::size_t k = 0; k < best.ways.size(); ++k) {
+        chainEdgePaths_[chain][best.firstEdge + k] = best.ways[k];
+      }
+      ++greedyJointTaken_;
+      any = true;
+      say(std::format("coupler insertion: greedy chain {}: edge {}->{} had no "
+                      "way — '{}' and '{}' moved together to options {} and "
+                      "{}, cost {}",
+                      chain, from, from + 1,
+                      wireId(wires[couplers_[points[a].coupler].wire]),
+                      wireId(wires[couplers_[points[b].coupler].wire]),
+                      chosen.first, chosen.second, best.cost));
+    }
+    return any;
+  }
+
+  /// The passes of the greedy over one chain, until one moves nothing or
+  /// `GREEDY_PASSES` are done. `store` keeps the ways a weighed coupler laid.
+  template <typename Store>
+  std::uint32_t greedyPasses(const std::vector<Wire>& wires,
+                             const std::uint32_t chain, const Store& store) {
+    auto& points = chains_[chain];
+    std::uint32_t improved = 0;
+    for (std::uint32_t pass = 0; pass < GREEDY_PASSES; ++pass) {
+      bool moved = false;
+      for (std::size_t at = 0; at < points.size(); ++at) {
+        if (points[at].fixed) {
+          continue;
+        }
+        // The second coupler of a merged pair moves with the first.
+        if (at > 0 && mergedPairAt(chain, at - 1)) {
+          continue;
+        }
+        auto& coupler = couplers_[points[at].coupler];
+        const auto open = openOptionsOf(chain, at);
+        const auto current = coupler.chosen;
+        // What an option cost when it was last weighed, as the prototype's
+        // `last_local_cost`: the blind repair tries the cheapest first.
+        const auto note = [&](const std::size_t option, const GreedyCost& cost) {
+          coupler.options[option].cost =
+              cost.valid() ? static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                                 cost.cost,
+                                 std::numeric_limits<std::uint32_t>::max() - 1))
+                           : std::numeric_limits<std::uint32_t>::max();
+        };
+        auto best = greedyLocalCost(wires, chain, at, current);
+        note(current, best);
+        auto bestOption = current;
+        if (open.size() > 1 ||
+            (open.size() == 1 && open.front() != current)) {
+          for (const auto option : open) {
+            if (option == current) {
+              continue;
+            }
+            auto cost = greedyLocalCost(wires, chain, at, option);
+            note(option, cost);
+            if (cost.valid() && (!best.valid() || cost.cost <= best.cost)) {
+              best = std::move(cost);
+              bestOption = option;
+            }
+          }
+        }
+        store(best);
+        if (bestOption != current) {
+          coupler.chosen = bestOption;
+          if (mergedPairAt(chain, at)) {
+            const auto& mine = coupler.options[bestOption];
+            if (mine.mergedWith == points[at + 1].coupler) {
+              couplers_[points[at + 1].coupler].chosen = mine.mergedOption;
+            }
+          }
+          moved = true;
+          tell(std::format(
+              "coupler insertion: greedy chain {} pass {}: '{}' option {} -> "
+              "{}, cost {}",
+              chain, pass, wireId(wires[coupler.wire]), current, bestOption,
+              best.valid() ? std::to_string(best.cost)
+                           : std::string("unroutable")));
+        }
+      }
+      if (!moved) {
+        break;
+      }
+      ++improved;
+    }
+    return improved;
+  }
+
+  /// The greedy over every chain, one after the other: the prototype's
+  /// coupler insertion without the capacity check and the global SAT search
+  /// (`chain_search = "greedy"`).
+  [[nodiscard]] std::uint32_t optimizeChainsGreedy(std::vector<Wire>& wires) {
+    const auto began = std::chrono::steady_clock::now();
+    greedyRouted_ = 0;
+    greedyJointTried_ = 0;
+    greedyJointTaken_ = 0;
+    std::uint32_t passes = 0;
+    for (std::uint32_t chain = 0; chain < chains_.size(); ++chain) {
+      report_.progress("coupler insertion", std::format("chain {}", chain + 1),
+                       chain, chains_.size());
+      edgeSearches_.clear();
+      latticeSearches_.clear();
+      const auto routedBefore = greedyRouted_;
+      const auto moved = optimizeChainGreedy(wires, chain);
+      passes = std::max(passes, moved);
+      std::uint32_t missing = 0;
+      for (const auto& way : chainEdgePaths_[chain]) {
+        missing += way.empty() ? 1 : 0;
+      }
+      say(std::format("coupler insertion: chain {}: greedy, {} pass{} moved a "
+                      "coupler, {} edge searches, {} of {} edges without a way",
+                      chain, moved, moved == 1 ? "" : "es",
+                      greedyRouted_ - routedBefore, missing,
+                      chainEdgePaths_[chain].size()));
+    }
+    say(std::format("coupler insertion: greedy local search over {} chains, "
+                    "{} edge searches, {} joint moves weighed and {} taken "
+                    "(escapes from an edge without a way), {:.1f}s",
+                    chains_.size(), greedyRouted_, greedyJointTried_,
+                    greedyJointTaken_,
+                    std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - began)
+                        .count()));
+    return passes;
+  }
+
   /// Whether the step checks run for a chain: the capacity check on, and the
   /// chain one `capacity_check_chains` names, or that list empty.
   [[nodiscard]] bool checksChain(const std::uint32_t chain) const {
@@ -22096,6 +22615,54 @@ public:
     return true;
   }
 
+  /// Turn several placed couplers at once — the two of a merged pair — and
+  /// draw every edge they touch again, in chain order. Nothing is changed
+  /// when an edge finds no way.
+  [[nodiscard]] bool
+  turnCouplers(std::vector<Wire>& wires,
+               const std::vector<std::pair<std::uint32_t, std::size_t>>& turns) {
+    if (turns.size() == 1) {
+      return turnCoupler(wires, turns.front().first, turns.front().second);
+    }
+    const auto taken = snapshot(wires);
+    std::vector<std::uint32_t> keys;
+    for (const auto& [index, option] : turns) {
+      for (const auto key : {couplers_[index].edgeIn, couplers_[index].edgeOut}) {
+        if (key != NO_OWNER && std::ranges::find(keys, key) == keys.end()) {
+          keys.push_back(key);
+        }
+      }
+    }
+    std::ranges::sort(keys, {}, [&](const std::uint32_t key) {
+      return edges_[wires[key].edge].from;
+    });
+    for (const auto key : keys) {
+      lift(wires[key]);
+      wires[key].way.clear();
+      wires[key].drawn = false;
+    }
+    for (const auto& [index, option] : turns) {
+      applyOption(wires, index, option);
+    }
+    for (const auto key : keys) {
+      auto& wire = wires[key];
+      const auto& edge = edges_[wire.edge];
+      const auto& points = chains_[edge.chain];
+      wire.objective.source = sourceOf(points[edge.from]);
+      wire.objective.target = targetOf(points[edge.to]);
+      wire.fixed.clear();
+      wire.way = routeEdge(wires, wire.objective, edge);
+      if (wire.way.empty()) {
+        restore(wires, taken);
+        return false;
+      }
+      wire.drawn = true;
+      wire.routed = false;
+      place(wire);
+    }
+    return true;
+  }
+
   /// The wires a turned coupler unsettles: its resonator, its two edges,
   /// and every wire of the ring between it and the next resonator on
   /// either side. The prototype's dirty walk.
@@ -22522,6 +23089,13 @@ public:
                        const std::vector<std::uint32_t>& members,
                        const std::vector<std::uint32_t>& every,
                        const Pass& pass) {
+    // Under the greedy the repair is the prototype's as well: the blind
+    // repair, which turns a coupler near the fails, and not the targeted
+    // repair, whose segments are re-searched by the prefix search.
+    if (tuning_.chainGreedy) {
+      static_cast<void>(blindRepair(wires, members, every, pass));
+      return;
+    }
     say(std::format("targeted repair settings: {} ring member{} redrawn, "
                     "segments grown by {}, {} round{}, budget {} legality "
                     "tests (repair_trials)",
@@ -22531,6 +23105,596 @@ public:
                     tuning_.researchRounds == 1 ? "" : "s",
                     tuning_.repairTrials));
     researchSegments(wires, members, every, pass);
+  }
+
+  /// The couplers one option of a coupler turns: the coupler, and the
+  /// partner of a merged pair on the option the merge ties to it.
+  [[nodiscard]] std::vector<std::pair<std::uint32_t, std::size_t>>
+  unitOf(const std::uint32_t index, const std::size_t option) const {
+    std::vector<std::pair<std::uint32_t, std::size_t>> unit{{index, option}};
+    const auto& mine = couplers_[index].options[option];
+    if (mine.mergedWith != NO_OWNER && mine.mergedWith < couplers_.size()) {
+      unit.emplace_back(mine.mergedWith, mine.mergedOption);
+    }
+    return unit;
+  }
+
+  /// Mark the bad wires of `fails` for the next sweep to draw again.
+  static void unsettleBad(std::vector<Wire>& wires, const Fails& fails) {
+    for (const auto* keys :
+         {&fails.unroutedKeys, &fails.openKeys, &fails.crossingKeys}) {
+      for (const auto key : *keys) {
+        if (key < wires.size()) {
+          wires[key].routed = false;
+        }
+      }
+    }
+  }
+
+  /// How many more rings of chain neighbours the blind repair takes in once
+  /// its candidates are spent.
+  static constexpr std::uint32_t REPAIR_WIDENINGS = 2;
+
+  /// Price every trial of a wave from the same state: `evaluate` turns and
+  /// routes one trial in place and says what it came to, or nothing when
+  /// its edges find no way. With `greedy_repair_workers` above one the trials
+  /// run that many at a time, each in a child forked off the stage — a
+  /// whole copy of it, written to by nobody else — which hands back only the
+  /// two figures; the prototype's trial workers on their deep copies of the
+  /// grid. One worker, a platform without `fork` or a fork that fails runs a
+  /// trial here, put back after. Either way every trial starts from the
+  /// state the wave is tried against, so the figures do not depend on how
+  /// many run at once.
+  template <class TrialT, class Evaluate>
+  void evaluateWave(std::vector<Wire>& wires, std::vector<TrialT>& wave,
+                    const Evaluate& evaluate) {
+    constexpr auto NONE = std::numeric_limits<std::uint32_t>::max();
+    const auto here = [&](TrialT& trial) {
+      const auto taken = snapshot(wires);
+      const auto got = evaluate(trial);
+      trial.fails = got ? *got : std::pair{NONE, NONE};
+      trial.turnMs = trialTurnMs_;
+      trial.sweepMs = trialSweepMs_;
+      trial.rounds = trialRounds_;
+      trial.searches = trialSearches_;
+      trial.failedSearches = trialFailedSearches_;
+      trial.kiloExpansions = trialKiloExpansions_;
+      trial.spared = trialSpared_;
+      restore(wires, taken);
+    };
+#if defined(_WIN32)
+    for (auto& trial : wave) {
+      here(trial);
+    }
+#else
+    if (tuning_.greedyRepairWorkers <= 1 || wave.size() <= 1) {
+      for (auto& trial : wave) {
+        here(trial);
+      }
+      return;
+    }
+    struct Child {
+      pid_t pid = -1;
+      int fd = -1;
+      std::size_t at = 0;
+    };
+    std::deque<Child> running;
+    const auto reap = [&](const Child& child) {
+      std::array<std::uint32_t, 9> out{NONE, NONE, 0, 0, 0, 0, 0, 0, 0};
+      auto* bytes = reinterpret_cast<char*>(out.data());
+      std::size_t got = 0;
+      while (got < sizeof(out)) {
+        const auto n = ::read(child.fd, bytes + got, sizeof(out) - got);
+        if (n < 0 && errno == EINTR) {
+          continue;
+        }
+        if (n <= 0) {
+          break;
+        }
+        got += static_cast<std::size_t>(n);
+      }
+      ::close(child.fd);
+      int status = 0;
+      while (::waitpid(child.pid, &status, 0) < 0 && errno == EINTR) {
+      }
+      if (got == sizeof(out) && WIFEXITED(status) &&
+          WEXITSTATUS(status) == 0) {
+        wave[child.at].fails = {out[0], out[1]};
+        wave[child.at].turnMs = out[2];
+        wave[child.at].sweepMs = out[3];
+        wave[child.at].rounds = out[4];
+        wave[child.at].searches = out[5];
+        wave[child.at].failedSearches = out[6];
+        wave[child.at].kiloExpansions = out[7];
+        wave[child.at].spared = out[8];
+      } else {
+        // The worker died on the way: the trial again, here.
+        here(wave[child.at]);
+      }
+    };
+    std::size_t next = 0;
+    while (next < wave.size() || !running.empty()) {
+      while (running.size() < tuning_.greedyRepairWorkers && next < wave.size()) {
+        const auto at = next++;
+        std::array<int, 2> fds{-1, -1};
+        if (::pipe(fds.data()) != 0) {
+          here(wave[at]);
+          continue;
+        }
+        std::fflush(nullptr);
+        const pid_t pid = ::fork();
+        if (pid < 0) {
+          ::close(fds[0]);
+          ::close(fds[1]);
+          here(wave[at]);
+          continue;
+        }
+        if (pid == 0) {
+          ::close(fds[0]);
+          std::array<std::uint32_t, 9> out{NONE, NONE, 0, 0, 0, 0, 0, 0, 0};
+          if (const auto got = evaluate(wave[at])) {
+            out[0] = got->first;
+            out[1] = got->second;
+          }
+          out[2] = trialTurnMs_;
+          out[3] = trialSweepMs_;
+          out[4] = trialRounds_;
+          out[5] = trialSearches_;
+          out[6] = trialFailedSearches_;
+          out[7] = trialKiloExpansions_;
+          out[8] = trialSpared_;
+          const auto* bytes = reinterpret_cast<const char*>(out.data());
+          std::size_t put = 0;
+          while (put < sizeof(out)) {
+            const auto n = ::write(fds[1], bytes + put, sizeof(out) - put);
+            if (n < 0 && errno == EINTR) {
+              continue;
+            }
+            if (n <= 0) {
+              ::_exit(1);
+            }
+            put += static_cast<std::size_t>(n);
+          }
+          ::_exit(0);
+        }
+        ::close(fds[1]);
+        running.push_back({.pid = pid, .fd = fds[0], .at = at});
+      }
+      // Whichever worker is done first frees its place for the next trial.
+      if (!running.empty()) {
+        std::vector<pollfd> watched;
+        watched.reserve(running.size());
+        for (const auto& child : running) {
+          watched.push_back({.fd = child.fd, .events = POLLIN, .revents = 0});
+        }
+        while (::poll(watched.data(), static_cast<nfds_t>(watched.size()),
+                      -1) < 0 &&
+               errno == EINTR) {
+        }
+        for (std::size_t k = watched.size(); k-- > 0;) {
+          if (watched[k].revents != 0) {
+            reap(running[k]);
+            running.erase(running.begin() + static_cast<std::ptrdiff_t>(k));
+          }
+        }
+      }
+    }
+#endif
+  }
+
+  /// **The blind repair** of the greedy (`chain_search = "greedy"`): while
+  /// the feedlines leave fails, turn a coupler near them to another of its
+  /// options and route what that unsettles again; keep the turn that leaves
+  /// fewer fails. The prototype's `run_final_routing_feedline_choices_
+  /// parallel`, as the stage had it before the targeted repair replaced
+  /// it; `greedy_repair_trials` is the prototype's `max_repair_rounds`.
+  ///
+  /// A wave takes the couplers near the bad wires — a bad resonator's
+  /// or edge's own, and those of the nearest resonators on either side of a
+  /// failing plain wire in the ring — with their chain neighbours, and tries
+  /// the two cheapest untried options of each, by what the greedy last
+  /// priced them at. Every trial is put back; the best of the wave is turned
+  /// for good when it leaves fewer fails, judged by the bad wires first and
+  /// by every fail after. A merged pair is turned as one unit (`unitOf`).
+  ///
+  /// @returns The bad wires the repair ends on.
+  std::uint32_t blindRepair(std::vector<Wire>& wires,
+                            const std::vector<std::uint32_t>& members,
+                            const std::vector<std::uint32_t>& every,
+                            const Pass& pass) {
+    const auto began = std::chrono::steady_clock::now();
+    const auto quietly = [&](auto&& work) {
+      const auto loud = std::exchange(report_, Report{});
+      work();
+      report_ = loud;
+    };
+    Fails current;
+    quietly([&] { current = failsOf(wires, every); });
+    const auto before = current;
+    const auto score = [](const Fails& fails) {
+      return std::pair{fails.broken, fails.total()};
+    };
+    say(std::format("feedline repair: blind repair, up to {} trials "
+                    "(greedy_repair_trials), from bad {} and {} fails",
+                    tuning_.greedyRepairTrials, current.broken, current.total()));
+    // A search whose target the open cells of its corridor do not reach is
+    // not run (`DubinsRouter::setReachCheck`): the trials' failing searches,
+    // most of what they search, cost a flood instead of a search.
+    router_.setReachCheck(tuning_.greedyReachCheck);
+    const auto sparedBefore = router_.reachRefusals();
+    std::uint32_t trials = 0;
+    std::uint32_t turned = 0;
+    std::set<std::pair<std::uint32_t, std::size_t>> tried;
+    Pass again = pass;
+    // A trial routes as the prototype's does: incrementally, a local
+    // rip-up-and-reroute — only the wires the turn unsettles and the bad
+    // ones are drawn again, every other wire keeps its way and stands as
+    // their fence (`onlyUnsettled`), and the relaxation rips ring neighbours
+    // up as in the pass. At most `greedy_trial_rounds` rounds, ended
+    // after `greedy_trial_stale_rounds` without a new best, and aborted by the fail
+    // budget once it cannot beat the state it is tried against.
+    again.name = "feedline repair";
+    again.keepDrawn = true;
+    again.onlyUnsettled = tuning_.greedyLocalTrials;
+    again.rounds = std::min(pass.rounds, tuning_.greedyTrialRounds);
+    again.staleRounds = tuning_.greedyTrialStaleRounds;
+    again.recheckSettled = true;
+    // The pass a winner is turned for good with: the feedline routing's own.
+    Pass whole = pass;
+    whole.name = "feedline repair";
+    // Turn the unit of `coupler` and `option` and route what it unsettles;
+    // false when its edges find no way.
+    const auto attemptTurn = [&](const std::uint32_t coupler,
+                                 const std::size_t option,
+                                 const Pass& how) {
+      const auto start = std::chrono::steady_clock::now();
+      const auto millis = [](const auto from) {
+        return static_cast<std::uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - from)
+                .count());
+      };
+      bool turnedOk = false;
+      quietly([&] {
+        turnedOk = turnCouplers(wires, unitOf(coupler, option));
+      });
+      trialSweepMs_ = 0;
+      trialRounds_ = 0;
+      trialSearches_ = 0;
+      trialFailedSearches_ = 0;
+      trialKiloExpansions_ = 0;
+      trialSpared_ = 0;
+      if (!turnedOk) {
+        trialTurnMs_ = millis(start);
+        return false;
+      }
+      for (const auto& [index, choice] : unitOf(coupler, option)) {
+        for (const auto key : unsettledBy(wires, members, index)) {
+          wires[key].routed = false;
+        }
+      }
+      // And every other wire whose way the turn broke — an edge moved into
+      // its room or across it — which the full pass would have drawn again
+      // when it found its way no longer holds. Its length is not asked: a
+      // resonator short already is short whatever the turn did.
+      for (const auto member : members) {
+        auto& wire = wires[member];
+        if (wire.routed && wire.feasible &&
+            !isLegal(wire, wires, nullptr, false)) {
+          wire.routed = false;
+        }
+      }
+      trialTurnMs_ = millis(start);
+      // The bad wires are drawn again in every trial, as a wire that
+      // failed is in every round of the prototype's feedline routing:
+      // what a turn frees is only seen by the wire that needed the room.
+      unsettleBad(wires, current);
+      const auto swept = std::chrono::steady_clock::now();
+      const auto searches = searchCount_;
+      const auto failedSearches = searchFailed_;
+      const auto expansions = searchExpansions_;
+      const auto spared = router_.reachRefusals();
+      quietly([&] { sweep(wires, members, how); });
+      trialSweepMs_ = millis(swept);
+      trialSearches_ = static_cast<std::uint32_t>(searchCount_ - searches);
+      trialFailedSearches_ =
+          static_cast<std::uint32_t>(searchFailed_ - failedSearches);
+      trialKiloExpansions_ =
+          static_cast<std::uint32_t>((searchExpansions_ - expansions) / 1000);
+      trialSpared_ = static_cast<std::uint32_t>(router_.reachRefusals() - spared);
+      trialRounds_ = static_cast<std::uint32_t>(rounds_.size());
+      return true;
+    };
+    // How far the repair reaches when the prototype's candidates are spent
+    // (beyond the prototype): more rings of chain neighbours, then the
+    // options with a second dogleg as well.
+    std::uint32_t widened = 0;
+    bool doglegs = false;
+    // The repair is for the bad wires: a resonator off its length alone is
+    // the refinement's business, which follows.
+    while (current.broken > 0 && trials < tuning_.greedyRepairTrials) {
+      std::vector<std::uint32_t> candidates;
+      // A coupler of a merged pair stands for the pair, by its first coupler,
+      // which carries the unit's options.
+      const auto add = [&](std::uint32_t index) {
+        if (index == NO_OWNER || index >= couplers_.size()) {
+          return;
+        }
+        if (const auto [chain, at] = chainOfCoupler_[index];
+            chain != NO_OWNER && at > 0 && mergedPairAt(chain, at - 1)) {
+          index = chains_[chain][at - 1].coupler;
+        }
+        if (std::ranges::find(candidates, index) == candidates.end()) {
+          candidates.push_back(index);
+        }
+      };
+      const auto near = [&](const Wire& wire) {
+        if (wire.feedline) {
+          add(wire.couplerAtSource);
+          add(wire.couplerAtTarget);
+          return;
+        }
+        if (wire.couplerAtSource != NO_OWNER) {
+          add(wire.couplerAtSource);
+          return;
+        }
+        const auto found = std::ranges::find(members, wire.key);
+        if (found == members.end()) {
+          return;
+        }
+        const auto at = static_cast<std::size_t>(found - members.begin());
+        const auto total = members.size();
+        for (const int direction : {1, -1}) {
+          for (std::size_t step = 1; step < total; ++step) {
+            const auto place =
+                (at + total + (static_cast<std::size_t>(direction) * step)) %
+                total;
+            const auto& other = wires[members[place]];
+            if (other.resonator) {
+              add(other.couplerAtSource);
+              break;
+            }
+          }
+        }
+      };
+      for (const auto* keys :
+           {&current.unroutedKeys, &current.openKeys, &current.crossingKeys}) {
+        for (const auto key : *keys) {
+          if (key < wires.size()) {
+            near(wires[key]);
+          }
+        }
+      }
+      // And, beyond the prototype, the couplers the targeted repair's triage
+      // blames by geometry (`blameFails`): those of the edges and pads within
+      // reach of where a bad wire breaks the rule, which the ring order
+      // alone does not reach when the blocker belongs to another chain.
+      {
+        std::vector<Segment> segments;
+        quietly([&] { segments = blameFails(wires, members, current); });
+        for (const auto& segment : segments) {
+          for (std::size_t at = segment.lo; at <= segment.hi; ++at) {
+            const auto& point = chains_[segment.chain][at];
+            if (!point.fixed) {
+              add(point.coupler);
+            }
+          }
+        }
+      }
+      // And, beyond the prototype, the couplers of every edge that leaves
+      // too little room beside it for a bad wire that has to pass there
+      // (`measureSqueeze`): 45q's wires 70 and 71 run open between the
+      // terminal edge f18 and the artwork, whose coupler neither the ring
+      // order nor the blame reaches.
+      {
+        std::set<std::uint32_t> bad;
+        for (const auto* keys : {&current.unroutedKeys, &current.openKeys,
+                                 &current.crossingKeys}) {
+          bad.insert(keys->begin(), keys->end());
+        }
+        for (const auto& edge : edges_) {
+          if (edge.wire >= wires.size() || !wires[edge.wire].drawn) {
+            continue;
+          }
+          const auto& wire = wires[edge.wire];
+          const auto [worst, found] = measureSqueeze(
+              wires, wire.way,
+              static_cast<std::size_t>(
+                  startStubOf(wire, tuning_.straightStart) + BEND_RADIUS),
+              static_cast<std::size_t>(wire.endStub + BEND_RADIUS), wire.key);
+          if (worst > 0.0 && std::ranges::any_of(found.keys, [&](auto key) {
+                return bad.contains(key);
+              })) {
+            for (const auto at : {edge.from, edge.to}) {
+              const auto& point = chains_[edge.chain][at];
+              if (!point.fixed) {
+                add(point.coupler);
+              }
+            }
+          }
+        }
+      }
+      for (std::uint32_t ring = 0; ring <= widened; ++ring) {
+        const auto direct = candidates;
+        for (const auto index : direct) {
+          const auto [chain, at] = chainOfCoupler_[index];
+          if (chain == NO_OWNER) {
+            continue;
+          }
+          const auto& points = chains_[chain];
+          // The partner of a merged pair stands one place further on.
+          const auto last = at + 1 < points.size() && mergedPairAt(chain, at)
+                                ? at + 1
+                                : at;
+          if (at > 0 && !points[at - 1].fixed) {
+            add(points[at - 1].coupler);
+          }
+          if (last + 1 < points.size() && !points[last + 1].fixed) {
+            add(points[last + 1].coupler);
+          }
+        }
+      }
+      {
+        std::string named;
+        for (const auto index : candidates) {
+          named += (named.empty() ? "" : " ") + couplerName(wires, index);
+        }
+        tell(std::format("feedline repair: candidates {}", named));
+      }
+      struct Trial {
+        std::uint32_t coupler = 0;
+        std::size_t option = 0;
+        std::pair<std::uint32_t, std::uint32_t> fails;
+        /// What the trial cost: the turn with its edges, the local pass,
+        /// in milliseconds, and the rounds the pass ran.
+        std::uint32_t turnMs = 0;
+        std::uint32_t sweepMs = 0;
+        std::uint32_t rounds = 0;
+        std::uint32_t searches = 0;
+        std::uint32_t failedSearches = 0;
+        std::uint32_t kiloExpansions = 0;
+        std::uint32_t spared = 0;
+      };
+      std::vector<Trial> wave;
+      for (const auto index : candidates) {
+        const auto& coupler = couplers_[index];
+        const auto [chain, at] = chainOfCoupler_[index];
+        if (chain == NO_OWNER) {
+          continue;
+        }
+        std::vector<std::size_t> options;
+        for (const auto option : openOptionsOf(chain, at)) {
+          if (option != coupler.chosen && !tried.contains({index, option}) &&
+              (doglegs || coupler.options[option].secondStraight == 0)) {
+            options.push_back(option);
+          }
+        }
+        std::ranges::stable_sort(options, {}, [&](const std::size_t option) {
+          return coupler.options[option].cost;
+        });
+        for (std::size_t k = 0; k < 2 && k < options.size(); ++k) {
+          wave.push_back({.coupler = index,
+                          .option = options[k],
+                          .fails = score(current)});
+        }
+      }
+      if (wave.empty()) {
+        if (widened < REPAIR_WIDENINGS) {
+          ++widened;
+          say(std::format("feedline repair: the candidates are spent — "
+                          "widened by ring {} of chain neighbours",
+                          widened));
+          continue;
+        }
+        if (!doglegs) {
+          doglegs = true;
+          say("feedline repair: the candidates are spent — the options with "
+              "a second dogleg join");
+          continue;
+        }
+        say("feedline repair: nothing left to try");
+        break;
+      }
+      // The wave's trials, as many as the budget leaves.
+      if (wave.size() > tuning_.greedyRepairTrials - trials) {
+        wave.resize(tuning_.greedyRepairTrials - trials);
+      }
+      again.failBudget = current.broken + tuning_.greedyTrialFailMargin;
+      for (const auto& trial : wave) {
+        tried.insert({trial.coupler, trial.option});
+      }
+      const auto waveBegan = std::chrono::steady_clock::now();
+      evaluateWave(wires, wave, [&](const Trial& trial) {
+        std::optional<std::pair<std::uint32_t, std::uint32_t>> got;
+        if (attemptTurn(trial.coupler, trial.option, again)) {
+          quietly([&] { got = score(failsOf(wires, every)); });
+        }
+        return got;
+      });
+      for (const auto& trial : wave) {
+        ++trials;
+        if (trial.fails.first == std::numeric_limits<std::uint32_t>::max()) {
+          tell(std::format(
+              "repair trial {}: coupler '{}' option {}: its edges find no way",
+              trials, wireId(wires[couplers_[trial.coupler].wire]),
+              trial.option));
+          continue;
+        }
+        tell(std::format(
+            "repair trial {}: coupler '{}' option {}: bad {} / {} fails against "
+            "bad {} / {} (turn {} ms, {} rounds {} ms, {} searches, {} without "
+            "a way, {} of them spared by the reach check)",
+            trials, wireId(wires[couplers_[trial.coupler].wire]), trial.option,
+            trial.fails.first, trial.fails.second, current.broken,
+            current.total(), trial.turnMs, trial.rounds, trial.sweepMs,
+            trial.searches, trial.failedSearches, trial.spared));
+      }
+      say(std::format("feedline repair: a wave of {} trials in {:.1f}s",
+                      wave.size(),
+                      std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - waveBegan)
+                          .count()));
+      const auto best = std::ranges::min_element(wave, {}, &Trial::fails);
+      if (best == wave.end() || best->fails >= score(current)) {
+        say(std::format("feedline repair: {} trials, none better than bad {} "
+                        "/ {} fails",
+                        trials, current.broken, current.total()));
+        continue;
+      }
+      const auto acceptBegan = std::chrono::steady_clock::now();
+      // The winner is turned for good: routed again here, from the state
+      // every trial of the wave started from, as the prototype re-runs it —
+      // by the whole pass, every wire drawn again as the feedline routing
+      // draws it, so that what the repair goes on from is the state a turn
+      // routed in full leaves and not the local trial's. A turn the whole
+      // pass does not find better is put back and stays tried.
+      const auto kept = snapshot(wires);
+      const auto fallback = current;
+      if (!attemptTurn(best->coupler, best->option, whole)) {
+        restore(wires, kept);
+        continue;
+      }
+      quietly([&] { current = failsOf(wires, every); });
+      if (score(current) >= score(fallback)) {
+        say(std::format("feedline repair: coupler '{}' option {} was better in "
+                        "its trial (bad {} / {} fails) but routed in full "
+                        "leaves bad {} / {} — put back",
+                        wireId(wires[couplers_[best->coupler].wire]),
+                        best->option, best->fails.first, best->fails.second,
+                        current.broken, current.total()));
+        restore(wires, kept);
+        current = fallback;
+        continue;
+      }
+      ++turned;
+      say(std::format("feedline repair: coupler '{}' turned to option {} "
+                      "after {} trials | bad {} · fails {} (routed in full in "
+                      "{:.1f}s)",
+                      wireId(wires[couplers_[best->coupler].wire]),
+                      best->option, trials, current.broken, current.total(),
+                      std::chrono::duration<double>(
+                          std::chrono::steady_clock::now() - acceptBegan)
+                          .count()));
+    }
+    router_.setReachCheck(false);
+    say(std::format("feedline repair: the reach check spared {} searches of "
+                    "the turns routed here",
+                    router_.reachRefusals() - sparedBefore));
+    // Everything down again, so that the field says what the canvas holds.
+    for (auto& wire : wires) {
+      place(wire);
+    }
+    quietly([&] { current = failsOf(wires, every); });
+    say(std::format(
+        "==> feedline repair: {} trials of {}, {} couplers turned; unrouted {} "
+        "-> {}, open {} -> {}, crossing {} -> {} (bad {} -> {}), fails {} -> "
+        "{}, {:.1f}s",
+        trials, tuning_.greedyRepairTrials, turned, before.unrouted, current.unrouted,
+        before.open, current.open, before.crossing, current.crossing,
+        before.broken, current.broken, before.total(), current.total(),
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - began)
+            .count()));
+    return current.broken;
   }
 
   /// Hide or show the pads of some couplers in `bodies_`, at the option each
@@ -26066,6 +27230,9 @@ private:
     auto found = feedlinePass_ && !wire.feedline
                      ? router_.routeOrthogonal(wire.objective, usePenalty)
                      : router_.route(wire.objective, usePenalty);
+    ++searchCount_;
+    searchFailed_ += found.empty() ? 1 : 0;
+    searchExpansions_ += router_.lastSearchExpansions();
     // A resonator drawn from its coupler leaves it on a fixed quarter turn
     // that no search sees; the way it has is the turn and what was found.
     if (!found.empty() && !wire.arc.empty()) {
@@ -28485,6 +29652,19 @@ private:
   bool insertionDone_ = false;
   std::uint32_t insertionDrawn_ = 0;
   std::uint32_t insertionAngle_ = 0;
+  /// What the last trial of the blind repair cost (`blindRepair`).
+  std::uint32_t trialTurnMs_ = 0;
+  std::uint32_t trialSweepMs_ = 0;
+  std::uint32_t trialRounds_ = 0;
+  /// Every search of the sweep, those that found nothing and the states the
+  /// router expanded: what a trial of the blind repair spends.
+  std::uint64_t searchCount_ = 0;
+  std::uint64_t searchFailed_ = 0;
+  std::uint64_t searchExpansions_ = 0;
+  std::uint32_t trialSearches_ = 0;
+  std::uint32_t trialFailedSearches_ = 0;
+  std::uint32_t trialKiloExpansions_ = 0;
+  std::uint32_t trialSpared_ = 0;
   std::optional<bool> sat_;
   Debug debug_;
   /// The record kinds the `[debug]` section asks for.

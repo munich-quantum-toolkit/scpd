@@ -199,6 +199,13 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
         "length_point_soft": "",
         "length_point_price": 0,
         "length_point_soft_pairs": 1,
+        "greedy_repair_trials": 100,
+        "greedy_repair_workers": 4,
+        "greedy_trial_rounds": 4,
+        "greedy_trial_stale_rounds": 1,
+        "greedy_trial_fail_margin": 1,
+        "greedy_local_trials": True,
+        "greedy_reach_check": True,
         "coupler_meander_slack": False,
         "coupler_meander_slack_chains": "",
         "crossing_reach_cells": 10,
@@ -450,8 +457,9 @@ def _jog_problems(text: str) -> list[str]:
     ]
 
 
-#: The searches ``[stages.final] chain_search`` names: from the front of a chain alone, or from both ends.
-CHAIN_SEARCHES = ("astar", "bidirectional")
+#: The searches ``[stages.final] chain_search`` names: from the front of a chain alone, from both ends,
+#: or the research prototype's greedy local search over each chain's couplers.
+CHAIN_SEARCHES = ("astar", "bidirectional", "greedy")
 #: Where ``[stages.final] length_point_soft`` prices the length-point band rather than closing
 #: it: nowhere, in the outer refinement alone, in the outer routing, its relaxation and the
 #: outer refinement, or only where the closed band would leave a wire with no way.
@@ -563,6 +571,11 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
         ("feedline_refinement_rounds", "feedlineRefinementRounds"),
         ("refinement_corridor_spacings", "refinementCorridorSpacings"),
         ("repair_trials", "repairTrials"),
+        ("greedy_repair_trials", "greedyRepairTrials"),
+        ("greedy_repair_workers", "greedyRepairWorkers"),
+        ("greedy_trial_rounds", "greedyTrialRounds"),
+        ("greedy_trial_stale_rounds", "greedyTrialStaleRounds"),
+        ("greedy_trial_fail_margin", "greedyTrialFailMargin"),
         ("coupler_box_margin_cells", "couplerBoxMarginCells"),
         ("coupler_shift_cells", "couplerShiftCells"),
         ("coupler_copy_cells", "couplerCopyCells"),
@@ -680,6 +693,8 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.final.chainGatePenalty = take(final, "chain_gate_penalty", int)
     stages.final.capacityPrescribeOpenEdges = take(final, "capacity_prescribe_open_edges", bool)
     stages.final.releasedArrivalBox = take(final, "released_arrival_box", bool)
+    stages.final.greedyLocalTrials = take(final, "greedy_local_trials", bool)
+    stages.final.greedyReachCheck = take(final, "greedy_reach_check", bool)
     stages.final.lengthPointSoft = take(final, "length_point_soft", str)
     if stages.final.lengthPointSoft not in LENGTH_POINT_SOFT:
         problems.append(

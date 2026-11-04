@@ -93,6 +93,19 @@ public:
   /// dropped a move for it — a search that found nothing under a bound and
   /// dropped nothing would have found nothing without it either.
   void setMaxTurns(const int16_t turns) { maxTurns_ = turns; }
+
+  /// Whether `routeOrthogonal` first asks if the target can be reached at
+  /// all: a flood over the cells the corridor leaves open, eight-connected,
+  /// with no heading, no turn and no crossing rule. Every way the search can
+  /// find runs over such cells, so when the flood does not reach the target
+  /// the search finds nothing either and is not run. It changes no result,
+  /// only what a search that finds nothing costs.
+  /// Switched on only when every move primitive sweeps an eight-connected
+  /// chain of cells from its start to its end, which is what makes the
+  /// flood a bound; otherwise it stays off.
+  void setReachCheck(bool on);
+  /// How many searches the reach check has spared since it was made.
+  [[nodiscard]] uint64_t reachRefusals() const { return reachRefused_; }
   [[nodiscard]] bool lastSearchCutOff() const { return cutOff_; }
 
   /// The turn bounds under which the last route() would have run the same.
@@ -486,6 +499,12 @@ private:
   Heuristic heuristic_ = Heuristic::DistanceField;
   int16_t maxTurns_ = -1;
   bool cutOff_ = false;
+  bool reachCheck_ = false;
+  uint64_t reachRefused_ = 0;
+  std::vector<uint64_t> reachBits_;
+  std::vector<uint32_t> reachQueue_;
+  /// Whether the flood of `setReachCheck` gets from `from` to `to`.
+  [[nodiscard]] bool reaches(const PathPoint& from, const PathPoint& to);
   BoundWindow boundWindow_;
   uint32_t lastCost_ = 0;
   uint64_t expansions_ = 0;

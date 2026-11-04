@@ -444,7 +444,10 @@ table FinalParams {
   /// waypoint; "bidirectional" grows the suffixes from its last waypoint as
   /// well, one priced step each in turn, and lays the run of a prefix and a
   /// suffix that meet on an option again from the front. The search from the
-  /// front decides the answer either way.
+  /// front decides the answer either way. Both run the capacity check
+  /// (`capacity_check`). "greedy" is the research prototype's greedy local
+  /// search instead, with its blind repair (the `greedy_*` keys): it always
+  /// runs without the capacity check, the coupler box and the coupler snap.
   chain_search: string;
   /// Whether the option generator adds line options: per coupler, options
   /// whose feedline ports lie on the chord of its two neighbours or on the
@@ -790,6 +793,32 @@ table FinalParams {
   /// lines they are drawn on, though they may share gates with them: every
   /// wire but the edges themselves and the wires that must cross them.
   capacity_terminal_no_cross: bool = false;
+  /// `chain_search = "greedy"` only — the research prototype's greedy local
+  /// search with its blind repair. How many trials the blind repair may run
+  /// per chip, each a coupler turned to another of its options and what it
+  /// unsettles routed again; zero switches the repair off.
+  greedy_repair_trials: uint32 = 100;
+  /// How many trials of a wave of the blind repair run at once, each in a
+  /// copy of the stage forked off the state the wave tries against; one runs
+  /// them one after the other in the stage itself. The result does not
+  /// depend on it.
+  greedy_repair_workers: uint32 = 4;
+  /// The most rounds a trial of the blind repair routes its wires in, and
+  /// how many rounds without a new best end it early.
+  greedy_trial_rounds: uint32 = 4;
+  greedy_trial_stale_rounds: uint32 = 1;
+  /// A trial of the blind repair gives up once a round leaves more wires
+  /// without a way than the bad wires it is tried against and this many.
+  greedy_trial_fail_margin: uint32 = 1;
+  /// Whether a trial of the blind repair draws again only the wires its turn
+  /// unsettles and the bad ones, every other keeping its way (a local
+  /// rip-up and reroute, as the prototype's); off, a trial routes all the
+  /// feedline wires again. The winner of a wave is always routed in full.
+  greedy_local_trials: bool = true;
+  /// Whether the searches of the blind repair first flood the open cells of
+  /// their corridor and skip a search whose target the flood does not reach.
+  /// It changes no result, only how long a failing search takes.
+  greedy_reach_check: bool = true;
 }
 
 /// How the mixed-integer programs of the planning stages are solved.

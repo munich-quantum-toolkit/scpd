@@ -1376,11 +1376,100 @@ Path DubinsRouter::routeOrthogonal(const RoutingObjective& objective,
   return path;
 }
 
+void DubinsRouter::setReachCheck(const bool on) {
+  reachCheck_ = false;
+  if (!on) {
+    return;
+  }
+  for (Heading heading = 0; heading < 8; ++heading) {
+    for (const auto& primitive : primitives_->of(heading)) {
+      std::vector<CellOffset> cells = primitive.swept;
+      cells.push_back({.dx = primitive.dx, .dy = primitive.dy});
+      std::vector<CellOffset> reached{{.dx = 0, .dy = 0}};
+      std::vector<bool> taken(cells.size(), false);
+      for (std::size_t head = 0; head < reached.size(); ++head) {
+        for (std::size_t k = 0; k < cells.size(); ++k) {
+          if (!taken[k] && std::abs(cells[k].dx - reached[head].dx) <= 1 &&
+              std::abs(cells[k].dy - reached[head].dy) <= 1) {
+            taken[k] = true;
+            reached.push_back(cells[k]);
+          }
+        }
+      }
+      if (!taken.back()) {
+        return;
+      }
+    }
+  }
+  reachCheck_ = true;
+}
+
+bool DubinsRouter::reaches(const PathPoint& from, const PathPoint& to) {
+  const grid::BitGrid& closed = *corridor_;
+  const std::size_t n = cells();
+  if (from.x == to.x && from.y == to.y) {
+    return true;
+  }
+  if (closed.testCell(to.x, to.y)) {
+    return false;
+  }
+  reachBits_.resize((n + 63) / 64, 0);
+  const auto start = (static_cast<std::size_t>(from.y) * width_) + from.x;
+  const auto goal = (static_cast<std::size_t>(to.y) * width_) + to.x;
+  const auto mark = [&](const std::size_t cell) {
+    reachBits_[cell >> 6U] |= uint64_t{1} << (cell & 63U);
+  };
+  const auto marked = [&](const std::size_t cell) {
+    return ((reachBits_[cell >> 6U] >> (cell & 63U)) & 1U) != 0U;
+  };
+  reachQueue_.clear();
+  reachQueue_.push_back(static_cast<uint32_t>(start));
+  mark(start);
+  bool found = false;
+  for (std::size_t head = 0; head < reachQueue_.size() && !found; ++head) {
+    const uint32_t cell = reachQueue_[head];
+    const uint32_t x = cell % width_;
+    const uint32_t y = cell / width_;
+    for (int dy = -1; dy <= 1 && !found; ++dy) {
+      for (int dx = -1; dx <= 1; ++dx) {
+        if (dx == 0 && dy == 0) {
+          continue;
+        }
+        const auto nx = static_cast<uint32_t>(static_cast<int32_t>(x) + dx);
+        const auto ny = static_cast<uint32_t>(static_cast<int32_t>(y) + dy);
+        if (nx >= width_ || ny >= height_) {
+          continue;
+        }
+        const auto next = (static_cast<std::size_t>(ny) * width_) + nx;
+        if (marked(next) || closed.testCell(nx, ny)) {
+          continue;
+        }
+        if (next == goal) {
+          found = true;
+          break;
+        }
+        mark(next);
+        reachQueue_.push_back(static_cast<uint32_t>(next));
+      }
+    }
+  }
+  // Only the cells the flood reached were marked; they are cleared again.
+  for (const uint32_t cell : reachQueue_) {
+    reachBits_[cell >> 6U] = 0;
+  }
+  return found;
+}
+
 template <bool USE_PENALTY>
 Path DubinsRouter::searchOrthogonal(const RoutingObjective& objective,
                                     const PathPoint& source,
                                     const PathPoint& target,
                                     const bool onlyStraight) {
+  cutOff_ = false;
+  if (reachCheck_ && !reaches(objective.source, objective.target)) {
+    ++reachRefused_;
+    return {};
+  }
   buildTables();
   open_.clear();
   const uint32_t startIndex = stateIndex(objective.source.x, objective.source.y,

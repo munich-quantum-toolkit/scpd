@@ -1326,6 +1326,13 @@ struct FinalParamsT : public ::flatbuffers::NativeTable {
   uint32_t length_point_soft_pairs = 1;
   uint32_t local_ring_neighbours = 0;
   bool capacity_terminal_no_cross = false;
+  uint32_t greedy_repair_trials = 100;
+  uint32_t greedy_repair_workers = 4;
+  uint32_t greedy_trial_rounds = 4;
+  uint32_t greedy_trial_stale_rounds = 1;
+  uint32_t greedy_trial_fail_margin = 1;
+  bool greedy_local_trials = true;
+  bool greedy_reach_check = true;
 };
 
 /// What the Final stage is allowed to do.
@@ -1479,7 +1486,14 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_LENGTH_POINT_PRICE = 268,
     VT_LENGTH_POINT_SOFT_PAIRS = 270,
     VT_LOCAL_RING_NEIGHBOURS = 272,
-    VT_CAPACITY_TERMINAL_NO_CROSS = 274
+    VT_CAPACITY_TERMINAL_NO_CROSS = 274,
+    VT_GREEDY_REPAIR_TRIALS = 276,
+    VT_GREEDY_REPAIR_WORKERS = 278,
+    VT_GREEDY_TRIAL_ROUNDS = 280,
+    VT_GREEDY_TRIAL_STALE_ROUNDS = 282,
+    VT_GREEDY_TRIAL_FAIL_MARGIN = 284,
+    VT_GREEDY_LOCAL_TRIALS = 286,
+    VT_GREEDY_REACH_CHECK = 288
   };
   /// The implementation, by the name it is registered under.
   const ::flatbuffers::String *router() const {
@@ -1873,7 +1887,10 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// waypoint; "bidirectional" grows the suffixes from its last waypoint as
   /// well, one priced step each in turn, and lays the run of a prefix and a
   /// suffix that meet on an option again from the front. The search from the
-  /// front decides the answer either way.
+  /// front decides the answer either way. Both run the capacity check
+  /// (`capacity_check`). "greedy" is the research prototype's greedy local
+  /// search instead, with its blind repair (the `greedy_*` keys): it always
+  /// runs without the capacity check, the coupler box and the coupler snap.
   const ::flatbuffers::String *chain_search() const {
     return GetPointer<const ::flatbuffers::String *>(VT_CHAIN_SEARCH);
   }
@@ -2351,6 +2368,46 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool capacity_terminal_no_cross() const {
     return GetField<uint8_t>(VT_CAPACITY_TERMINAL_NO_CROSS, 0) != 0;
   }
+  /// `chain_search = "greedy"` only — the research prototype's greedy local
+  /// search with its blind repair. How many trials the blind repair may run
+  /// per chip, each a coupler turned to another of its options and what it
+  /// unsettles routed again; zero switches the repair off.
+  uint32_t greedy_repair_trials() const {
+    return GetField<uint32_t>(VT_GREEDY_REPAIR_TRIALS, 100);
+  }
+  /// How many trials of a wave of the blind repair run at once, each in a
+  /// copy of the stage forked off the state the wave tries against; one runs
+  /// them one after the other in the stage itself. The result does not
+  /// depend on it.
+  uint32_t greedy_repair_workers() const {
+    return GetField<uint32_t>(VT_GREEDY_REPAIR_WORKERS, 4);
+  }
+  /// The most rounds a trial of the blind repair routes its wires in, and
+  /// how many rounds without a new best end it early.
+  uint32_t greedy_trial_rounds() const {
+    return GetField<uint32_t>(VT_GREEDY_TRIAL_ROUNDS, 4);
+  }
+  uint32_t greedy_trial_stale_rounds() const {
+    return GetField<uint32_t>(VT_GREEDY_TRIAL_STALE_ROUNDS, 1);
+  }
+  /// A trial of the blind repair gives up once a round leaves more wires
+  /// without a way than the bad wires it is tried against and this many.
+  uint32_t greedy_trial_fail_margin() const {
+    return GetField<uint32_t>(VT_GREEDY_TRIAL_FAIL_MARGIN, 1);
+  }
+  /// Whether a trial of the blind repair draws again only the wires its turn
+  /// unsettles and the bad ones, every other keeping its way (a local
+  /// rip-up and reroute, as the prototype's); off, a trial routes all the
+  /// feedline wires again. The winner of a wave is always routed in full.
+  bool greedy_local_trials() const {
+    return GetField<uint8_t>(VT_GREEDY_LOCAL_TRIALS, 1) != 0;
+  }
+  /// Whether the searches of the blind repair first flood the open cells of
+  /// their corridor and skip a search whose target the flood does not reach.
+  /// It changes no result, only how long a failing search takes.
+  bool greedy_reach_check() const {
+    return GetField<uint8_t>(VT_GREEDY_REACH_CHECK, 1) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -2500,6 +2557,13 @@ struct FinalParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_LENGTH_POINT_SOFT_PAIRS, 4) &&
            VerifyField<uint32_t>(verifier, VT_LOCAL_RING_NEIGHBOURS, 4) &&
            VerifyField<uint8_t>(verifier, VT_CAPACITY_TERMINAL_NO_CROSS, 1) &&
+           VerifyField<uint32_t>(verifier, VT_GREEDY_REPAIR_TRIALS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GREEDY_REPAIR_WORKERS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GREEDY_TRIAL_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GREEDY_TRIAL_STALE_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_GREEDY_TRIAL_FAIL_MARGIN, 4) &&
+           VerifyField<uint8_t>(verifier, VT_GREEDY_LOCAL_TRIALS, 1) &&
+           VerifyField<uint8_t>(verifier, VT_GREEDY_REACH_CHECK, 1) &&
            verifier.EndTable();
   }
   FinalParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -2919,6 +2983,27 @@ struct FinalParamsBuilder {
   void add_capacity_terminal_no_cross(bool capacity_terminal_no_cross) {
     fbb_.AddElement<uint8_t>(FinalParams::VT_CAPACITY_TERMINAL_NO_CROSS, static_cast<uint8_t>(capacity_terminal_no_cross), 0);
   }
+  void add_greedy_repair_trials(uint32_t greedy_repair_trials) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_REPAIR_TRIALS, greedy_repair_trials, 100);
+  }
+  void add_greedy_repair_workers(uint32_t greedy_repair_workers) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_REPAIR_WORKERS, greedy_repair_workers, 4);
+  }
+  void add_greedy_trial_rounds(uint32_t greedy_trial_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_TRIAL_ROUNDS, greedy_trial_rounds, 4);
+  }
+  void add_greedy_trial_stale_rounds(uint32_t greedy_trial_stale_rounds) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_TRIAL_STALE_ROUNDS, greedy_trial_stale_rounds, 1);
+  }
+  void add_greedy_trial_fail_margin(uint32_t greedy_trial_fail_margin) {
+    fbb_.AddElement<uint32_t>(FinalParams::VT_GREEDY_TRIAL_FAIL_MARGIN, greedy_trial_fail_margin, 1);
+  }
+  void add_greedy_local_trials(bool greedy_local_trials) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_GREEDY_LOCAL_TRIALS, static_cast<uint8_t>(greedy_local_trials), 1);
+  }
+  void add_greedy_reach_check(bool greedy_reach_check) {
+    fbb_.AddElement<uint8_t>(FinalParams::VT_GREEDY_REACH_CHECK, static_cast<uint8_t>(greedy_reach_check), 1);
+  }
   explicit FinalParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -3067,7 +3152,14 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
     uint32_t length_point_price = 0,
     uint32_t length_point_soft_pairs = 1,
     uint32_t local_ring_neighbours = 0,
-    bool capacity_terminal_no_cross = false) {
+    bool capacity_terminal_no_cross = false,
+    uint32_t greedy_repair_trials = 100,
+    uint32_t greedy_repair_workers = 4,
+    uint32_t greedy_trial_rounds = 4,
+    uint32_t greedy_trial_stale_rounds = 1,
+    uint32_t greedy_trial_fail_margin = 1,
+    bool greedy_local_trials = true,
+    bool greedy_reach_check = true) {
   FinalParamsBuilder builder_(_fbb);
   builder_.add_launcher_escape_cells(launcher_escape_cells);
   builder_.add_capacity_escape_cells(capacity_escape_cells);
@@ -3098,6 +3190,11 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_static_proximity_penalty_norm(static_proximity_penalty_norm);
   builder_.add_wire_proximity_penalty_norm(wire_proximity_penalty_norm);
   builder_.add_bend_penalty_norm(bend_penalty_norm);
+  builder_.add_greedy_trial_fail_margin(greedy_trial_fail_margin);
+  builder_.add_greedy_trial_stale_rounds(greedy_trial_stale_rounds);
+  builder_.add_greedy_trial_rounds(greedy_trial_rounds);
+  builder_.add_greedy_repair_workers(greedy_repair_workers);
+  builder_.add_greedy_repair_trials(greedy_repair_trials);
   builder_.add_local_ring_neighbours(local_ring_neighbours);
   builder_.add_length_point_soft_pairs(length_point_soft_pairs);
   builder_.add_length_point_price(length_point_price);
@@ -3170,6 +3267,8 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(
   builder_.add_inner_corridor_spacings(inner_corridor_spacings);
   builder_.add_corridor_spacings(corridor_spacings);
   builder_.add_router(router);
+  builder_.add_greedy_reach_check(greedy_reach_check);
+  builder_.add_greedy_local_trials(greedy_local_trials);
   builder_.add_capacity_terminal_no_cross(capacity_terminal_no_cross);
   builder_.add_released_arrival_box(released_arrival_box);
   builder_.add_capacity_prescribe_open_edges(capacity_prescribe_open_edges);
@@ -3350,7 +3449,14 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
     uint32_t length_point_price = 0,
     uint32_t length_point_soft_pairs = 1,
     uint32_t local_ring_neighbours = 0,
-    bool capacity_terminal_no_cross = false) {
+    bool capacity_terminal_no_cross = false,
+    uint32_t greedy_repair_trials = 100,
+    uint32_t greedy_repair_workers = 4,
+    uint32_t greedy_trial_rounds = 4,
+    uint32_t greedy_trial_stale_rounds = 1,
+    uint32_t greedy_trial_fail_margin = 1,
+    bool greedy_local_trials = true,
+    bool greedy_reach_check = true) {
   auto router__ = router ? _fbb.CreateString(router) : 0;
   auto coupler_offsets__ = coupler_offsets ? _fbb.CreateString(coupler_offsets) : 0;
   auto jog_options__ = jog_options ? _fbb.CreateString(jog_options) : 0;
@@ -3498,7 +3604,14 @@ inline ::flatbuffers::Offset<FinalParams> CreateFinalParamsDirect(
       length_point_price,
       length_point_soft_pairs,
       local_ring_neighbours,
-      capacity_terminal_no_cross);
+      capacity_terminal_no_cross,
+      greedy_repair_trials,
+      greedy_repair_workers,
+      greedy_trial_rounds,
+      greedy_trial_stale_rounds,
+      greedy_trial_fail_margin,
+      greedy_local_trials,
+      greedy_reach_check);
 }
 
 ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4843,7 +4956,14 @@ inline bool operator==(const FinalParamsT &lhs, const FinalParamsT &rhs) {
       (lhs.length_point_price == rhs.length_point_price) &&
       (lhs.length_point_soft_pairs == rhs.length_point_soft_pairs) &&
       (lhs.local_ring_neighbours == rhs.local_ring_neighbours) &&
-      (lhs.capacity_terminal_no_cross == rhs.capacity_terminal_no_cross);
+      (lhs.capacity_terminal_no_cross == rhs.capacity_terminal_no_cross) &&
+      (lhs.greedy_repair_trials == rhs.greedy_repair_trials) &&
+      (lhs.greedy_repair_workers == rhs.greedy_repair_workers) &&
+      (lhs.greedy_trial_rounds == rhs.greedy_trial_rounds) &&
+      (lhs.greedy_trial_stale_rounds == rhs.greedy_trial_stale_rounds) &&
+      (lhs.greedy_trial_fail_margin == rhs.greedy_trial_fail_margin) &&
+      (lhs.greedy_local_trials == rhs.greedy_local_trials) &&
+      (lhs.greedy_reach_check == rhs.greedy_reach_check);
 }
 
 inline bool operator!=(const FinalParamsT &lhs, const FinalParamsT &rhs) {
@@ -4996,6 +5116,13 @@ inline void FinalParams::UnPackTo(FinalParamsT *_o, const ::flatbuffers::resolve
   { auto _e = length_point_soft_pairs(); _o->length_point_soft_pairs = _e; }
   { auto _e = local_ring_neighbours(); _o->local_ring_neighbours = _e; }
   { auto _e = capacity_terminal_no_cross(); _o->capacity_terminal_no_cross = _e; }
+  { auto _e = greedy_repair_trials(); _o->greedy_repair_trials = _e; }
+  { auto _e = greedy_repair_workers(); _o->greedy_repair_workers = _e; }
+  { auto _e = greedy_trial_rounds(); _o->greedy_trial_rounds = _e; }
+  { auto _e = greedy_trial_stale_rounds(); _o->greedy_trial_stale_rounds = _e; }
+  { auto _e = greedy_trial_fail_margin(); _o->greedy_trial_fail_margin = _e; }
+  { auto _e = greedy_local_trials(); _o->greedy_local_trials = _e; }
+  { auto _e = greedy_reach_check(); _o->greedy_reach_check = _e; }
 }
 
 inline ::flatbuffers::Offset<FinalParams> CreateFinalParams(::flatbuffers::FlatBufferBuilder &_fbb, const FinalParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -5142,6 +5269,13 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
   auto _length_point_soft_pairs = _o->length_point_soft_pairs;
   auto _local_ring_neighbours = _o->local_ring_neighbours;
   auto _capacity_terminal_no_cross = _o->capacity_terminal_no_cross;
+  auto _greedy_repair_trials = _o->greedy_repair_trials;
+  auto _greedy_repair_workers = _o->greedy_repair_workers;
+  auto _greedy_trial_rounds = _o->greedy_trial_rounds;
+  auto _greedy_trial_stale_rounds = _o->greedy_trial_stale_rounds;
+  auto _greedy_trial_fail_margin = _o->greedy_trial_fail_margin;
+  auto _greedy_local_trials = _o->greedy_local_trials;
+  auto _greedy_reach_check = _o->greedy_reach_check;
   return mqt::scpd::flatbuffers::config::CreateFinalParams(
       _fbb,
       _router,
@@ -5279,7 +5413,14 @@ inline ::flatbuffers::Offset<FinalParams> FinalParams::Pack(::flatbuffers::FlatB
       _length_point_price,
       _length_point_soft_pairs,
       _local_ring_neighbours,
-      _capacity_terminal_no_cross);
+      _capacity_terminal_no_cross,
+      _greedy_repair_trials,
+      _greedy_repair_workers,
+      _greedy_trial_rounds,
+      _greedy_trial_stale_rounds,
+      _greedy_trial_fail_margin,
+      _greedy_local_trials,
+      _greedy_reach_check);
 }
 
 
@@ -5947,6 +6088,13 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_BOOL, 0, -1 },
     { ::flatbuffers::ET_BOOL, 0, -1 }
   };
   static const char * const names[] = {
@@ -6085,10 +6233,17 @@ inline const ::flatbuffers::TypeTable *FinalParamsTypeTable() {
     "length_point_price",
     "length_point_soft_pairs",
     "local_ring_neighbours",
-    "capacity_terminal_no_cross"
+    "capacity_terminal_no_cross",
+    "greedy_repair_trials",
+    "greedy_repair_workers",
+    "greedy_trial_rounds",
+    "greedy_trial_stale_rounds",
+    "greedy_trial_fail_margin",
+    "greedy_local_trials",
+    "greedy_reach_check"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 136, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 143, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }

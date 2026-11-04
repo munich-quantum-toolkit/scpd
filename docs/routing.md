@@ -146,6 +146,51 @@ cross.
 
 ## The Coupler Insertion
 
+### Two insertions: A\* or greedy
+
+The coupler insertion places the couplers in one of two ways, chosen by
+`chain_search` in `[stages.final]`:
+
+| `chain_search`              | Insertion                                                              | Capacity graph check            | Repair after the feedline routing                     |
+| --------------------------- | ---------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------- |
+| `"astar"` (the default, `""`) | The prefix A\* chain search ([below](#the-chains-and-the-chain-search)) | `capacity_check`, on by default | The targeted repair, `repair_trials` (off by default) |
+| `"bidirectional"`           | The same search, grown from both ends of a chain                       | `capacity_check`, on by default | The targeted repair, `repair_trials`                  |
+| `"greedy"`                  | The research prototype's greedy local search ([below](#the-greedy-local-search)) | **always off**                  | The blind repair, `greedy_repair_trials` (100)        |
+
+The A\* insertion is the default; nothing needs to be set for it:
+
+```toml
+[stages.final]
+# chain_search = "astar"   # the default
+capacity_check = true      # the default
+```
+
+The greedy insertion is one key:
+
+```toml
+[stages.final]
+chain_search = "greedy"
+# the blind repair, all optional (the defaults shown):
+greedy_repair_trials = 100      # 0 turns the repair off
+greedy_repair_workers = 4       # trials of a wave run at once; 1 runs them one by one
+greedy_trial_rounds = 4
+greedy_trial_stale_rounds = 1
+greedy_trial_fail_margin = 1
+greedy_local_trials = true
+greedy_reach_check = true
+```
+
+Under `chain_search = "greedy"` the stage drops three things, whatever their
+keys say: the capacity check (`capacity_check`, `capacity_check_chains`, the
+whole-chip check and the global SAT search), the coupler box (a coupler stands
+anywhere its other rules allow; the routing before the insertion keeps the box)
+and the coupler snap (`coupler_snap_pitch` and the keys it brings). Every other
+rule that refuses an option holds as under A\*, and `router_grid_snap` stays as
+set. The keys `capacity_*`, `chain_rule_*`, `global_sat_*`, `repair_trials` and
+`research_*` then do nothing; the `greedy_*` keys do nothing under A\*. The run
+line shows `capacity check off`, and the log says `no coupler box (chain_search
+= "greedy")` and `greedy local search over N chains`.
+
 ### A coupler and its options
 
 A coupler is a pad of `coupler_length` by `coupler_height` layout units and a
@@ -429,6 +474,29 @@ says UNSAT, the global SAT search looks for another set of options.
 
 The first SAT combination stays. Without one, the chip goes back to the commit.
 
+### The greedy local search
+
+With `chain_search = "greedy"` each chain is settled by the research
+prototype's greedy local search instead of the prefix search, with no capacity
+check:
+
+1. In a pass, every coupler of the chain is weighed on every option it offers,
+   the jogs and the centred ones among them, with its neighbours as they stand.
+   Its **local cost** routes its two edges one after the other, the second
+   against the first at the wire clearance; when that order leaves an edge
+   without a way, the other order is tried. The price is 10000 an eighth turn
+   of each edge, plus the cells of the edges, plus their difference, plus
+   20000 for an option with a second dogleg. An option whose pad meets a
+   neighbour's is invalid.
+2. The coupler takes its cheapest valid option, a tie included, so that the
+   search walks sideways off a plateau. The ways of its edges are what the
+   chain holds for them from then on.
+3. A pass that moves nothing ends the search; there are at most five.
+
+Only edges of the same chain stand in a search; the other chains' edges do not.
+When single moves leave an edge without a way, a joint move of two neighbouring
+couplers is tried. A merged pair (`coupler_merge`) moves as one unit.
+
 ## The Feedline Routing
 
 ### The crossing rule
@@ -547,6 +615,38 @@ The budget is `repair_trials` legality tests per chip; zero, the default, turns
 the repair off. After an accepted run the triage is built again on the new
 state.
 
+### The blind repair
+
+With `chain_search = "greedy"` the targeted repair gives way to the research
+prototype's blind repair. While wires fail, it turns couplers near them to
+other options and keeps the turn that helps most.
+
+1. **The candidates.** The couplers of the bad resonators and edges, those of
+   the nearest resonators on either side of a failing plain wire in the ring,
+   the couplers that blame the fails, and those of the edges whose channel holds
+   a bad wire, each with its chain neighbours.
+2. **The wave.** Each candidate offers its two cheapest untried options, by the
+   price the greedy last gave them. Every trial of the wave starts from the
+   same state: it turns the coupler (a merged pair as one) and draws again what
+   the turn unsettles. With `greedy_local_trials` that is a local rip-up and
+   reroute: only the wires the turn makes illegal, the bad wires and the ring
+   neighbours up to the next resonator are drawn, every other wire keeps its
+   way. A trial runs at most `greedy_trial_rounds` rounds, ends after
+   `greedy_trial_stale_rounds` rounds without a new best and gives up once a
+   round leaves more wires without a way than the bad wires plus
+   `greedy_trial_fail_margin`. `greedy_repair_workers` trials run at once, each
+   in a forked copy of the stage; their number does not change the result.
+3. **The accept.** The best trial of the wave, by bad wires and then by all
+   fails, is turned for good and routed with the feedline routing's full pass.
+   When that does not beat the state before, it is put back.
+4. **Widening.** Once the candidates are spent, the next ring of chain
+   neighbours joins, twice; then the options with a second dogleg.
+
+The budget is `greedy_repair_trials` trials per chip; zero turns the repair off.
+With `greedy_reach_check` a search first floods the open cells of its corridor
+and is skipped when the flood does not reach its target, which changes no
+result but makes the many failing searches of the trials cheap.
+
 ## Reading a Run
 
 The Final stage ends every pass on one line and the stage on one over every
@@ -654,6 +754,7 @@ The couplers and the chain search:
 | `edge_bend_factor`           | `1.0`   | The bend price of a feedline edge, as a factor on `bend_penalty_norm`                                                                                  |
 | `chain_length_weight`        | `0`     | The price of one cell of an edge's length in the chain search; `0` prices length not at all                                                            |
 | `repair_trials`              | `0`     | How many legality tests the targeted repair may run per chip; `0` turns the repair off                                                                 |
+| `chain_search`               | `"astar"` | The coupler insertion: `astar` or `bidirectional` (prefix search with the capacity check), `greedy` (the prototype's greedy local search, never with the capacity check, the coupler box or the coupler snap) |
 | `research_ring_members`      | `2`     | How many ring members beside each window wire the repair draws again                                                                                   |
 | `research_rounds`            | `4`     | The rounds of the repair's local pass                                                                                                                  |
 
@@ -685,6 +786,18 @@ The capacity check:
 | `global_sat_runs`            | `8`      | The runs of options the global SAT search collects per segment                                                                                                                       |
 | `global_sat_states`          | `8`      | The locally SAT states it keeps per chain outside the focus                                                                                                                          |
 | `global_sat_tries`           | `200`    | The whole-chip combinations it tries                                                                                                                                                 |
+
+The greedy insertion and its blind repair (`chain_search = "greedy"` only):
+
+| Key                         | Default | Meaning                                                                                                              |
+| --------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `greedy_repair_trials`      | `100`   | How many trials the blind repair may run per chip; `0` turns the repair off                                          |
+| `greedy_repair_workers`     | `4`     | How many trials of a wave run at once, each in a forked copy of the stage; `1` runs them one by one in the stage    |
+| `greedy_trial_rounds`       | `4`     | The most rounds a trial routes its wires in                                                                          |
+| `greedy_trial_stale_rounds` | `1`     | How many rounds without a new best end a trial                                                                       |
+| `greedy_trial_fail_margin`  | `1`     | A trial gives up once a round leaves more wires without a way than the bad wires and this many                       |
+| `greedy_local_trials`       | `true`  | Whether a trial draws only what its turn unsettles and the bad wires (local rip-up and reroute); off, all feedline wires |
+| `greedy_reach_check`        | `true`  | Whether a repair search floods its corridor first and skips a target the flood does not reach; changes no result     |
 
 ## Debug Pages
 
