@@ -53,6 +53,8 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "inner": (27, 0, "plan.inner-circuit"),
     "assignments": (28, 0, "plan.assignment"),
     "ring": (29, 0, "plan.ring"),
+    "corridors": (30, 0, "plan.corridor"),
+    "slots": (31, 0, "plan.slot"),
     "feedlines": (32, 0, "plan.feedline"),
     "blocked": (33, 0, "plan.blocked"),
     "budgets": (34, 0, "plan.budget"),
@@ -62,7 +64,7 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
 #: one is visible beside the artwork and carries no design meaning.
 PLANNING_LINE_WIDTH = 20.0
 
-#: The half width of a launcher marker, in layout units.
+#: The half width of a launcher marker, in layout units; a slot marker is a third of it.
 PLANNING_MARKER_RADIUS = 60.0
 
 #: The file suffixes KLayout writes, with the format each selects.
@@ -147,9 +149,9 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
     """Write the shapes of one planning stage onto their layers.
 
     A partition, a keepout and a blocked cell are polygons, because they are areas of the grid. The
-    wire budget of a bottleneck is a text at the middle of its line, on a layer of its own.
-    Everything else is a path or a small square, because it is a line across or along the free
-    space, or a point on it.
+    wire budget of a bottleneck is a text at the middle of its line, on a layer of its own. A
+    corridor and the approach to its target port are paths on the same layer. Everything else is a
+    path or a small square, because it is a line across or along the free space, or a point on it.
 
     Returns:
         How many shapes were written.
@@ -205,6 +207,13 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
                 written += 1
     if len(planning.ring) >= 2:
         top.shapes(layer("ring")).insert(path([*planning.ring, planning.ring[0]]))
+        written += 1
+    for route in [*planning.corridors, *planning.stubs]:
+        if len(route) >= 2:
+            top.shapes(layer("corridors")).insert(path(route))
+            written += 1
+    for x, y in planning.slots:
+        top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))
         written += 1
     for feedline in planning.feedlines:
         if len(feedline.points) >= 2:

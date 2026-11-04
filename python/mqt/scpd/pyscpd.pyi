@@ -43,6 +43,17 @@ def assign(
 ) -> bytes:
     """Run the Assignment stage on a classified chip, its 01-capacity.fb and its 02-global.fb. The reporter receives what the stage reports, as for plan_capacity. Returns 03-assign.fb as bytes."""
 
+def route_corridor(
+    chip: bytes,
+    capacity: bytes,
+    assignment: bytes,
+    config: bytes,
+    producer: str,
+    reporter: object | None = None,
+    verbosity: int = 0,
+) -> bytes:
+    """Run the Corridor stage on a classified chip, its 01-capacity.fb and its 03-assign.fb. The reporter receives what the stage reports, as for plan_capacity. Returns 04-corridor.fb as bytes."""
+
 def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, as (stage, names) pairs in pipeline order."""
 

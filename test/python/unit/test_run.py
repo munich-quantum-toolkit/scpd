@@ -79,7 +79,7 @@ def run_through(directory: RunDirectory, steps: list[str]) -> None:
         (None, list(STEPS)),
         ("", list(STEPS)),
         ("capacity", ["capacity"]),
-        ("global", ["capacity", "global"]),
+        ("assign", ["capacity", "global", "assign"]),
     ],
     ids=["none", "empty", "first", "middle"],
 )
@@ -90,7 +90,7 @@ def test_a_run_takes_the_steps_up_to_its_stop(stop_after: str | None, expected: 
 
 def test_a_stop_that_is_no_step_is_refused() -> None:
     """A step name the release does not know names the ones it does."""
-    with pytest.raises(RunError, match="capacity, global, assign"):
+    with pytest.raises(RunError, match="capacity, global, assign, corridor"):
         steps_until("outer")
 
 
@@ -202,7 +202,7 @@ def test_a_step_without_its_input_leaves_the_directory_as_it_was(tmp_path: Path)
     """A refused step deletes no artifact of a later step and no record."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
-    run_through(directory, ["capacity", "global", "assign"])
+    run_through(directory, ["capacity", "global", "assign", "corridor"])
     directory.artifact("capacity").unlink()
     before = artifacts_of(directory)
 
@@ -220,8 +220,8 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path: Path) -> None:
 
     resumed = RunDirectory(tmp_path / "resumed")
     resumed.prepare(CONFIG)
-    run_through(resumed, ["capacity"])
-    for step in ("global", "assign"):
+    run_through(resumed, ["capacity", "global"])
+    for step in ("assign", "corridor"):
         run_through(RunDirectory(tmp_path / "resumed"), [step])
 
     for stage, name in STAGE_FILES.items():
@@ -241,7 +241,7 @@ def artifacts_of(directory: RunDirectory) -> dict[str, bytes]:
     Returns:
         The bytes of every file a step wrote.
     """
-    return {path.name: path.read_bytes() for path in directory.path.glob("0[1-3]-*")}
+    return {path.name: path.read_bytes() for path in directory.path.glob("0[1-4]-*")}
 
 
 @pytest.mark.parametrize(
@@ -287,7 +287,7 @@ def test_a_step_refuses_an_earlier_artifact_made_from_other_sections(
     edit_config(directory, old, new)
 
     with pytest.raises(RunError, match=message):
-        run_through(directory, ["assign"])
+        run_through(directory, ["corridor"])
 
     assert artifacts_of(directory) == before
 
@@ -305,9 +305,9 @@ def test_a_step_without_a_core_call_deletes_nothing(tmp_path: Path, monkeypatch:
     directory.prepare(CONFIG)
     run_through(directory, list(STEPS))
     before = artifacts_of(directory)
-    monkeypatch.setitem(STAGE_FILES, "later", "04-later.fb")
-    monkeypatch.setitem(STEP_INPUTS, "later", STEP_INPUTS["assign"])
-    monkeypatch.setitem(ARTIFACT_INPUTS, "later", ARTIFACT_INPUTS["assign"])
+    monkeypatch.setitem(STAGE_FILES, "later", "05-later.fb")
+    monkeypatch.setitem(STEP_INPUTS, "later", STEP_INPUTS["corridor"])
+    monkeypatch.setitem(ARTIFACT_INPUTS, "later", ARTIFACT_INPUTS["corridor"])
 
     with pytest.raises(RunError, match="no core call runs the later step"):
         run_through(directory, ["later"])
@@ -333,11 +333,11 @@ def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
     run_through(directory, list(STEPS))
-    edit_config(directory, "[stages.assignment]", '[stages.assignment]\nassigner = "ordered-milp"')
+    edit_config(directory, "[stages.assignment]", "[stages.corridor]\nrounds = 2\n\n[stages.assignment]")
 
-    run_through(directory, ["assign"])
+    run_through(directory, ["corridor"])
 
-    assert directory.artifact("assign").is_file()
+    assert directory.artifact("corridor").is_file()
 
 
 def test_a_step_resumes_under_another_solver_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

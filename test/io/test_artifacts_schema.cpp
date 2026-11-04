@@ -92,7 +92,9 @@ TEST(ArtifactSchema, EveryStageOutputIsAnArtifact) {
                "DetailRouting");
   EXPECT_STREQ(EnumNameStageOutput(StageOutput::FinalRouting), "FinalRouting");
   EXPECT_STREQ(EnumNameStageOutput(StageOutput::Geometry), "Geometry");
-  EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 6U);
+  EXPECT_STREQ(EnumNameStageOutput(StageOutput::CorridorRouting),
+               "CorridorRouting");
+  EXPECT_EQ(static_cast<std::uint8_t>(StageOutput::MAX), 7U);
 }
 
 /// A capacity plan that carries nothing, but carries every field the schema
@@ -122,6 +124,71 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
 }
 
+TEST(ArtifactSchema, CorridorRoutingRoundTrips) {
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4, 7, 9};
+  corridor->crossings.emplace_back(10.5, 20.25);
+  corridor->crossings.emplace_back(30.75, 40.0);
+  corridor->source = std::make_unique<Point>(0.5, 1.5);
+  corridor->target = std::make_unique<Point>(50.0, 60.0);
+  routing.corridors.push_back(std::move(corridor));
+  // A connection that found no way carries no partitions, which is how a
+  // reader counts the failures.
+  routing.corridors.push_back(std::make_unique<CorridorT>());
+  auto slots = std::make_unique<BorderSlotsT>();
+  slots->border = 2;
+  slots->positions.emplace_back(10.5, 20.25);
+  routing.slots.push_back(std::move(slots));
+
+  const ArtifactT back = readArtifact(writeArtifact(wrap(std::move(routing))));
+
+  ASSERT_EQ(back.output.type, StageOutput::CorridorRouting);
+  const auto& read = *back.output.AsCorridorRouting();
+  ASSERT_EQ(read.corridors.size(), 2U);
+  EXPECT_EQ(read.corridors[0]->partitions,
+            (std::vector<std::uint32_t>{4, 7, 9}));
+  EXPECT_EQ(read.corridors[0]->crossings.size(), 2U);
+  EXPECT_EQ(read.corridors[0]->source->x(), 0.5);
+  EXPECT_TRUE(read.corridors[1]->partitions.empty());
+  ASSERT_EQ(read.slots.size(), 1U);
+  EXPECT_EQ(read.slots[0]->border, 2U);
+}
+
+TEST(ArtifactSchema, RefusesACorridorThatNamesTheWrongNumberOfPartitions) {
+  // A crossing carries a wire from one partition into the next, so a corridor
+  // names one more partition than it has crossings.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4, 7};
+  corridor->source = std::make_unique<Point>(0.0, 0.0);
+  corridor->target = std::make_unique<Point>(1.0, 0.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  const auto problems = validate(wrap(std::move(routing)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "corridor 0 names 2 partitions and 0 crossings");
+}
+
+TEST(ArtifactSchema, RefusesARoutedCorridorWithoutItsEnds) {
+  // A way runs from the feed to the target, so a corridor with partitions
+  // has both ends.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4};
+  routing.corridors.push_back(std::move(corridor));
+  corridor = std::make_unique<CorridorT>();
+  corridor->partitions = {4};
+  corridor->source = std::make_unique<Point>(0.0, 0.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  EXPECT_EQ(validate(wrap(std::move(routing))),
+            (std::vector<std::string>{"corridor 0 has a way but no source",
+                                      "corridor 0 has a way but no target",
+                                      "corridor 1 has a way but no target"}));
+}
+
 /// A connection of the assignment to a resonator, with both of its roles.
 std::unique_ptr<ConnectionT> resonatorConnection() {
   auto connection = std::make_unique<ConnectionT>();
@@ -130,9 +197,23 @@ std::unique_ptr<ConnectionT> resonatorConnection() {
   return connection;
 }
 
+TEST(ArtifactSchema, RefusesCrossingsOfACorridorWithoutPartitions) {
+  // A corridor without partitions is a connection without a way, so it
+  // crosses no border either.
+  CorridorRoutingT routing;
+  auto corridor = std::make_unique<CorridorT>();
+  corridor->crossings.emplace_back(1.0, 2.0);
+  routing.corridors.push_back(std::move(corridor));
+
+  const auto problems = validate(wrap(std::move(routing)));
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_EQ(problems[0], "corridor 0 names 0 partitions and 1 crossing");
+}
+
 TEST(ArtifactSchema, RefusesAnAssignmentWhoseListsDoNotFollowTheRing) {
   // The connections, the launchers and the feeds hold one entry per ring
-  // node, and a reader finds the entry of a node by the index of the node.
+  // node, and the Corridor stage reads them by the index of the node.
   AssignmentT assignment;
   assignment.ring = {PortRef(1), PortRef(2)};
   assignment.connections.push_back(resonatorConnection());
@@ -384,6 +465,13 @@ TEST(ArtifactSchema, RefusesAMissingEntryOfEveryOutput) {
   global.lattices.push_back(nullptr);
   EXPECT_EQ(validate(wrap(std::move(global))),
             (std::vector<std::string>{"lattice 0: missing"}));
+
+  CorridorRoutingT corridors;
+  corridors.slots.push_back(nullptr);
+  corridors.corridors.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(corridors))),
+            (std::vector<std::string>{"border slots 0: missing",
+                                      "corridor 0: missing"}));
 
   CapacityPlanT unwritable = emptyPlan();
   unwritable.bottlenecks.push_back(nullptr);
@@ -642,7 +730,7 @@ TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
     static_cast<void>(readArtifact(bytes));
     FAIL() << "the read accepted an unknown output type";
   } catch (const std::invalid_argument& error) {
-    EXPECT_STREQ(error.what(), "artifact is not valid: output type 7 is "
+    EXPECT_STREQ(error.what(), "artifact is not valid: output type 8 is "
                                "unknown to this version of mqt-scpd");
   }
 }

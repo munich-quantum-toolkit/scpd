@@ -64,6 +64,18 @@ struct GlobalRouting;
 struct GlobalRoutingBuilder;
 struct GlobalRoutingT;
 
+struct BorderSlots;
+struct BorderSlotsBuilder;
+struct BorderSlotsT;
+
+struct Corridor;
+struct CorridorBuilder;
+struct CorridorT;
+
+struct CorridorRouting;
+struct CorridorRoutingBuilder;
+struct CorridorRoutingT;
+
 struct DetailRouting;
 struct DetailRoutingBuilder;
 struct DetailRoutingT;
@@ -106,6 +118,12 @@ bool operator==(const LatticeT &lhs, const LatticeT &rhs);
 bool operator!=(const LatticeT &lhs, const LatticeT &rhs);
 bool operator==(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
 bool operator!=(const GlobalRoutingT &lhs, const GlobalRoutingT &rhs);
+bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs);
+bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs);
+bool operator==(const CorridorT &lhs, const CorridorT &rhs);
+bool operator!=(const CorridorT &lhs, const CorridorT &rhs);
+bool operator==(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs);
+bool operator!=(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs);
 bool operator==(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator!=(const DetailRoutingT &lhs, const DetailRoutingT &rhs);
 bool operator==(const FinalRoutingT &lhs, const FinalRoutingT &rhs);
@@ -138,6 +156,12 @@ inline const ::flatbuffers::TypeTable *FeedlineChainTypeTable();
 inline const ::flatbuffers::TypeTable *LatticeTypeTable();
 
 inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable();
+
+inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorRoutingTypeTable();
 
 inline const ::flatbuffers::TypeTable *DetailRoutingTypeTable();
 
@@ -198,11 +222,12 @@ enum class StageOutput : uint8_t {
   DetailRouting = 4,
   FinalRouting = 5,
   Geometry = 6,
+  CorridorRouting = 7,
   MIN = NONE,
-  MAX = Geometry
+  MAX = CorridorRouting
 };
 
-inline const StageOutput (&EnumValuesStageOutput())[7] {
+inline const StageOutput (&EnumValuesStageOutput())[8] {
   static const StageOutput values[] = {
     StageOutput::NONE,
     StageOutput::CapacityPlan,
@@ -210,13 +235,14 @@ inline const StageOutput (&EnumValuesStageOutput())[7] {
     StageOutput::GlobalRouting,
     StageOutput::DetailRouting,
     StageOutput::FinalRouting,
-    StageOutput::Geometry
+    StageOutput::Geometry,
+    StageOutput::CorridorRouting
   };
   return values;
 }
 
 inline const char * const *EnumNamesStageOutput() {
-  static const char * const names[8] = {
+  static const char * const names[9] = {
     "NONE",
     "CapacityPlan",
     "Assignment",
@@ -224,13 +250,14 @@ inline const char * const *EnumNamesStageOutput() {
     "DetailRouting",
     "FinalRouting",
     "Geometry",
+    "CorridorRouting",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameStageOutput(StageOutput e) {
-  if (::flatbuffers::IsOutRange(e, StageOutput::NONE, StageOutput::Geometry)) return "";
+  if (::flatbuffers::IsOutRange(e, StageOutput::NONE, StageOutput::CorridorRouting)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesStageOutput()[index];
 }
@@ -263,6 +290,10 @@ template<> struct StageOutputTraits<mqt::scpd::flatbuffers::artifacts::Geometry>
   static const StageOutput enum_value = StageOutput::Geometry;
 };
 
+template<> struct StageOutputTraits<mqt::scpd::flatbuffers::artifacts::CorridorRouting> {
+  static const StageOutput enum_value = StageOutput::CorridorRouting;
+};
+
 template<typename T> struct StageOutputUnionTraits {
   static const StageOutput enum_value = StageOutput::NONE;
 };
@@ -289,6 +320,10 @@ template<> struct StageOutputUnionTraits<mqt::scpd::flatbuffers::artifacts::Fina
 
 template<> struct StageOutputUnionTraits<mqt::scpd::flatbuffers::artifacts::GeometryT> {
   static const StageOutput enum_value = StageOutput::Geometry;
+};
+
+template<> struct StageOutputUnionTraits<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT> {
+  static const StageOutput enum_value = StageOutput::CorridorRouting;
 };
 
 struct StageOutputUnion {
@@ -369,6 +404,14 @@ struct StageOutputUnion {
     return type == StageOutput::Geometry ?
       reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(value) : nullptr;
   }
+  mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *AsCorridorRouting() {
+    return type == StageOutput::CorridorRouting ?
+      reinterpret_cast<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value) : nullptr;
+  }
+  const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *AsCorridorRouting() const {
+    return type == StageOutput::CorridorRouting ?
+      reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value) : nullptr;
+  }
 };
 
 
@@ -401,6 +444,10 @@ inline bool operator==(const StageOutputUnion &lhs, const StageOutputUnion &rhs)
     case StageOutput::Geometry: {
       return *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(lhs.value)) ==
              *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(rhs.value));
+    }
+    case StageOutput::CorridorRouting: {
+      return *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(lhs.value)) ==
+             *(reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(rhs.value));
     }
     default: {
       return false;
@@ -1814,6 +1861,341 @@ inline ::flatbuffers::Offset<GlobalRouting> CreateGlobalRoutingDirect(
 
 ::flatbuffers::Offset<GlobalRouting> CreateGlobalRouting(::flatbuffers::FlatBufferBuilder &_fbb, const GlobalRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct BorderSlotsT : public ::flatbuffers::NativeTable {
+  typedef BorderSlots TableType;
+  uint32_t border = 0;
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> positions{};
+};
+
+/// The crossing slots of one partition border.
+///
+/// A wire leaves one partition for another at one of these, and no two wires
+/// take the same one. The slots of one border lie at least one crossing pitch
+/// apart, so their count is the most wires that the border can carry, which is
+/// what PartitionBorder.budget reports. The crossings of two wires also lie at
+/// least one crossing pitch apart, so a wire that crosses another border within
+/// one crossing pitch of a slot blocks that slot. The border then carries fewer
+/// wires than its budget.
+struct BorderSlots FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef BorderSlotsT NativeTableType;
+  typedef BorderSlotsBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return BorderSlotsTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_BORDER = 4,
+    VT_POSITIONS = 6
+  };
+  /// The border they belong to, as an index into CapacityPlan.borders.
+  uint32_t border() const {
+    return GetField<uint32_t>(VT_BORDER, 0);
+  }
+  /// The slots in layout units, in the order of the walk that picked them.
+  /// The walk runs from sample to adjacent sample and starts again at another
+  /// end where it runs out, so the order can jump along the border.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *positions() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_POSITIONS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_BORDER, 4) &&
+           VerifyOffsetRequired(verifier, VT_POSITIONS) &&
+           verifier.VerifyVector(positions()) &&
+           verifier.EndTable();
+  }
+  BorderSlotsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(BorderSlotsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<BorderSlots> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct BorderSlotsBuilder {
+  typedef BorderSlots Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_border(uint32_t border) {
+    fbb_.AddElement<uint32_t>(BorderSlots::VT_BORDER, border, 0);
+  }
+  void add_positions(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions) {
+    fbb_.AddOffset(BorderSlots::VT_POSITIONS, positions);
+  }
+  explicit BorderSlotsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<BorderSlots> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<BorderSlots>(end);
+    fbb_.Required(o, BorderSlots::VT_POSITIONS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t border = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> positions = 0) {
+  BorderSlotsBuilder builder_(_fbb);
+  builder_.add_positions(positions);
+  builder_.add_border(border);
+  return builder_.Finish();
+}
+
+struct BorderSlots::Traits {
+  using type = BorderSlots;
+  static auto constexpr Create = CreateBorderSlots;
+};
+
+inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlotsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t border = 0,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *positions = nullptr) {
+  auto positions__ = positions ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*positions) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
+      _fbb,
+      border,
+      positions__);
+}
+
+::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CorridorT : public ::flatbuffers::NativeTable {
+  typedef Corridor TableType;
+  std::vector<uint32_t> partitions{};
+  std::vector<mqt::scpd::flatbuffers::geometry::Point> crossings{};
+  std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point> source{};
+  std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point> target{};
+  CorridorT() = default;
+  CorridorT(const CorridorT &o);
+  CorridorT(CorridorT&&) FLATBUFFERS_NOEXCEPT = default;
+  CorridorT &operator=(CorridorT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// The coarse route of one connection: which partitions it passes through,
+/// and where it crosses from each into the next.
+struct Corridor FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CorridorT NativeTableType;
+  typedef CorridorBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_PARTITIONS = 4,
+    VT_CROSSINGS = 6,
+    VT_SOURCE = 8,
+    VT_TARGET = 10
+  };
+  /// The labels of the partitions, from the one the wire is fed in to the
+  /// one its target sits in. These are Partition.label values, not indices
+  /// into CapacityPlan.partitions.
+  const ::flatbuffers::Vector<uint32_t> *partitions() const {
+    return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_PARTITIONS);
+  }
+  /// The crossing slots between them, in layout units. One shorter than
+  /// `partitions`.
+  const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *crossings() const {
+    return GetPointer<const ::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *> *>(VT_CROSSINGS);
+  }
+  /// Where the wire starts: the cell the feed of the assignment was placed
+  /// at. Absent when the connection has no feed, when the feed lies off the
+  /// grid, or when no partition lies within 8 detail cells of it.
+  const mqt::scpd::flatbuffers::geometry::Point *source() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_SOURCE);
+  }
+  /// Where it ends: the cell its target port is reached at. Absent when the
+  /// port has no target cell, or when no partition lies within 8 detail
+  /// cells of it.
+  const mqt::scpd::flatbuffers::geometry::Point *target() const {
+    return GetStruct<const mqt::scpd::flatbuffers::geometry::Point *>(VT_TARGET);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_PARTITIONS) &&
+           verifier.VerifyVector(partitions()) &&
+           VerifyOffsetRequired(verifier, VT_CROSSINGS) &&
+           verifier.VerifyVector(crossings()) &&
+           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_SOURCE, 8) &&
+           VerifyField<mqt::scpd::flatbuffers::geometry::Point>(verifier, VT_TARGET, 8) &&
+           verifier.EndTable();
+  }
+  CorridorT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CorridorT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<Corridor> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CorridorBuilder {
+  typedef Corridor Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_partitions(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> partitions) {
+    fbb_.AddOffset(Corridor::VT_PARTITIONS, partitions);
+  }
+  void add_crossings(::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> crossings) {
+    fbb_.AddOffset(Corridor::VT_CROSSINGS, crossings);
+  }
+  void add_source(const mqt::scpd::flatbuffers::geometry::Point *source) {
+    fbb_.AddStruct(Corridor::VT_SOURCE, source);
+  }
+  void add_target(const mqt::scpd::flatbuffers::geometry::Point *target) {
+    fbb_.AddStruct(Corridor::VT_TARGET, target);
+  }
+  explicit CorridorBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<Corridor> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<Corridor>(end);
+    fbb_.Required(o, Corridor::VT_PARTITIONS);
+    fbb_.Required(o, Corridor::VT_CROSSINGS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<Corridor> CreateCorridor(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> partitions = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const mqt::scpd::flatbuffers::geometry::Point *>> crossings = 0,
+    const mqt::scpd::flatbuffers::geometry::Point *source = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *target = nullptr) {
+  CorridorBuilder builder_(_fbb);
+  builder_.add_target(target);
+  builder_.add_source(source);
+  builder_.add_crossings(crossings);
+  builder_.add_partitions(partitions);
+  return builder_.Finish();
+}
+
+struct Corridor::Traits {
+  using type = Corridor;
+  static auto constexpr Create = CreateCorridor;
+};
+
+inline ::flatbuffers::Offset<Corridor> CreateCorridorDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<uint32_t> *partitions = nullptr,
+    const std::vector<mqt::scpd::flatbuffers::geometry::Point> *crossings = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *source = nullptr,
+    const mqt::scpd::flatbuffers::geometry::Point *target = nullptr) {
+  auto partitions__ = partitions ? _fbb.CreateVector<uint32_t>(*partitions) : 0;
+  auto crossings__ = crossings ? _fbb.CreateVectorOfStructs<mqt::scpd::flatbuffers::geometry::Point>(*crossings) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridor(
+      _fbb,
+      partitions__,
+      crossings__,
+      source,
+      target);
+}
+
+::flatbuffers::Offset<Corridor> CreateCorridor(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CorridorRoutingT : public ::flatbuffers::NativeTable {
+  typedef CorridorRouting TableType;
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT>> corridors{};
+  std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT>> slots{};
+  CorridorRoutingT() = default;
+  CorridorRoutingT(const CorridorRoutingT &o);
+  CorridorRoutingT(CorridorRoutingT&&) FLATBUFFERS_NOEXCEPT = default;
+  CorridorRoutingT &operator=(CorridorRoutingT o) FLATBUFFERS_NOEXCEPT;
+};
+
+/// Output of the Corridor stage.
+///
+/// One entry per connection of the Assignment, in its order. A connection
+/// that the stage could not route carries no partitions, so a reader counts
+/// the failures instead of reading a separate list that can disagree with
+/// the routes.
+struct CorridorRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CorridorRoutingT NativeTableType;
+  typedef CorridorRoutingBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorRoutingTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_CORRIDORS = 4,
+    VT_SLOTS = 6
+  };
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *corridors() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *>(VT_CORRIDORS);
+  }
+  /// The slots of every border a wire could cross, so that a picture can
+  /// show which of them are taken. A border without a crossing slot, whose
+  /// budget is zero, has no entry.
+  const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *slots() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *>(VT_SLOTS);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_CORRIDORS) &&
+           verifier.VerifyVector(corridors()) &&
+           verifier.VerifyVectorOfTables(corridors()) &&
+           VerifyOffsetRequired(verifier, VT_SLOTS) &&
+           verifier.VerifyVector(slots()) &&
+           verifier.VerifyVectorOfTables(slots()) &&
+           verifier.EndTable();
+  }
+  CorridorRoutingT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CorridorRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CorridorRouting> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CorridorRoutingBuilder {
+  typedef CorridorRouting Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_corridors(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>>> corridors) {
+    fbb_.AddOffset(CorridorRouting::VT_CORRIDORS, corridors);
+  }
+  void add_slots(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>>> slots) {
+    fbb_.AddOffset(CorridorRouting::VT_SLOTS, slots);
+  }
+  explicit CorridorRoutingBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CorridorRouting> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CorridorRouting>(end);
+    fbb_.Required(o, CorridorRouting::VT_CORRIDORS);
+    fbb_.Required(o, CorridorRouting::VT_SLOTS);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>>> corridors = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>>> slots = 0) {
+  CorridorRoutingBuilder builder_(_fbb);
+  builder_.add_slots(slots);
+  builder_.add_corridors(corridors);
+  return builder_.Finish();
+}
+
+struct CorridorRouting::Traits {
+  using type = CorridorRouting;
+  static auto constexpr Create = CreateCorridorRouting;
+};
+
+inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRoutingDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> *corridors = nullptr,
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> *slots = nullptr) {
+  auto corridors__ = corridors ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>>(*corridors) : 0;
+  auto slots__ = slots ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>>(*slots) : 0;
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridorRouting(
+      _fbb,
+      corridors__,
+      slots__);
+}
+
+::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct DetailRoutingT : public ::flatbuffers::NativeTable {
   typedef DetailRouting TableType;
 };
@@ -2221,6 +2603,9 @@ struct Artifact FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::artifacts::Geometry *output_as_Geometry() const {
     return output_type() == mqt::scpd::flatbuffers::artifacts::StageOutput::Geometry ? static_cast<const mqt::scpd::flatbuffers::artifacts::Geometry *>(output()) : nullptr;
   }
+  const mqt::scpd::flatbuffers::artifacts::CorridorRouting *output_as_CorridorRouting() const {
+    return output_type() == mqt::scpd::flatbuffers::artifacts::StageOutput::CorridorRouting ? static_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRouting *>(output()) : nullptr;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -2258,6 +2643,10 @@ template<> inline const mqt::scpd::flatbuffers::artifacts::FinalRouting *Artifac
 
 template<> inline const mqt::scpd::flatbuffers::artifacts::Geometry *Artifact::output_as<mqt::scpd::flatbuffers::artifacts::Geometry>() const {
   return output_as_Geometry();
+}
+
+template<> inline const mqt::scpd::flatbuffers::artifacts::CorridorRouting *Artifact::output_as<mqt::scpd::flatbuffers::artifacts::CorridorRouting>() const {
+  return output_as_CorridorRouting();
 }
 
 struct ArtifactBuilder {
@@ -2966,6 +3355,165 @@ inline ::flatbuffers::Offset<GlobalRouting> GlobalRouting::Pack(::flatbuffers::F
 }
 
 
+inline bool operator==(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
+  return
+      (lhs.border == rhs.border) &&
+      (lhs.positions == rhs.positions);
+}
+
+inline bool operator!=(const BorderSlotsT &lhs, const BorderSlotsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline BorderSlotsT *BorderSlots::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<BorderSlotsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void BorderSlots::UnPackTo(BorderSlotsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = border(); _o->border = _e; }
+  { auto _e = positions(); if (_e) { _o->positions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->positions[_i] = *_e->Get(_i); } } else { _o->positions.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<BorderSlots> CreateBorderSlots(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return BorderSlots::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<BorderSlots> BorderSlots::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const BorderSlotsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const BorderSlotsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _border = _o->border;
+  auto _positions = _fbb.CreateVectorOfStructs(_o->positions);
+  return mqt::scpd::flatbuffers::artifacts::CreateBorderSlots(
+      _fbb,
+      _border,
+      _positions);
+}
+
+
+inline bool operator==(const CorridorT &lhs, const CorridorT &rhs) {
+  return
+      (lhs.partitions == rhs.partitions) &&
+      (lhs.crossings == rhs.crossings) &&
+      ((lhs.source == rhs.source) || (lhs.source && rhs.source && *lhs.source == *rhs.source)) &&
+      ((lhs.target == rhs.target) || (lhs.target && rhs.target && *lhs.target == *rhs.target));
+}
+
+inline bool operator!=(const CorridorT &lhs, const CorridorT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CorridorT::CorridorT(const CorridorT &o)
+      : partitions(o.partitions),
+        crossings(o.crossings),
+        source((o.source) ? new mqt::scpd::flatbuffers::geometry::Point(*o.source) : nullptr),
+        target((o.target) ? new mqt::scpd::flatbuffers::geometry::Point(*o.target) : nullptr) {
+}
+
+inline CorridorT &CorridorT::operator=(CorridorT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(partitions, o.partitions);
+  std::swap(crossings, o.crossings);
+  std::swap(source, o.source);
+  std::swap(target, o.target);
+  return *this;
+}
+
+inline CorridorT *Corridor::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CorridorT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void Corridor::UnPackTo(CorridorT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = partitions(); if (_e) { _o->partitions.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->partitions[_i] = _e->Get(_i); } } else { _o->partitions.resize(0); } }
+  { auto _e = crossings(); if (_e) { _o->crossings.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->crossings[_i] = *_e->Get(_i); } } else { _o->crossings.resize(0); } }
+  { auto _e = source(); if (_e) _o->source = std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point>(new mqt::scpd::flatbuffers::geometry::Point(*_e)); }
+  { auto _e = target(); if (_e) _o->target = std::unique_ptr<mqt::scpd::flatbuffers::geometry::Point>(new mqt::scpd::flatbuffers::geometry::Point(*_e)); }
+}
+
+inline ::flatbuffers::Offset<Corridor> CreateCorridor(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return Corridor::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<Corridor> Corridor::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CorridorT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _partitions = _fbb.CreateVector(_o->partitions);
+  auto _crossings = _fbb.CreateVectorOfStructs(_o->crossings);
+  auto _source = _o->source ? _o->source.get() : nullptr;
+  auto _target = _o->target ? _o->target.get() : nullptr;
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridor(
+      _fbb,
+      _partitions,
+      _crossings,
+      _source,
+      _target);
+}
+
+
+inline bool operator==(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs) {
+  return
+      (lhs.corridors.size() == rhs.corridors.size() && std::equal(lhs.corridors.cbegin(), lhs.corridors.cend(), rhs.corridors.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.slots.size() == rhs.slots.size() && std::equal(lhs.slots.cbegin(), lhs.slots.cend(), rhs.slots.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT> const &b) { return (a == b) || (a && b && *a == *b); }));
+}
+
+inline bool operator!=(const CorridorRoutingT &lhs, const CorridorRoutingT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CorridorRoutingT::CorridorRoutingT(const CorridorRoutingT &o) {
+  corridors.reserve(o.corridors.size());
+  for (const auto &corridors_ : o.corridors) { corridors.emplace_back((corridors_) ? new mqt::scpd::flatbuffers::artifacts::CorridorT(*corridors_) : nullptr); }
+  slots.reserve(o.slots.size());
+  for (const auto &slots_ : o.slots) { slots.emplace_back((slots_) ? new mqt::scpd::flatbuffers::artifacts::BorderSlotsT(*slots_) : nullptr); }
+}
+
+inline CorridorRoutingT &CorridorRoutingT::operator=(CorridorRoutingT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(corridors, o.corridors);
+  std::swap(slots, o.slots);
+  return *this;
+}
+
+inline CorridorRoutingT *CorridorRouting::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CorridorRoutingT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CorridorRouting::UnPackTo(CorridorRoutingT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = corridors(); if (_e) { _o->corridors.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->corridors[_i]) { _e->Get(_i)->UnPackTo(_o->corridors[_i].get(), _resolver); } else { _o->corridors[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CorridorT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->corridors.resize(0); } }
+  { auto _e = slots(); if (_e) { _o->slots.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->slots[_i]) { _e->Get(_i)->UnPackTo(_o->slots[_i].get(), _resolver); } else { _o->slots[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::BorderSlotsT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->slots.resize(0); } }
+}
+
+inline ::flatbuffers::Offset<CorridorRouting> CreateCorridorRouting(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CorridorRouting::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CorridorRouting> CorridorRouting::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorRoutingT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CorridorRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _corridors = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Corridor>> (_o->corridors.size(), [](size_t i, _VectorArgs *__va) { return CreateCorridor(*__va->__fbb, __va->__o->corridors[i].get(), __va->__rehasher); }, &_va );
+  auto _slots = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::BorderSlots>> (_o->slots.size(), [](size_t i, _VectorArgs *__va) { return CreateBorderSlots(*__va->__fbb, __va->__o->slots[i].get(), __va->__rehasher); }, &_va );
+  return mqt::scpd::flatbuffers::artifacts::CreateCorridorRouting(
+      _fbb,
+      _corridors,
+      _slots);
+}
+
+
 inline bool operator==(const DetailRoutingT &, const DetailRoutingT &) {
   return true;
 }
@@ -3245,6 +3793,10 @@ inline bool VerifyStageOutput(::flatbuffers::VerifierTemplate<B> &verifier, cons
       auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::Geometry *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRouting *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -3289,6 +3841,10 @@ inline void *StageOutputUnion::UnPack(const void *obj, StageOutput type, const :
       auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::Geometry *>(obj);
       return ptr->UnPack(resolver);
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRouting *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -3320,6 +3876,10 @@ inline ::flatbuffers::Offset<void> StageOutputUnion::Pack(::flatbuffers::FlatBuf
       auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::GeometryT *>(value);
       return CreateGeometry(_fbb, ptr, _rehasher).Union();
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value);
+      return CreateCorridorRouting(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -3348,6 +3908,10 @@ inline StageOutputUnion::StageOutputUnion(const StageOutputUnion &u) : type(u.ty
     }
     case StageOutput::Geometry: {
       value = new mqt::scpd::flatbuffers::artifacts::GeometryT(*reinterpret_cast<mqt::scpd::flatbuffers::artifacts::GeometryT *>(u.value));
+      break;
+    }
+    case StageOutput::CorridorRouting: {
+      value = new mqt::scpd::flatbuffers::artifacts::CorridorRoutingT(*reinterpret_cast<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(u.value));
       break;
     }
     default:
@@ -3387,6 +3951,11 @@ inline void StageOutputUnion::Reset() {
       delete ptr;
       break;
     }
+    case StageOutput::CorridorRouting: {
+      auto ptr = reinterpret_cast<mqt::scpd::flatbuffers::artifacts::CorridorRoutingT *>(value);
+      delete ptr;
+      break;
+    }
     default: break;
   }
   value = nullptr;
@@ -3423,7 +3992,8 @@ inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 0, 2 },
     { ::flatbuffers::ET_SEQUENCE, 0, 3 },
     { ::flatbuffers::ET_SEQUENCE, 0, 4 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 5 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 5 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 6 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     mqt::scpd::flatbuffers::artifacts::CapacityPlanTypeTable,
@@ -3431,7 +4001,8 @@ inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
     mqt::scpd::flatbuffers::artifacts::GlobalRoutingTypeTable,
     mqt::scpd::flatbuffers::artifacts::DetailRoutingTypeTable,
     mqt::scpd::flatbuffers::artifacts::FinalRoutingTypeTable,
-    mqt::scpd::flatbuffers::artifacts::GeometryTypeTable
+    mqt::scpd::flatbuffers::artifacts::GeometryTypeTable,
+    mqt::scpd::flatbuffers::artifacts::CorridorRoutingTypeTable
   };
   static const char * const names[] = {
     "NONE",
@@ -3440,10 +4011,11 @@ inline const ::flatbuffers::TypeTable *StageOutputTypeTable() {
     "GlobalRouting",
     "DetailRouting",
     "FinalRouting",
-    "Geometry"
+    "Geometry",
+    "CorridorRouting"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_UNION, 7, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_UNION, 8, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -3704,6 +4276,65 @@ inline const ::flatbuffers::TypeTable *GlobalRoutingTypeTable() {
   };
   static const ::flatbuffers::TypeTable tt = {
     ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *BorderSlotsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "border",
+    "positions"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CorridorTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_UINT, 1, -1 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 0 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::geometry::PointTypeTable
+  };
+  static const char * const names[] = {
+    "partitions",
+    "crossings",
+    "source",
+    "target"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
+inline const ::flatbuffers::TypeTable *CorridorRoutingTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_SEQUENCE, 1, 0 },
+    { ::flatbuffers::ET_SEQUENCE, 1, 1 }
+  };
+  static const ::flatbuffers::TypeFunction type_refs[] = {
+    mqt::scpd::flatbuffers::artifacts::CorridorTypeTable,
+    mqt::scpd::flatbuffers::artifacts::BorderSlotsTypeTable
+  };
+  static const char * const names[] = {
+    "corridors",
+    "slots"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 2, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }

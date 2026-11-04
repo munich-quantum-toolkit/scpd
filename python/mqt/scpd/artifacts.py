@@ -12,9 +12,9 @@ The generated FlatBuffers code neither enforces the required fields when Python 
 verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
 silently. The functions here check the identifier and every field the schema marks as required, so
 an artifact that Python writes or reads is complete. They also check that the lists of an assignment
-hold one entry per ring node. Checking the other values, such as a role left unset, a dimension of
-zero or a connection that does not end at its ring node, is the core's job: the core refuses such an
-artifact when it reads it.
+hold one entry per ring node and that a corridor names one more partition than it has crossings.
+Checking the other values, such as a role left unset, a dimension of zero or a connection that does
+not end at its ring node, is the core's job: the core refuses such an artifact when it reads it.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ import flatbuffers
 from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -35,8 +36,10 @@ from .flatbuffers.geometry.Arc import ArcT
 from .flatbuffers.geometry.Line import LineT
 
 if TYPE_CHECKING:
+    from .flatbuffers.artifacts.BorderSlots import BorderSlotsT
     from .flatbuffers.artifacts.Bottleneck import BottleneckT
     from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
+    from .flatbuffers.artifacts.Corridor import CorridorT
     from .flatbuffers.artifacts.FeedlineChain import FeedlineChainT
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.artifacts.Lattice import LatticeT
@@ -57,6 +60,7 @@ _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.CapacityPlan: CapacityPlanT,
     StageOutput.GlobalRouting: GlobalRoutingT,
     StageOutput.Assignment: AssignmentT,
+    StageOutput.CorridorRouting: CorridorRoutingT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
 }
@@ -156,6 +160,9 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _require(output.feeds, "feeds", problems)
         _check_list(output.chains, "chains", _chain_problems, problems)
         problems.extend(_parallel_problems(output))
+    elif isinstance(output, CorridorRoutingT):
+        _check_list(output.corridors, "corridors", _corridor_problems, problems)
+        _check_list(output.slots, "slots", _border_slots_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -215,7 +222,7 @@ def _counted(count: int, noun: str) -> str:
     """A count and its noun, singular only for a count of one.
 
     Returns:
-        The count and the noun, such as ``1 feed`` or ``2 feeds``.
+        The count and the noun, such as ``1 crossing`` or ``2 crossings``.
     """
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
@@ -243,6 +250,24 @@ def _parallel_problems(assignment: AssignmentT) -> list[str]:
 
 def _chain_problems(chain: FeedlineChainT) -> list[str]:
     return _missing(chain, (("nodes", "nodes"),))
+
+
+def _corridor_problems(corridor: CorridorT) -> list[str]:
+    if corridor.partitions is None or corridor.crossings is None:
+        return _missing(corridor, (("partitions", "partitions"), ("crossings", "crossings")))
+    # The partitions may be a NumPy array, which has no single truth value, so only their number
+    # is read.
+    partitions = len(corridor.partitions)
+    crossings = len(corridor.crossings)
+    # A wire crosses one border fewer than it runs through partitions, and a wire without a way
+    # names neither.
+    if partitions != crossings + 1 and (partitions, crossings) != (0, 0):
+        return [f"names {_counted(partitions, 'partition')} and {_counted(crossings, 'crossing')}"]
+    return []
+
+
+def _border_slots_problems(slots: BorderSlotsT) -> list[str]:
+    return _missing(slots, (("positions", "positions"),))
 
 
 def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]

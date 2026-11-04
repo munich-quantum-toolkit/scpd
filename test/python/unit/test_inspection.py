@@ -25,8 +25,11 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import (
     ArtifactT,
 )
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.BorderSlots import BorderSlotsT
 from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
+from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
@@ -163,6 +166,34 @@ STAGE_OUTPUTS = [
         empty_global(),
         {"lattices": [], "connections": [], "outer_ring": [], "resonators": []},
         id="global",
+    ),
+    pytest.param(
+        StageOutput.CorridorRouting,
+        CorridorRoutingT(
+            corridors=[
+                CorridorT(
+                    partitions=[4, 7],
+                    crossings=[PointT(10.5, 20.25)],
+                    source=PointT(0.5, 1.5),
+                    target=PointT(30.0, 40.0),
+                ),
+                CorridorT(partitions=[], crossings=[]),
+            ],
+            slots=[BorderSlotsT(border=2, positions=[PointT(10.5, 20.25)])],
+        ),
+        {
+            "corridors": [
+                {
+                    "partitions": [4, 7],
+                    "crossings": [{"x": 10.5, "y": 20.25}],
+                    "source": {"x": 0.5, "y": 1.5},
+                    "target": {"x": 30.0, "y": 40.0},
+                },
+                {"partitions": [], "crossings": []},
+            ],
+            "slots": [{"border": 2, "positions": [{"x": 10.5, "y": 20.25}]}],
+        },
+        id="corridor",
     ),
     pytest.param(StageOutput.DetailRouting, DetailRoutingT(), {}, id="detail"),
     pytest.param(

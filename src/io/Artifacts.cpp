@@ -347,6 +347,38 @@ Problems validate(const ArtifactT& artifact) {
     validateEach(geometry.bridges, "bridge", problems);
     break;
   }
+  case StageOutput::CorridorRouting: {
+    // A crossing carries the wire from one partition into the next, so a
+    // corridor names one more partition than it has crossings. A corridor
+    // without partitions is a connection the stage could not route.
+    const auto& routing = *artifact.output.AsCorridorRouting();
+    requireEach(routing.slots, "border slots", problems);
+    for (std::size_t index = 0; index < routing.corridors.size(); ++index) {
+      if (routing.corridors[index] == nullptr) {
+        problems.push_back(std::format("corridor {}: missing", index));
+        continue;
+      }
+      const auto& corridor = *routing.corridors[index];
+      if ((!corridor.partitions.empty() || !corridor.crossings.empty()) &&
+          corridor.crossings.size() + 1 != corridor.partitions.size()) {
+        problems.push_back(
+            std::format("corridor {} names {} and {}", index,
+                        counted(corridor.partitions.size(), "partition"),
+                        counted(corridor.crossings.size(), "crossing")));
+      }
+      // A way runs from the feed to the target, so a routed corridor has
+      // both.
+      if (!corridor.partitions.empty() && corridor.source == nullptr) {
+        problems.push_back(
+            std::format("corridor {} has a way but no source", index));
+      }
+      if (!corridor.partitions.empty() && corridor.target == nullptr) {
+        problems.push_back(
+            std::format("corridor {} has a way but no target", index));
+      }
+    }
+    break;
+  }
   case StageOutput::CapacityPlan:
     validateCapacityPlan(*artifact.output.AsCapacityPlan(), problems);
     break;
@@ -469,6 +501,7 @@ Problems validate(const ArtifactT& artifact,
   }
   case StageOutput::FinalRouting:
   case StageOutput::Geometry:
+  case StageOutput::CorridorRouting:
   case StageOutput::DetailRouting:
   case StageOutput::NONE:
     break;

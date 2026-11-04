@@ -962,8 +962,8 @@ TEST(GlobalRouter, CountsARingPortOnAChainWithoutALauncherAsAFail) {
 
 TEST(GlobalRouter, ChecksOnlyTheRingPortsThatAChainCarries) {
   // The Capacity stage leaves a port off every chain only where it finds no
-  // free cell for its target. Q2.port0 and Q2.port1, which no chain carries,
-  // do not count as fails here.
+  // free cell for its target, and the Corridor stage counts that wire. So
+  // Q2.port0 and Q2.port1, which no chain carries, do not count as fails here.
   const auto config = test::miniConfig();
   const auto chip = test::miniChip();
   const auto plan = planOf(

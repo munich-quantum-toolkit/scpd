@@ -24,6 +24,7 @@ not needed.
 from __future__ import annotations
 
 import json
+from collections import defaultdict, deque
 from itertools import pairwise, starmap
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
@@ -42,6 +43,7 @@ STAGES: dict[str, str] = {
     "capacity": "phase 3",
     "global": "phase 3",
     "assign": "phase 3",
+    "corridor": "phase 3",
     "detail": "phase 4",
     "final": "phase 4",
     "aligned": "phase 4",
@@ -64,12 +66,12 @@ PORT_COLOR = "#e34948"
 INK = "#1b1a18"
 MUTED = "#55524b"
 FRAME = "#b5b1a8"
-#: The color of every feedline chain: a gray that stays apart from the dark chords and the red
+#: The color of every feedline chain: a gray that stays apart from the dark corridors and the red
 #: ports. The chains tell apart by their tooltips, not by color.
 FEEDLINE_COLOR = "#8e8e94"
 
-#: The stroke of each planning layer. Feedlines and inner wires run over the metal, so they get a
-#: white casing under them.
+#: The stroke of each planning layer. Feedlines, inner wires and corridors run over the metal, so
+#: they get a white casing under them.
 PLANNING_COLORS: dict[str, str] = {
     "partition": "#8b929c",
     "border": "#3f4752",
@@ -79,6 +81,8 @@ PLANNING_COLORS: dict[str, str] = {
     "inner": "#008300",
     "assignment": "#111111",
     "ring": "#6b675f",
+    "corridor": "#2b2b2e",
+    "slot": "#55524b",
 }
 
 #: The stroke width of each planning layer, in screen pixels.
@@ -90,25 +94,27 @@ _PLANNING_WIDTHS: dict[str, float] = {
     "inner": 2.0,
     "assignment": 1.8,
     "ring": 1.0,
+    "corridor": 2.0,
 }
 
 #: The planning layers each stage leaves out of its picture. The keep-out of the port approaches
-#: and the capacity chains are left out everywhere, and so are the gates. The capacity and assign
-#: pictures show the partitions by their borders alone: an outline traces the keep-out around every
-#: port as well. The assign picture leaves out the ring of its ports, which the chords to the feeds
-#: already show.
+#: and the capacity chains are left out everywhere, and so are the gates. The capacity, assign and
+#: corridor pictures show the partitions by their borders alone: an outline traces the keep-out
+#: around every port as well. The assign picture leaves out the ring of its ports, which the chords
+#: to the feeds already show.
 _HIDDEN: dict[str, frozenset[str]] = {
     "global": frozenset({"bottlenecks"}),
     "capacity": frozenset({"bottlenecks", "partitions"}),
     "assign": frozenset({"bottlenecks", "partitions", "ring"}),
+    "corridor": frozenset({"bottlenecks", "partitions"}),
 }
 
 #: The stages whose picture shades every partition in the gray of its tone.
-_TONED = frozenset({"capacity", "assign"})
+_TONED = frozenset({"capacity", "assign", "corridor"})
 
-#: The borders under the chords are only the ground they run on, so the assign picture draws them
-#: light and the dark lines stand out.
-_LIGHT_GROUND = "svg.assign g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
+#: The borders under the chords and the corridors are only the ground they run on, so those pictures
+#: draw them light and the dark lines stand out.
+_LIGHT_GROUND = "svg.assign g.l-border>path,svg.corridor g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
 
 #: Lengths of the decoration, in layout units (micrometers).
 _HOLE_PITCH = 120.0
@@ -117,6 +123,8 @@ _GRID_MAJOR = 1000
 _HATCH_PITCH = 36.0
 _INSET = 20.0
 _INSET_WIDTH = 6.0
+#: The largest radius of a turn of the approach of a wire into its port, in layout units.
+_STUB_RADIUS = 60.0
 
 
 class PlotError(ValueError):
@@ -242,6 +250,35 @@ def _straightened(run: Sequence[tuple[float, float]]) -> list[tuple[float, float
     return simplify(run, 0.8 * cell) if cell > 0 else list(run)
 
 
+def _rounded(points: Sequence[tuple[float, float]], first_turn: int, radius: float) -> str:
+    """Path data of a polyline whose turns from ``first_turn`` on are arcs.
+
+    Each of those turns becomes a quadratic curve through the corner, which starts and ends at most
+    ``radius`` from it and at most halfway along each of its two segments.
+
+    Returns:
+        The path data.
+    """
+    parts = [f"M{_number(points[0][0])} {_number(points[0][1])}"]
+    for index in range(1, len(points) - 1):
+        corner = points[index]
+        if index < first_turn:
+            parts.append(f"L{_number(corner[0])} {_number(corner[1])}")
+            continue
+        ends = []
+        for neighbor in (points[index - 1], points[index + 1]):
+            dx, dy = neighbor[0] - corner[0], neighbor[1] - corner[1]
+            length = (dx * dx + dy * dy) ** 0.5 or 1.0
+            reach = min(radius, length / 2) / length
+            ends.append((corner[0] + dx * reach, corner[1] + dy * reach))
+        parts.append(
+            f"L{_number(ends[0][0])} {_number(ends[0][1])}"
+            f"Q{_number(corner[0])} {_number(corner[1])} {_number(ends[1][0])} {_number(ends[1][1])}"
+        )
+    parts.append(f"L{_number(points[-1][0])} {_number(points[-1][1])}")
+    return "".join(parts)
+
+
 def _planning_layers(
     planning: PlanningGeometry,
     to_view: Callable[[float, float], tuple[float, float]],
@@ -307,6 +344,33 @@ def _planning_layers(
         group("ring", polyline(planning.ring, close=True))
     if planning.assignments:
         group("assignment", "".join(polyline([first, second]) for first, second in planning.assignments))
+    if planning.slots:
+        # Every place a wire may cross a border, so a taken slot can be told from a free one.
+        ticks = "".join(
+            f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.25)}"/>'
+            for px, py in planning.slots
+            for x, y in [to_view(px, py)]
+        )
+        parts.append(f'<g class="l-slot">{ticks}</g>')
+    if planning.corridors or planning.stubs:
+        # A corridor continues along the approach of its target port, in one line whose turns into
+        # the port are rounded. Several corridors can end at the same point, so each point keeps its
+        # approaches in the order of the corridors, and each corridor takes the next one.
+        stubs: dict[tuple[float, float], deque[list[tuple[float, float]]]] = defaultdict(deque)
+        for stub in planning.stubs:
+            stubs[stub[0]].append(stub)
+        data = ""
+        for route in planning.corridors:
+            waiting = stubs.get(route[-1])
+            if not waiting:
+                data += polyline(route)
+                continue
+            stub = waiting.popleft()
+            data += _rounded(
+                list(starmap(to_view, [*route, *stub[1:]])), first_turn=len(route) - 1, radius=_STUB_RADIUS
+            )
+        data += "".join(polyline(stub) for waiting in stubs.values() for stub in waiting)
+        group("corridor", data, cased=True)
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.7)}"/>'
@@ -358,8 +422,10 @@ def _planning_style(font: float) -> str:
         "text-anchor:middle;paint-order:stroke;stroke:#ffffff;stroke-width:0.25em;stroke-linejoin:round}"
         "g.l-assignment>path{stroke-dasharray:8 5}"
         "g.l-inner>path.casing{stroke:#ffffff;stroke-width:4.6}"
+        "g.l-corridor>path.casing{stroke:#ffffff;stroke-width:4.6;stroke-opacity:.9}"
         f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
         "vector-effect:non-scaling-stroke}"
+        f"g.l-slot>circle{{fill:{PLANNING_COLORS['slot']};fill-opacity:0.55;stroke:none}}"
         f"g.l-feedline path{{fill:none;stroke:{FEEDLINE_COLOR};stroke-width:6.4;stroke-linejoin:round;"
         "stroke-linecap:round;vector-effect:non-scaling-stroke}"
         "g.l-feedline path.casing{stroke:#ffffff;stroke-width:9.6}"
@@ -449,6 +515,8 @@ _LAYERS: tuple[tuple[str, str, str], ...] = (
     ("Inner wires", ".l-inner", PLANNING_COLORS["inner"]),
     ("Ring", ".l-ring", PLANNING_COLORS["ring"]),
     ("Assignments", ".l-assignment", PLANNING_COLORS["assignment"]),
+    ("Slots", ".l-slot", PLANNING_COLORS["slot"]),
+    ("Corridors", ".l-corridor", PLANNING_COLORS["corridor"]),
     ("Launcher slots", ".l-launcher", PLANNING_COLORS["launcher"]),
     ("Feedlines", ".l-feedline", FEEDLINE_COLOR),
     ("Frame", ".x-marks", MUTED),

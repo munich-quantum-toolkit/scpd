@@ -10,7 +10,7 @@ of changes including minor and patch releases, please refer to the
 
 `mqt-scpd plan` needs a few keys that a configuration for `plot` and `render`
 does not. `doctor` checks the configuration for the steps up to
-`[run] stop_after`, which are all three steps when the key is missing. A
+`[run] stop_after`, which are all four steps when the key is missing. A
 configuration without `launcher_target` therefore passes `doctor` only with
 `stop_after = "global"` or an earlier step. The keys are:
 

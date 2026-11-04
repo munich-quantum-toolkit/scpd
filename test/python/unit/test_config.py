@@ -98,6 +98,9 @@ backend = "highs"
 time_limit = 30
 threads = 4
 
+[stages.corridor]
+rounds = 6
+
 [run]
 stop_after = "assign"
 """
@@ -241,6 +244,8 @@ def test_the_stage_and_run_sections_default_when_the_file_leaves_them_out() -> N
     assert (stages.solver.backend,) == ("",)
     assert stages.solver.timeLimit == pytest.approx(0.0)
     assert stages.solver.threads == 0
+    assert stages.corridor is not None
+    assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (12, 4)
     assert config.run is not None
     assert (config.run.stopAfter,) == ("",)
 
@@ -261,6 +266,8 @@ def test_a_stage_section_sets_what_it_names() -> None:
     assert stages.solver is not None
     assert (stages.solver.backend, stages.solver.timeLimit) == ("highs", pytest.approx(30.0))
     assert stages.solver.threads == 4
+    assert stages.corridor is not None
+    assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (6, 4)
     assert config.run is not None
     assert config.run.stopAfter == "assign"
 
@@ -309,7 +316,7 @@ def test_the_grid_reads_the_detail_factor() -> None:
         ),
         (
             MANUAL + '\n[run]\nstop_after = "outer"\n',
-            "[run] stop_after must be empty or one of 'capacity', 'global', 'assign'",
+            "[run] stop_after must be empty or one of 'capacity', 'global', 'assign', 'corridor'",
         ),
         (MANUAL + "\n[run]\nstop = 1\n", "[run] has the unknown key 'stop'"),
     ],
@@ -335,9 +342,9 @@ def test_stage_problems_are_named(text: str, message: str) -> None:
 def test_shipped_stage_sections_carry_only_what_differs_from_the_defaults() -> None:
     """Strict loading rejects a stage or run key written out at its default, and empty sections."""
     parse_config(WITH_STAGES, strict=True)
-    assert shipped_config_problems({"stages": {"solver": {"threads": 0}, "capacity": {}}}) == [
+    assert shipped_config_problems({"stages": {"corridor": {"rounds": 12}, "capacity": {}}}) == [
         "[stages.capacity] is empty; remove it",
-        "[stages.solver] threads is set to its default 0; remove it",
+        "[stages.corridor] rounds is set to its default 12; remove it",
     ]
     assert shipped_config_problems({"stages": {"global": {"internal_bridges": False}}}) == [
         "[stages.global] internal_bridges is set to its default false; remove it",
