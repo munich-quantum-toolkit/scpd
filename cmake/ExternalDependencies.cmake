@@ -62,6 +62,22 @@ set(JSON_Install
 FetchContent_Declare(nlohmann_json URL ${NLOHMANN_JSON_URL})
 list(APPEND FETCH_PACKAGES nlohmann_json)
 
+# Boost.Polygon supplies the Voronoi diagram of the capacity stage. It is header-only and needs only
+# Boost.Config, so the build fetches these two libraries of one Boost release, about 5 MB, and not
+# the whole distribution of about 100 MB. Neither is configured: SOURCE_SUBDIR names a directory
+# without a CMakeLists.txt, so FetchContent only unpacks them. A Boost installed on the system is
+# never used.
+set(BOOST_VERSION
+    1.89.0
+    CACHE STRING "Boost version")
+foreach(library IN ITEMS polygon config)
+  FetchContent_Declare(
+    boost_${library}
+    URL https://github.com/boostorg/${library}/archive/refs/tags/boost-${BOOST_VERSION}.tar.gz
+        SOURCE_SUBDIR include EXCLUDE_FROM_ALL)
+  list(APPEND FETCH_PACKAGES boost_${library})
+endforeach()
+
 if(BUILD_MQT_SCPD_TESTS)
   set(gtest_force_shared_crt
       ON
@@ -90,4 +106,12 @@ if(NOT TARGET mqt-scpd-json)
   add_library(mqt-scpd-json INTERFACE)
   target_include_directories(mqt-scpd-json SYSTEM
                              INTERFACE $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>)
+endif()
+
+# Boost.Polygon and Boost.Config, likewise as system includes.
+if(NOT TARGET mqt-scpd-polygon)
+  add_library(mqt-scpd-polygon INTERFACE)
+  target_include_directories(
+    mqt-scpd-polygon SYSTEM INTERFACE $<BUILD_INTERFACE:${boost_polygon_SOURCE_DIR}/include>
+                                      $<BUILD_INTERFACE:${boost_config_SOURCE_DIR}/include>)
 endif()

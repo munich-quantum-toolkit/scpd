@@ -12,6 +12,23 @@ releases may include breaking changes.
 
 ### Added
 
+- 📝 Add a reference of every `config.toml` key ([#140])
+  ([**@FeldmeierMichael**])
+- ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory and
+  can stop after a step or run one step again ([#140]) ([**@FeldmeierMichael**])
+- ✨ Add `list-algorithms`, and draw the planning stages of a run directory with
+  `plot` and `render` ([#140]) ([**@FeldmeierMichael**])
+- 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
+  ([**@FeldmeierMichael**])
+- ✨ Add the Capacity stage, which partitions the free space at its bottlenecks
+  and budgets the wires of every capacity chain ([#140])
+  ([**@FeldmeierMichael**])
+- ➕ Add Boost.Polygon, Boost.Config and `rich` as dependencies ([#140])
+  ([**@FeldmeierMichael**])
+- ✨ Add bridge pairs, components, the stage sections and `[run]` to the
+  configuration ([#140]) ([**@FeldmeierMichael**])
+- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#140])
+  ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
   is that of its largest search, one shared read-only obstacle mask and
@@ -49,6 +66,10 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#140])
+  ([**@FeldmeierMichael**])
+- 🎨 Change the output and the exit codes of the commands to the format of
+  `docs/terminal_output.md` ([#140]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that
@@ -66,12 +87,18 @@ releases may include breaking changes.
 - 💥 Require Python 3.11 or newer ([#89]) ([**@denialhaag**])
 - ⬆️ Update `nanobind` to version 3.0.1 ([#83]) ([**@denialhaag**])
 
+### Fixed
+
+- 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#140])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
+
 <!-- Version links -->
 
 [unreleased]: https://github.com/munich-quantum-toolkit/scpd
 
 <!-- PR links -->
 
+[#140]: https://github.com/munich-quantum-toolkit/scpd/pull/140
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
 [#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98

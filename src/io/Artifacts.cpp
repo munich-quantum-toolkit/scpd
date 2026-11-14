@@ -20,16 +20,25 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <iterator>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace mqt::scpd::io {
 
 namespace {
+
+/// A count and its noun, singular only for a count of one: "1 crossing",
+/// "2 crossings".
+std::string counted(const std::size_t count, const std::string_view noun) {
+  return std::format("{} {}{}", count, noun, count == 1 ? "" : "s");
+}
 
 using flatbuffers::artifacts::ArtifactT;
 using flatbuffers::artifacts::StageOutput;
@@ -51,6 +60,18 @@ void validateEach(const std::vector<std::unique_ptr<ComponentT>>& components,
       continue;
     }
     append(problems, design::validate(*components[i]), prefix);
+  }
+}
+
+/// Writing an artifact packs every entry of a vector of tables, so a missing
+/// entry is a problem even where no other check reads the vector.
+template <typename TableT>
+void requireEach(const std::vector<std::unique_ptr<TableT>>& entries,
+                 const std::string_view what, Problems& problems) {
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i] == nullptr) {
+      problems.push_back(std::format("{} {}: missing", what, i));
+    }
   }
 }
 
@@ -86,6 +107,143 @@ void validateWires(
   }
 }
 
+/// The capacity chains are trees stored flat, and the later stages walk them
+/// by index. Every index has to name a node, and no walk may come back to a
+/// node it left, or the walk would not end. A target lies on one chain only,
+/// so that the budget of its chain counts its wire once.
+void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
+                          Problems& problems) {
+  if (plan.capacity_grid == nullptr) {
+    problems.emplace_back("capacity grid: missing");
+  }
+  if (plan.detail_grid == nullptr) {
+    problems.emplace_back("detail grid: missing");
+  }
+  requireEach(plan.partitions, "partition", problems);
+  for (std::size_t index = 0; index < plan.partitions.size(); ++index) {
+    if (plan.partitions[index] != nullptr) {
+      requireEach(plan.partitions[index]->outlines,
+                  std::format("partition {} outline", index), problems);
+    }
+  }
+  requireEach(plan.borders, "border", problems);
+  requireEach(plan.bottlenecks, "bottleneck", problems);
+  requireEach(plan.launchers, "launcher slot", problems);
+  requireEach(plan.port_keepout, "port keepout", problems);
+  const auto count = plan.nodes.size();
+  bool linked = true;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (plan.nodes[index] == nullptr) {
+      problems.push_back(std::format("capacity node {}: missing", index));
+      linked = false;
+      continue;
+    }
+    const auto& node = *plan.nodes[index];
+    for (const auto next : node.next) {
+      if (next >= count) {
+        problems.push_back(std::format(
+            "capacity node {} links to node {} of {}", index, next, count));
+        linked = false;
+      }
+    }
+    if (node.kind == flatbuffers::artifacts::CapacityElement::Bottleneck) {
+      // A reader takes the capacity of a gate from its node, and a gate on
+      // several chains has a node on each, so every node of a bottleneck has
+      // to say what the bottleneck says.
+      if (node.id >= plan.bottlenecks.size()) {
+        problems.push_back(
+            std::format("capacity node {} names bottleneck {} of {}", index,
+                        node.id, plan.bottlenecks.size()));
+      } else if (plan.bottlenecks[node.id] != nullptr &&
+                 node.capacity != plan.bottlenecks[node.id]->capacity) {
+        problems.push_back(std::format(
+            "capacity node {} lets {} through bottleneck {}, which lets {} "
+            "through",
+            index, counted(node.capacity, "wire"), node.id,
+            counted(plan.bottlenecks[node.id]->capacity, "wire")));
+      }
+    }
+  }
+  for (std::size_t index = 0; index < plan.chains.size(); ++index) {
+    if (plan.chains[index] >= count) {
+      problems.push_back(
+          std::format("capacity chain {} starts at node {} of {}", index,
+                      plan.chains[index], count));
+      linked = false;
+    }
+  }
+  if (!linked) {
+    return;
+  }
+  // Kahn's order: the nodes that no link reaches go first, and a node follows
+  // once every link to it is taken. Nodes left over lie on a cycle.
+  std::vector<std::size_t> incoming(count, 0);
+  for (const auto& node : plan.nodes) {
+    for (const auto next : node->next) {
+      ++incoming[next];
+    }
+  }
+  std::vector<std::size_t> ready;
+  for (std::size_t index = 0; index < count; ++index) {
+    if (incoming[index] == 0) {
+      ready.push_back(index);
+    }
+  }
+  std::size_t ordered = 0;
+  while (!ready.empty()) {
+    const auto index = ready.back();
+    ready.pop_back();
+    ++ordered;
+    for (const auto next : plan.nodes[index]->next) {
+      if (--incoming[next] == 0) {
+        ready.push_back(next);
+      }
+    }
+  }
+  if (ordered != count) {
+    problems.push_back(std::format(
+        "capacity nodes link in a cycle: {} of {} {} on or behind one",
+        count - ordered, counted(count, "node"),
+        count - ordered == 1 ? "lies" : "lie"));
+    return;
+  }
+  // A chain is a tree. Two chains may share a subtree without a target, but
+  // one chain that reaches a node over two paths would count the subtree
+  // behind it twice.
+  std::unordered_map<std::uint32_t, std::size_t> chainOfTarget;
+  for (std::size_t chain = 0; chain < plan.chains.size(); ++chain) {
+    std::vector<bool> reached(count, false);
+    std::vector<std::size_t> pending{plan.chains[chain]};
+    reached[plan.chains[chain]] = true;
+    while (!pending.empty()) {
+      const auto index = pending.back();
+      pending.pop_back();
+      const auto& node = *plan.nodes[index];
+      if (node.kind == flatbuffers::artifacts::CapacityElement::Target) {
+        const auto [first, fresh] = chainOfTarget.emplace(node.id, chain);
+        if (!fresh) {
+          problems.push_back(
+              first->second == chain
+                  ? std::format("capacity chain {} reaches port {} twice",
+                                chain, node.id)
+                  : std::format("capacity chains {} and {} both reach port {}",
+                                first->second, chain, node.id));
+          return;
+        }
+      }
+      for (const auto next : node.next) {
+        if (reached[next]) {
+          problems.push_back(std::format(
+              "capacity chain {} reaches node {} twice", chain, next));
+          return;
+        }
+        reached[next] = true;
+        pending.push_back(next);
+      }
+    }
+  }
+}
+
 std::string join(const Problems& problems) {
   std::string joined;
   for (const auto& problem : problems) {
@@ -101,6 +259,14 @@ Problems validate(const ArtifactT& artifact) {
   Problems problems;
   if (artifact.producer.empty()) {
     problems.emplace_back("producer is empty");
+  }
+  // The verifier lets an output type pass that a newer schema appended, and
+  // the object model then holds no output to check.
+  if (artifact.output.type > StageOutput::MAX) {
+    problems.push_back(
+        std::format("output type {} is unknown to this version of mqt-scpd",
+                    static_cast<unsigned>(artifact.output.type)));
+    return problems;
   }
   switch (artifact.output.type) {
   case StageOutput::NONE:
@@ -124,6 +290,8 @@ Problems validate(const ArtifactT& artifact) {
     break;
   }
   case StageOutput::CapacityPlan:
+    validateCapacityPlan(*artifact.output.AsCapacityPlan(), problems);
+    break;
   case StageOutput::GlobalRouting:
   case StageOutput::DetailRouting:
     break;
