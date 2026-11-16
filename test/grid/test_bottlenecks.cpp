@@ -253,6 +253,14 @@ TEST(Bottlenecks, KeepsTheShortestCutOfANarrowingThatTheRasterSplits) {
       findBottlenecks(scene.mask, scene.axis, scene.distance, scene.grid);
   ASSERT_EQ(endingOn(apart, tip).size(), 2U);
 
+  // Sharing a wall cell is necessary but the opposite ends must also be within
+  // reach.
+  const auto separate =
+      endingOn(findBottlenecks(scene.mask, scene.axis, scene.distance,
+                               scene.grid, {.sameNarrowing = 1.0}),
+               tip);
+  ASSERT_EQ(separate.size(), 2U);
+
   const auto merged =
       endingOn(findBottlenecks(scene.mask, scene.axis, scene.distance,
                                scene.grid, {.sameNarrowing = 6.0}),

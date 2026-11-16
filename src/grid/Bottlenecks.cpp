@@ -368,13 +368,20 @@ narrowestOfEveryPlateau(const std::vector<Bottleneck>& candidates,
     return false;
   };
 
-  for (std::size_t left = 0; left < count; ++left) {
-    for (std::size_t right = left + 1; right < count; ++right) {
-      if (find(left) == find(right) ||
-          !sameNarrowing(candidates[left], candidates[right])) {
-        continue;
+  std::unordered_map<std::size_t, std::vector<std::size_t>> endingAt;
+  endingAt.reserve(count);
+  for (std::size_t right = 0; right < count; ++right) {
+    const auto& cut = candidates[right];
+    for (const auto endpoint : {cut.first, cut.second}) {
+      auto& earlier = endingAt[endpoint];
+      for (const auto left : earlier) {
+        const auto leftRoot = find(left);
+        const auto rightRoot = find(right);
+        if (leftRoot != rightRoot && sameNarrowing(candidates[left], cut)) {
+          group[rightRoot] = leftRoot;
+        }
       }
-      group[find(right)] = find(left);
+      earlier.push_back(right);
     }
   }
 
