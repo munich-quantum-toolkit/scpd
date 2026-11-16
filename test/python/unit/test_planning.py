@@ -120,8 +120,7 @@ def test_a_border_runs_along_its_cell_edges(run: RunDirectory) -> None:
     geometry = planning_geometry(raw, chip_of(run), "capacity")
 
     steps = [(abs(b[0] - a[0]), abs(b[1] - a[1])) for border in geometry.borders for a, b in pairwise(border)]
-    # The corners are joined on three decimals, the precision of the inputs.
-    tolerance = 2e-3
+    tolerance = 1e-9
     assert all(
         (math.isclose(dx, width, abs_tol=tolerance) and dy < tolerance)
         or (dx < tolerance and math.isclose(dy, height, abs_tol=tolerance))
@@ -155,6 +154,25 @@ def test_the_pieces_of_a_border_close_together_are_one_run(run: RunDirectory) ->
     geometry = planning_geometry(data, chip_of(run), "capacity")
 
     assert sorted(geometry.borders) == [[(1.0, 0.0), (1.0, 1.0), (1.0, 3.0), (1.0, 4.0)], [(1.0, 12.0), (1.0, 13.0)]]
+
+
+def test_sub_milliscale_cells_keep_distinct_border_corners(run: RunDirectory) -> None:
+    """Border topology follows grid corners even when several fit inside one rounding interval."""
+    artifact = read_artifact(capacity_plan())
+    plan = artifact.output
+    assert isinstance(plan, CapacityPlanT)
+    plan.detailGrid = GridExtentT(width=4, height=4, origin=PointT(0.0001, 0.0001), cellWidth=0.0002, cellHeight=0.0002)
+    plan.blockedWords = [0]
+    plan.borders = [
+        PartitionBorderT(
+            first=1, second=2, samples=[PointT(0.0002, 0.0001), PointT(0.0002, 0.0003)], center=PointT(0.0002, 0.0002)
+        ),
+    ]
+
+    geometry = planning_geometry(write_artifact(artifact), chip_of(run), "capacity")
+
+    assert len(geometry.borders) == 1
+    assert [y for _, y in geometry.borders[0]] == pytest.approx([0.0, 0.0002, 0.0004])
 
 
 def _square(label: int, x0: float, y0: float, x1: float, y1: float) -> PartitionT:
@@ -313,8 +331,7 @@ def test_a_long_capacity_chain_draws_without_recursing(run: RunDirectory) -> Non
     assert isinstance(plan, CapacityPlanT)
     count = sys.getrecursionlimit() + 1
     plan.nodes = [
-        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, capacity=2, next=[child])
-        for child in range(1, count)
+        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, capacity=2, next=[child]) for child in range(1, count)
     ] + [CapacityNodeT(kind=CapacityElement.Target, id=1, next=[])]
 
     geometry = planning_geometry(write_artifact(artifact), chip_of(run), "capacity")

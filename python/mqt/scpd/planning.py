@@ -194,22 +194,23 @@ def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Po
     """
     if grid is None or grid.origin is None or not grid.cellWidth or not grid.cellHeight:
         return [samples] if samples else []
-    origin_x, width, height = float(grid.origin.x), float(grid.cellWidth), float(grid.cellHeight)
-    edges: list[tuple[Point, Point]] = []
+    origin_x, origin_y = float(grid.origin.x), float(grid.origin.y)
+    width, height = float(grid.cellWidth), float(grid.cellHeight)
+    edges: list[tuple[tuple[int, int], tuple[int, int]]] = []
     for x, y in samples:
-        across = _corner(x, origin_x, width)
-        if abs(across - round(across)) < 0.25:
-            edges.append(((x, y - height / 2), (x, y + height / 2)))
+        column = _corner(x, origin_x, width)
+        row = _corner(y, origin_y, height)
+        if abs(column - round(column)) < 0.25:
+            c, r = round(column), math.floor(row)
+            edges.append(((c, r), (c, r + 1)))
         else:
-            edges.append(((x - width / 2, y), (x + width / 2, y)))
+            c, r = math.floor(column), round(row)
+            edges.append(((c, r), (c + 1, r)))
 
-    def key(point: Point) -> Point:
-        return (round(point[0], 3), round(point[1], 3))
-
-    touching: dict[Point, list[int]] = {}
+    touching: dict[tuple[int, int], list[int]] = {}
     for index, (first, second) in enumerate(edges):
-        touching.setdefault(key(first), []).append(index)
-        touching.setdefault(key(second), []).append(index)
+        touching.setdefault(first, []).append(index)
+        touching.setdefault(second, []).append(index)
     used = [False] * len(edges)
     runs: list[list[Point]] = []
     # A run starts where the border stops or forks; what is left after that are closed loops.
@@ -222,13 +223,13 @@ def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Po
             while True:
                 used[edge] = True
                 first, second = edges[edge]
-                corner = key(second) if key(first) == corner else key(first)
+                corner = second if first == corner else first
                 run.append(corner)
                 onward = [other for other in touching[corner] if not used[other]]
                 if len(touching[corner]) != 2 or not onward:
                     break
                 edge = onward[0]
-            runs.append(run)
+            runs.append([(origin_x + (x - 0.5) * width, origin_y + (y - 0.5) * height) for x, y in run])
     return _bridged(runs, 3.0 * max(width, height))
 
 
