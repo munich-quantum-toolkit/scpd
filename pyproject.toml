@@ -24,7 +24,7 @@ keywords = [ "design-automation", "MQT", "quantum-computing" ]
 # the sdist carries MIT code only.
 license = "MIT AND Apache-2.0 AND BSL-1.0"
 license-files = [ "LICENSE" ]
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Information Technology",
