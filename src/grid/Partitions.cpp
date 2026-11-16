@@ -55,12 +55,11 @@ struct Corner {
   }
 };
 
-/// Points sorted into square buckets of one side. A point closer to another
-/// than one side lies in one of the nine buckets around it, so a query visits
-/// those nine and no other point.
+/// Points sorted into rectangular buckets. A point less than one bucket side
+/// away along each axis lies in one of the nine neighboring buckets.
 class PointBuckets {
 public:
-  explicit PointBuckets(const double side) : side(side) {}
+  explicit PointBuckets(const Point cellSize) : size(cellSize) {}
 
   void add(const Point& point, const std::size_t index) {
     buckets[bucketOf(point)].push_back(index);
@@ -98,11 +97,11 @@ private:
   };
 
   [[nodiscard]] Bucket bucketOf(const Point& point) const {
-    return {static_cast<std::int64_t>(std::floor(point.x() / side)),
-            static_cast<std::int64_t>(std::floor(point.y() / side))};
+    return {static_cast<std::int64_t>(std::floor(point.x() / size.x())),
+            static_cast<std::int64_t>(std::floor(point.y() / size.y()))};
   }
 
-  double side;
+  Point size;
   std::unordered_map<Bucket, std::vector<std::size_t>, BucketHash> buckets;
 };
 
@@ -498,7 +497,7 @@ rasterizePartitions(const std::span<const PartitionOutline> outlines,
 
 std::vector<Point> borderSlots(const PartitionBorder& border,
                                const GridMetrics& grid, const double spacing) {
-  if (spacing <= 0.0) {
+  if (!std::isfinite(spacing) || spacing <= 0.0) {
     throw std::invalid_argument(
         std::format("a wire spacing of {} is not a distance", spacing));
   }
@@ -518,7 +517,8 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   };
   // The adjacent samples of each sample. Buckets one step wide restrict the
   // comparisons to the samples nearby.
-  PointBuckets sampleBuckets(std::sqrt(ADJACENT_SAMPLE_SQUARED));
+  const auto side = std::sqrt(ADJACENT_SAMPLE_SQUARED);
+  PointBuckets sampleBuckets({side, side});
   for (std::size_t index = 0; index < count; ++index) {
     sampleBuckets.add(border.samples[index], index);
   }
@@ -591,17 +591,21 @@ std::vector<Point> borderSlots(const PartitionBorder& border,
   // restrict the comparisons to the slots nearby.
   std::vector<Point> slots;
   std::vector<Point> taken;
-  PointBuckets slotBuckets(spacing);
+  // A bucket can be wider than the pitch. Keep it at least one cell wide so
+  // the index is bounded even when the pitch is much smaller than a cell.
+  PointBuckets slotBuckets(
+      {std::max(spacing, grid.cellWidth), std::max(spacing, grid.cellHeight)});
   const auto offer = [&](const std::size_t index) {
     const auto here = layout(index);
     bool clear = true;
-    slotBuckets.forEachNear(here, [&](const std::size_t slot) {
+    const Point local{here.x() - grid.origin.x(), here.y() - grid.origin.y()};
+    slotBuckets.forEachNear(local, [&](const std::size_t slot) {
       clear = clear && std::hypot(here.x() - taken[slot].x(),
                                   here.y() - taken[slot].y()) >= spacing;
     });
     if (clear) {
       slots.push_back(border.samples[index]);
-      slotBuckets.add(here, taken.size());
+      slotBuckets.add(local, taken.size());
       taken.push_back(here);
     }
   };

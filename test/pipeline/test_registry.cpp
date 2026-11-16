@@ -199,9 +199,8 @@ TEST(PlanProblems, NameEveryRoutablePortThatFacesNoStepOfTheGrid) {
 
 TEST(PlanProblems, RefuseAChipWithoutALauncher) {
   auto chip = test::miniChip();
-  std::erase_if(chip.ports, [](const auto& port) {
-    return hasLauncherSlot(*port);
-  });
+  std::erase_if(chip.ports,
+                [](const auto& port) { return hasLauncherSlot(*port); });
 
   EXPECT_EQ(planProblems(chip, test::miniConfig(), allSteps()),
             std::vector<std::string>{
@@ -217,8 +216,10 @@ TEST(PlanProblems, RejectDetailCellsThatDistortTheLayoutMetric) {
 
   const auto problems = planProblems(chip, config, allSteps());
   ASSERT_EQ(problems.size(), 1U);
-  EXPECT_NE(problems.front().find("near-square detail cells"), std::string::npos);
-  EXPECT_THROW(static_cast<void>(buildScene(chip, config)), std::invalid_argument);
+  EXPECT_NE(problems.front().find("near-square detail cells"),
+            std::string::npos);
+  EXPECT_THROW(static_cast<void>(buildScene(chip, config)),
+               std::invalid_argument);
 }
 
 TEST(PlanProblems, RefuseADetailGridBeyondTheRangeOfAnAxis) {

@@ -234,8 +234,10 @@ StampedBand stampBand(BitGrid& mask, const PortBand& band) {
   markAlong(-band.step.x, -band.step.y, 1, band.backward);
 
   // The unclipped end tells target placement whether to undo the band.
-  const auto lastX = startX + (band.step.x * static_cast<int64_t>(band.forward));
-  const auto lastY = startY + (band.step.y * static_cast<int64_t>(band.forward));
+  const auto lastX =
+      startX + (band.step.x * static_cast<int64_t>(band.forward));
+  const auto lastY =
+      startY + (band.step.y * static_cast<int64_t>(band.forward));
   stamped.lastForwardCenter =
       DCoord(static_cast<uint32_t>(std::clamp<int64_t>(lastX, 0, width - 1)),
              static_cast<uint32_t>(std::clamp<int64_t>(lastY, 0, height - 1)));

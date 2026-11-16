@@ -425,6 +425,17 @@ TEST(BorderSlots, GivesABorderShorterThanOneSpacingASingleSlot) {
   EXPECT_EQ(borderSlots(border, grid, 100.0).size(), 1U);
 }
 
+TEST(BorderSlots, AcceptsASpacingMuchSmallerThanACell) {
+  auto grid = unitGrid(4, 4);
+  grid.origin = {1000.0, 2000.0};
+  const PartitionBorder border{
+      .first = FIRST_PARTITION_LABEL,
+      .second = static_cast<PartitionLabel>(FIRST_PARTITION_LABEL + 1),
+      .samples = {{1.5, 0.0}, {1.5, 1.0}, {1.5, 2.0}}};
+
+  EXPECT_EQ(borderSlots(border, grid, 1e-30), border.samples);
+}
+
 TEST(BorderSlots, RefusesASpacingThatIsNotPositive) {
   const auto grid = unitGrid(4, 4);
   const PartitionBorder border{

@@ -174,7 +174,8 @@ bool freeSegment(const BitGrid& blocked, const double ax, const double ay,
   }
 
   const auto length = std::hypot(bx - ax, by - ay);
-  const auto steps = std::max<int64_t>(1, static_cast<int64_t>(std::ceil(length)));
+  const auto steps =
+      std::max<int64_t>(1, static_cast<int64_t>(std::ceil(length)));
   for (int64_t step = 0; step <= steps; ++step) {
     const auto t = static_cast<double>(step) / static_cast<double>(steps);
     if (blockedAt(blocked, std::llround(ax + (t * (bx - ax))),
