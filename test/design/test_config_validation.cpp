@@ -287,10 +287,10 @@ TEST(ConfigValidation, ABridgeRuleNeedsOnePortPerSideAndCapture) {
   }
 
   ConfigT config = manualConfig();
-  config.ports->patterns->bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+  config.ports->patterns->bridge_pair = R"(^Coupler3_4\.port[1-4]$)";
   auto rule = couplerRule();
-  rule->first = R"(^(Coupler\d+_\d+)\.port[13]$)";
-  rule->second = R"(^(Coupler\d+_\d+)\.port[24]$)";
+  rule->first = R"(^(Coupler3_4)\.port[13]$)";
+  rule->second = R"(^(Coupler3_4)\.port[24]$)";
   config.ports->bridge_pairs.push_back(std::move(rule));
 
   const auto problems = validate(config, chip);
