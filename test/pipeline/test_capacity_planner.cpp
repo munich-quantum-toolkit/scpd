@@ -564,8 +564,9 @@ TEST(CapacityPlanner, ExportsReopenedApproachesOutsideTheBlockedMask) {
     SCOPED_TRACE(atEdge);
     auto chip = pinchedCorridorChip(config, !atEdge);
     if (atEdge) {
-      const auto q2 = std::ranges::find_if(
-          chip.ports, [](const auto& port) { return port->label == "Q2.port0"; });
+      const auto q2 = std::ranges::find_if(chip.ports, [](const auto& port) {
+        return port->label == "Q2.port0";
+      });
       ASSERT_NE(q2, chip.ports.end());
       (*q2)->center = flatbuffers::geometry::Point(150.0, 105.0);
     }
@@ -695,6 +696,9 @@ TEST(CapacityPlanner, DropsAGateThatLeadsNowhere) {
       twoPinchChip(config, 20.0, 40.0, Alcove::Empty), config, {});
   EXPECT_FALSE(keepsTheMouth(empty));
   EXPECT_EQ(bottleneckColumns(empty).size(), 1U);
+  EXPECT_EQ(served,
+            makeWatershedPlanner()->run(
+                twoPinchChip(ring, 20.0, 40.0, Alcove::WithTarget), ring, {}));
 }
 
 /// How many chains reach each target port of a plan, counting a target twice

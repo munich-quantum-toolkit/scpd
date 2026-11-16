@@ -440,7 +440,8 @@ private:
   /// one chamber, that rule would drop every one of them, and the free space
   /// beyond a branching corridor would fall out of the plan.
   [[nodiscard]] std::vector<std::size_t>
-  visibleGates(const Chamber& chamber) const {
+  visibleGates(const Chamber& chamber,
+               const std::unordered_set<std::size_t>& seen) const {
     if (chamber.gates.size() < 2) {
       return chamber.gates;
     }
@@ -459,7 +460,7 @@ private:
       // such cell is one the chamber does not border at all, which is exactly
       // the gate this test exists to drop.
       bool seenFromSomewhere = false;
-      for (const auto eye : observersOf(candidate, chamber)) {
+      for (const auto eye : observersOf(candidate, seen)) {
         const auto seenFrom = layoutOf(grid, eye);
         bool clear = true;
         for (const auto other : chamber.gates) {
@@ -487,10 +488,9 @@ private:
 
   /// The cells of a chamber that look onto a gate: the ones beside its line.
   [[nodiscard]] std::vector<std::size_t>
-  observersOf(const std::size_t gate, const Chamber& chamber) const {
+  observersOf(const std::size_t gate,
+              const std::unordered_set<std::size_t>& seen) const {
     const auto& grid = planScene->detail;
-    const std::unordered_set<std::size_t> seen(chamber.cells.begin(),
-                                               chamber.cells.end());
     std::vector<std::size_t> observers;
     std::unordered_set<std::size_t> taken;
     for (const auto cell : gateLines[gate]) {
@@ -514,6 +514,31 @@ private:
       }
     }
     return observers;
+  }
+
+  struct ChamberExits {
+    std::unordered_set<std::size_t> siblings;
+    std::vector<std::pair<std::size_t, std::vector<std::size_t>>> gates;
+  };
+
+  /// Resolve all exits while this chamber's membership is still available.
+  [[nodiscard]] ChamberExits
+  exitsOf(const Chamber& chamber,
+          const std::unordered_set<std::size_t>& skip) const {
+    ChamberExits exits;
+    if (chamber.gates.empty()) {
+      return exits;
+    }
+    const std::unordered_set<std::size_t> seen(chamber.cells.begin(),
+                                               chamber.cells.end());
+    const auto gates = visibleGates(chamber, seen);
+    exits.siblings.insert(gates.begin(), gates.end());
+    for (const auto gate : gates) {
+      if (!skip.contains(gate)) {
+        exits.gates.emplace_back(gate, seedsBeyond(gate, seen));
+      }
+    }
+    return exits;
   }
 
   void expand(const std::uint32_t parent, const std::vector<std::size_t>& seeds,
@@ -542,19 +567,15 @@ private:
       (*nodeList)[parent]->next.push_back(target);
     }
 
-    const auto gates = visibleGates(chamber);
-    const std::unordered_set<std::size_t> siblings(gates.begin(), gates.end());
-    for (const auto gate : gates) {
-      if (skip.contains(gate)) {
-        continue;
-      }
+    const auto [siblings, gates] = exitsOf(chamber, skip);
+    for (const auto& [gate, nextSeeds] : gates) {
       openedInWalk.insert(gate);
       const auto node =
           addNode(fba::CapacityElement::Bottleneck,
                   static_cast<std::uint32_t>(gate), capacityOf(gate));
 
       setClosed(gate, false);
-      expand(node, seedsBeyond(gate, chamber), siblings);
+      expand(node, nextSeeds, siblings);
       setClosed(gate, true);
 
       (*nodeList)[parent]->next.push_back(node);
@@ -593,18 +614,14 @@ private:
       servedInWalk.insert(cell);
     }
 
-    const auto gates = visibleGates(chamber);
-    const std::unordered_set<std::size_t> siblings(gates.begin(), gates.end());
-    for (const auto gate : gates) {
-      if (skip.contains(gate)) {
-        continue;
-      }
+    const auto [siblings, gates] = exitsOf(chamber, skip);
+    for (const auto& [gate, nextSeeds] : gates) {
       openedInWalk.insert(gate);
       setClosed(gate, false);
       // Every chamber beyond a gate is a partition of its own, which is what
       // makes a gate a border rather than a line drawn through one region.
       nextStampLabel = grid::nextPartitionLabel(nextStampLabel);
-      static_cast<void>(stamp(seedsBeyond(gate, chamber), siblings));
+      static_cast<void>(stamp(nextSeeds, siblings));
       setClosed(gate, true);
     }
     return true;
@@ -613,10 +630,9 @@ private:
   /// The cells a chain continues from once a gate is open: the cells of the
   /// gate itself and the ones beside it that the chamber has already seen.
   [[nodiscard]] std::vector<std::size_t>
-  seedsBeyond(const std::size_t gate, const Chamber& chamber) const {
+  seedsBeyond(const std::size_t gate,
+              const std::unordered_set<std::size_t>& seen) const {
     const auto& grid = planScene->detail;
-    const std::unordered_set<std::size_t> seen(chamber.cells.begin(),
-                                               chamber.cells.end());
     std::vector<std::size_t> seeds;
     std::unordered_set<std::size_t> taken;
 
