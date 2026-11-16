@@ -14,9 +14,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
+#include <limits>
 
 namespace {
 
@@ -37,6 +41,7 @@ TEST(PortBands, OrientationsStepAlongTheAxesAndDiagonals) {
   EXPECT_EQ(orientationStep(270.0), (Step{.x = 0, .y = -1}));
   EXPECT_EQ(orientationStep(45.0), (Step{.x = 1, .y = 1}));
   EXPECT_EQ(orientationStep(495.0), (Step{.x = -1, .y = 1}));
+  EXPECT_EQ(orientationStep(std::ldexp(360.0, 60)), (Step{.x = 1, .y = 0}));
   EXPECT_TRUE(orientationStep(225.0).diagonal());
   EXPECT_FALSE(orientationStep(90.0).diagonal());
 }
@@ -70,6 +75,15 @@ TEST(PortBands, OnCellsThatAreNotSquareEachAxisCountsItsOwnStep) {
   EXPECT_EQ(bandHalfWidth(185.0, grid, alongY), 9U);
   // A diagonal step is the diagonal of one cell, about 11.18 units long.
   EXPECT_EQ(bandLength(100.0, grid, Step{.x = 1, .y = 1}), 8U);
+}
+
+TEST(PortBands, BoundsTheCellCountsOfLongAndWideBands) {
+  const auto distance = std::numeric_limits<double>::max();
+  constexpr auto maxCells = std::numeric_limits<std::uint32_t>::max();
+  for (const auto step : {Step{.x = 1, .y = 0}, Step{.x = -1, .y = 1}}) {
+    EXPECT_EQ(bandLength(distance, tenUnits(), step), maxCells);
+    EXPECT_EQ(bandHalfWidth(distance, tenUnits(), step), maxCells);
+  }
 }
 
 TEST(PortBands, AStraightBandCoversItsStrips) {
@@ -230,6 +244,31 @@ TEST(PortBands, PlacingBeyondABandThatRunsOffTheGridUndoesTheBand) {
       EXPECT_FALSE(mask.test(cell)) << cell;
     }
   }
+}
+
+TEST(PortBands, ClipsWideDiagonalStripsAndKeepsTheIntendedEnd) {
+  BitGrid before(13, 7);
+  before.setCell(0, 0);
+  before.setCell(12, 6);
+  BitGrid mask = before;
+  constexpr auto maxCells = std::numeric_limits<std::uint32_t>::max();
+  const PortBand band{.center = DCoord(9, 2),
+                      .step = {.x = 1, .y = -1},
+                      .forward = maxCells,
+                      .backward = maxCells,
+                      .halfWidth = maxCells};
+
+  const auto stamped = stampBand(mask, band);
+  EXPECT_EQ(mask.count(), 13U * 7U);
+  EXPECT_EQ(stamped.cells.size(), mask.count());
+  EXPECT_EQ(std::ranges::count(stamped.wasBlocked, true), 2);
+  EXPECT_EQ(stamped.lastForwardCenter, DCoord(12, 0));
+  EXPECT_FALSE(stamped.lastForwardOnGrid);
+
+  const auto target = placeTargetBeyondBand(mask, before, stamped, band.step);
+  ASSERT_TRUE(target.has_value());
+  EXPECT_EQ(*target, 12U);
+  EXPECT_EQ(mask, before);
 }
 
 TEST(PortBands, PlacingFindsNoTargetOnAFullGrid) {
