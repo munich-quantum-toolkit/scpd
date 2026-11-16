@@ -17,6 +17,7 @@ can draw a run that stopped early.
 from __future__ import annotations
 
 import math
+import re
 import struct
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
@@ -288,14 +289,8 @@ def _blocked(plan: CapacityPlanT) -> list[list[Point]]:
         first_byte, skip = divmod(first_bit, 8)
         last_byte = (first_bit + width + 7) // 8
         row = (int.from_bytes(packed[first_byte:last_byte], "little") >> skip) & full if y < height else 0
-        runs = set()
-        while row:
-            start = (row & -row).bit_length() - 1
-            shifted = row >> start
-            # Adding one flips the low ones and the first zero.
-            end = start + (shifted ^ (shifted + 1)).bit_length() - 1
-            runs.add((start, end))
-            row &= ~((1 << end) - 1)
+        # The least significant bit is the first column.
+        runs = {match.span() for match in re.finditer(r"1+", f"{row:b}"[::-1])}
         for run in list(open_runs):
             if run not in runs:
                 top = open_runs.pop(run)

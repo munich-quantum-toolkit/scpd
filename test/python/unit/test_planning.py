@@ -180,10 +180,14 @@ def _square(label: int, x0: float, y0: float, x1: float, y1: float) -> Partition
     return PartitionT(label=label, outlines=[PolygonT(vertices=corners)])
 
 
-def test_the_blocked_cells_include_a_one_cell_wall(run: RunDirectory) -> None:
-    """A one-cell wall and a block both appear even where the partitions stop short."""
+@pytest.mark.parametrize("checkerboard", [False, True], ids=["wall-and-block", "checkerboard"])
+def test_the_blocked_overlay_preserves_grid_cells(run: RunDirectory, *, checkerboard: bool) -> None:
+    """Narrow walls and alternating blocked cells survive conversion to rectangles."""
     grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
-    expected = {(5, y) for y in range(12)} | {(x, y) for x in range(7, 11) for y in range(4, 8)}
+    if checkerboard:
+        expected = {(x, y) for y in range(12) for x in range(12) if (x + y) % 2 == 0}
+    else:
+        expected = {(5, y) for y in range(12)} | {(x, y) for x in range(7, 11) for y in range(4, 8)}
     mask = sum(1 << (y * grid.width + x) for x, y in expected)
     words = [(mask >> bit) & ((1 << 64) - 1) for bit in range(0, grid.width * grid.height, 64)]
     plan = CapacityPlanT(
