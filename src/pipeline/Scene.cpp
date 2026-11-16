@@ -149,16 +149,16 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
   }
   // Port headings and the clearance search use square lattice steps. Allow
   // the rounding of the cell counts while bounding the error of those steps.
-  constexpr double MAX_STEP_RATIO = 1.1;
+  constexpr double maxStepRatio = 1.1;
   const auto xStep = box.width() / (width - 1.0);
   const auto yStep = box.height() / (height - 1.0);
-  if (std::max(xStep, yStep) > std::min(xStep, yStep) * MAX_STEP_RATIO) {
+  if (std::max(xStep, yStep) > std::min(xStep, yStep) * maxStepRatio) {
     return std::format(
         "[grid] needs near-square detail cells for the capacity step; "
         "{:.0f} × {:.0f} cells give steps of {:.6g} × {:.6g} layout units, "
-        "which differ by more than 10%; set capacity_cells_y to 0 or increase "
-        "the capacity grid resolution",
-        width, height, xStep, yStep);
+        "which differ by more than 10%; {}increase capacity_cells_x",
+        width, height, xStep, yStep,
+        params.capacity_cells_y == 0 ? "" : "set capacity_cells_y to 0 or ");
   }
   return std::nullopt;
 }

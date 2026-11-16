@@ -13,6 +13,7 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
@@ -143,6 +144,18 @@ TEST(PlanProblems, RefuseADetailGridAboveTheLimit) {
                 "detail_factor 60; the limit is 25000000 cells"});
   // A run that does not take the capacity step builds no grid.
   EXPECT_TRUE(planProblems(test::miniChip(), config, {}).empty());
+}
+
+TEST(PlanProblems, RecommendsFinerCapacityCellsWhenHeightIsDerived) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 2;
+  config.grid->capacity_cells_y = 0;
+  const auto problems = planProblems(test::miniChip(), config, allSteps());
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_NE(problems.front().find("increase capacity_cells_x"),
+            std::string::npos);
+  EXPECT_EQ(problems.front().find("set capacity_cells_y"), std::string::npos);
 }
 
 TEST(PlanProblems, AcceptADetailGridAtTheLimit) {

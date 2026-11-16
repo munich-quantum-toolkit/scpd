@@ -124,7 +124,7 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
     const auto& grid = *plan.detail_grid;
     const auto cells = static_cast<std::uint64_t>(grid.width) * grid.height;
     if (cells != 0 &&
-        (!(grid.cell_width > 0.0 && grid.cell_height > 0.0) ||
+        (grid.cell_width <= 0.0 || grid.cell_height <= 0.0 ||
          !std::isfinite(grid.cell_width) || !std::isfinite(grid.cell_height) ||
          !std::isfinite(grid.origin.x()) || !std::isfinite(grid.origin.y()))) {
       problems.emplace_back("detail grid: origin and cell steps must be "
