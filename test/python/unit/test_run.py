@@ -491,6 +491,18 @@ def test_assignment_refuses_a_replaced_global_artifact(tmp_path: Path) -> None:
         directory.check_current("assign", digests)
 
 
+def test_assignment_names_a_missing_global_artifact(tmp_path: Path) -> None:
+    """A diagnostic names the prerequisite to rerun when the Global artifact is missing."""
+    directory = RunDirectory(tmp_path / "run")
+    config = directory.prepare(CONFIG)
+    run_through(directory, list(STEPS))
+    digests = input_digests(config, directory.classified_chip(config))
+    directory.artifact("global").unlink()
+
+    with pytest.raises(RunError, match=r"02-global\.fb is missing; run the global step first"):
+        directory.check_current("assign", digests)
+
+
 def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A step that raises writes nothing, and the artifact of its last run stays."""
     directory = RunDirectory(tmp_path / "run")

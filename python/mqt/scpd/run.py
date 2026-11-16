@@ -9,13 +9,13 @@
 """The run directory: what a step reads, what it writes, and how a run is resumed.
 
 Every step reads the artifacts of the steps before it and writes one artifact, so a run can be
-continued from any completed step. Running a step deletes the artifacts of every later step, so
-the directory never holds a later artifact beside an earlier one it did not come from. An artifact
-is written to a file of its own first and then renamed, so no half-written artifact is left behind.
+continued from any completed step. A successful rerun removes the artifacts of every later step.
+Publication installs the staged files by rename. If the planning process is interrupted during
+publication, the next writer recovers the run before starting.
 
-Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip,
-of every configuration section the step reads, and of the artifact itself. A step refuses to run
-on an earlier artifact whose bytes or inputs do not match its record.
+Beside each artifact a step records digests of the classified chip, the configuration sections and
+artifacts it reads, and the artifact it writes. A step refuses to run on an earlier artifact whose
+bytes or inputs do not match its record.
 
 Python does the file work. The core never opens a file: it takes bytes and returns bytes.
 """
@@ -730,7 +730,7 @@ class RunDirectory:
                 record = json.loads(self.record(earlier).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 record = None
-            inputs = tuple(STAGE_FILES[step] for step in ARTIFACT_INPUTS[earlier])
+            inputs = {STAGE_FILES[step]: step for step in ARTIFACT_INPUTS[earlier]}
             if not isinstance(record, dict) or set(record) != {*STEP_INPUTS[earlier], *inputs, _ARTIFACT_DIGEST}:
                 msg = f"{artifact.name} carries no record of the inputs it was made from; run the {earlier} step again"
                 raise RunError(msg)
@@ -745,8 +745,11 @@ class RunDirectory:
                         f"{where} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
                     )
                     raise RunError(msg)
-            for name in inputs:
-                if name not in verified_digests or record[name] != verified_digests[name]:
+            for name, step in inputs.items():
+                if name not in verified_digests:
+                    msg = f"{name} is missing; run the {step} step first"
+                    raise RunError(msg)
+                if record[name] != verified_digests[name]:
                     msg = f"{name} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
                     raise RunError(msg)
             verified_digests[artifact.name] = digest
