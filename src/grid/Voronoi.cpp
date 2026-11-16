@@ -161,12 +161,25 @@ private:
 /// keeps a diagonal from stepping over a one-cell wall.
 bool freeSegment(const BitGrid& blocked, const double ax, const double ay,
                  const double bx, const double by) {
+  // Voronoi vertices can lie far from the sites. Only sample a segment
+  // whose endpoints round onto the grid, so the sample count fits.
+  const auto roundsOntoAxis = [](const double value, const uint32_t count) {
+    return value > -0.5 && value < static_cast<double>(count) - 0.5;
+  };
+  if (!roundsOntoAxis(ax, blocked.width()) ||
+      !roundsOntoAxis(bx, blocked.width()) ||
+      !roundsOntoAxis(ay, blocked.height()) ||
+      !roundsOntoAxis(by, blocked.height())) {
+    return false;
+  }
+
   const auto length = std::hypot(bx - ax, by - ay);
-  const auto steps = std::max(1, static_cast<int>(std::ceil(length)));
-  for (int step = 0; step <= steps; ++step) {
-    const auto t = static_cast<double>(step) / steps;
-    if (blockedAt(blocked, std::lround(ax + (t * (bx - ax))),
-                  std::lround(ay + (t * (by - ay))))) {
+  const auto steps =
+      std::max<int64_t>(1, static_cast<int64_t>(std::ceil(length)));
+  for (int64_t step = 0; step <= steps; ++step) {
+    const auto t = static_cast<double>(step) / static_cast<double>(steps);
+    if (blockedAt(blocked, std::llround(ax + (t * (bx - ax))),
+                  std::llround(ay + (t * (by - ay))))) {
       return false;
     }
   }

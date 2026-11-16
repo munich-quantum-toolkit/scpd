@@ -492,19 +492,27 @@ def load_config(path: Path, *, strict: bool = False) -> ConfigT:
 
     Returns:
         The configuration.
+    """
+    return parse_config(read_config_text(path), source=str(path), strict=strict)
+
+
+def read_config_text(path: Path) -> str:
+    """Read the exact UTF-8 text of a configuration.
+
+    Returns:
+        The source text, with its line endings intact.
 
     Raises:
-        ConfigError: If the file cannot be read or has a problem.
+        ConfigError: If the file cannot be read or is not UTF-8.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_bytes().decode("utf-8")
     except OSError as error:
         msg = f"cannot read {path}: {error}"
         raise ConfigError(msg) from error
     except UnicodeDecodeError as error:
         msg = f"cannot read {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
         raise ConfigError(msg) from error
-    return parse_config(text, source=str(path), strict=strict)
 
 
 def write_config(config: ConfigT) -> bytes:

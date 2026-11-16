@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from mqt.scpd import cli, pyscpd
-from mqt.scpd.artifacts import read_artifact, write_artifact
+from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.cli import main
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
@@ -408,6 +408,7 @@ def test_plan_runs_every_step_into_the_run_directory(tmp_path: Path, capsys: pyt
     assert plan(run) == 0
 
     assert sorted(path.name for path in run.iterdir()) == [
+        ".mqt-scpd-run",
         "00-chip.json",
         "01-capacity.fb",
         "01-capacity.inputs.json",
@@ -592,24 +593,37 @@ def test_a_step_without_its_input_fails_in_its_block(tmp_path: Path, capsys: pyt
     assert lines[-1].startswith("✗ stopped at assign after ")
 
 
-def test_an_error_of_the_core_is_a_line_and_not_a_traceback(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """A stage that the core refuses ends the run with the reason in its block."""
-    run = tmp_path / "run"
-    assert plan(run, "--stop-after", "global") == 0
-    # Without its resonators, the ring carries five conventional ports, and the fixture has four
-    # launchers. Only the assignment sees the ring that the global step wrote.
-    artifact = read_artifact((run / "02-global.fb").read_bytes())
-    assert isinstance(artifact.output, GlobalRoutingT)
-    artifact.output.resonators = []
-    (run / "02-global.fb").write_bytes(write_artifact(artifact))
-    capsys.readouterr()
+def test_failed_assignment_leaves_no_partial_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed Assignment stage leaves no Capacity or Global artifact from the incomplete run."""
 
-    assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 1
+    def fail(*args: object) -> bytes:
+        del args
+        msg = "the assignment has no solution"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(pyscpd, "assign", fail)
+    run = tmp_path / "run"
+    assert plan(run) == 1
 
     out = capsys.readouterr().out
-    assert "   ✗ the ring carries 5 conventional ports and the assignment places 0 launcher ends, which need 5" in out
-    assert "Traceback" not in out
-    assert not (run / "03-assign.fb").exists()
+    assert "   ✗ the assignment has no solution" in out
+    assert not list(run.glob("0[1-3]-*"))
+
+
+def fixture_config(directory: Path) -> Path:
+    """Write the fixture configuration with an absolute path to the chip.
+
+    Returns:
+        The path of the configuration.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    config = directory / "config.toml"
+    chip = (Path(CONFIG).parent / "routing_config.json").as_posix()
+    text = Path(CONFIG).read_text(encoding="utf-8")
+    config.write_text(text.replace('input = "routing_config.json"', f'input = "{chip}"'), encoding="utf-8")
+    return config
 
 
 def with_launcher_target(directory: Path, target: int) -> Path:
@@ -618,11 +632,8 @@ def with_launcher_target(directory: Path, target: int) -> Path:
     Returns:
         The path of the configuration.
     """
-    config = directory / "config.toml"
-    text = Path(CONFIG).read_text(encoding="utf-8")
-    text = text.replace(
-        'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
-    )
+    config = fixture_config(directory)
+    text = config.read_text(encoding="utf-8")
     config.write_text(text.replace("launcher_target = 1", f"launcher_target = {target}"), encoding="utf-8")
     return config
 
@@ -774,6 +785,212 @@ def test_a_refused_run_keeps_the_run_it_would_replace(tmp_path: Path, capsys: py
     assert sorted(path.name for path in run.glob("*.fb")) == before == ["01-capacity.fb", "02-global.fb"]
 
 
+def test_failed_replacement_preserves_the_completed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A planner failure preserves the previous inputs, artifact, record, and unrelated files."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    (run / "notes.txt").write_text("keep me", encoding="utf-8")
+    before = {path.name: path.read_bytes() for path in run.iterdir()}
+
+    def fail(*args: object) -> bytes:
+        del args
+        msg = "scene construction failed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(pyscpd, "plan_capacity", fail)
+    assert plan(run) == 1
+
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+def test_failed_publication_restores_the_completed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed file replacement leaves the completed run readable."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    before = {path.name: path.read_bytes() for path in run.iterdir()}
+
+    source = fixture_config(tmp_path)
+    source.write_text(source.read_text(encoding="utf-8") + "\n# revised source\n", encoding="utf-8")
+    replace = Path.replace
+    locked = run / "01-capacity.fb"
+
+    def fail(source: Path, target: Path) -> Path:
+        if target == locked and source.parent.name == "run":
+            msg = "the artifact could not be replaced"
+            raise PermissionError(msg)
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail)
+    assert main(["plan", "-c", str(source), "-o", str(run), "--no-progress"]) == 1
+
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+@pytest.mark.parametrize("partial", [b"", b"MQT SCPD run"], ids=["empty", "partial"])
+def test_plan_recovers_an_interrupted_directory_claim(tmp_path: Path, partial: bytes) -> None:
+    """A truncated marker in an otherwise empty directory permits another attempt."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.path.mkdir()
+    directory.marker.write_bytes(partial)
+
+    assert plan(directory.path) == 0
+    assert directory.artifact("capacity").is_file()
+
+
+@pytest.mark.parametrize("existing_run", [False, True], ids=["empty", "owned"])
+def test_publication_keeps_moves_on_the_run_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, existing_run: bool
+) -> None:
+    """An existing directory can be on a different filesystem from its parent."""
+    run = tmp_path / "run"
+    run.mkdir()
+    if existing_run:
+        assert plan(run) == 0
+    replace = Path.replace
+
+    def same_filesystem(source: Path, target: Path) -> Path:
+        if source.absolute().is_relative_to(run) != target.absolute().is_relative_to(run):
+            raise OSError(errno.EXDEV, "cross-device rename", str(source))
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", same_filesystem)
+    assert plan(run) == 0
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
+    assert (run / "01-capacity.fb").is_file()
+
+
+@pytest.mark.parametrize("resume", [True, False], ids=["resumed-stage", "fresh-plan"])
+def test_planning_recovers_interrupted_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, resume: bool
+) -> None:
+    """A process interruption after a rename leaves the prior run available to the next writer."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    before = {path.name: path.read_bytes() for path in run.iterdir()}
+    replace = Path.replace
+
+    def interrupt_after_move(source: Path, target: Path) -> Path:
+        result = replace(source, target)
+        if source == run / "config.toml":
+            raise SystemExit(23)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", interrupt_after_move)
+        with pytest.raises(SystemExit) as info:
+            plan(run)
+        assert info.value.code == 23
+
+    arguments = ["--stage", "assign"] if resume else ["-c", str(run / "config.toml")]
+    assert main(["plan", "-o", str(run), "--no-progress", *arguments]) == 0
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+def test_interrupted_cleanup_keeps_the_committed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A writer interrupted after committing never restores the previous run."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    source = fixture_config(tmp_path)
+    source.write_text(source.read_text(encoding="utf-8") + "\n# revised source\n", encoding="utf-8")
+    unlink = Path.unlink
+
+    def interrupt_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+        if path.name == "config.toml" and path.parent.parent == run:
+            raise SystemExit(23)
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", interrupt_cleanup)
+        with pytest.raises(SystemExit) as info:
+            main(["plan", "-c", str(source), "-o", str(run), "--no-progress"])
+        assert info.value.code == 23
+
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
+    assert (run / "config.toml").read_bytes() == source.read_bytes()
+
+
+def test_recovery_removes_uncommitted_files_from_an_incomplete_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recovery removes new files that had no prior versions."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(Path(CONFIG))
+    before = {path.name: path.read_bytes() for path in directory.path.iterdir()}
+    replace = Path.replace
+
+    def interrupt_install(source: Path, target: Path) -> Path:
+        result = replace(source, target)
+        if target == directory.artifact("capacity"):
+            raise SystemExit(23)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", interrupt_install)
+        with pytest.raises(SystemExit) as info:
+            plan(directory.path)
+        assert info.value.code == 23
+
+    def fail(*args: object) -> bytes:
+        del args
+        msg = "scene construction failed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(pyscpd, "plan_capacity", fail)
+    assert main(["plan", "-o", str(directory.path), "--stage", "capacity", "--no-progress"]) == 1
+    assert {path.name: path.read_bytes() for path in directory.path.iterdir()} == before
+
+
+def test_plan_can_publish_in_an_empty_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run accepts the current directory if it is empty."""
+    monkeypatch.chdir(tmp_path)
+    assert plan(Path()) == 0
+    assert (tmp_path / "01-capacity.fb").is_file()
+
+
+def test_a_slow_resumed_step_cannot_overwrite_a_new_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A step calculated from old inputs cannot replace a newer run."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    source = fixture_config(tmp_path)
+    text = source.read_text(encoding="utf-8").replace("capacity_cells_x = 12", "capacity_cells_x = 13")
+    source.write_text(text, encoding="utf-8")
+    plan_capacity = pyscpd.plan_capacity
+    published: dict[str, bytes] = {}
+
+    def replace_during_planning(chip: bytes, config: bytes, producer: str, reporter: object, level: int) -> bytes:
+        with monkeypatch.context() as inner:
+            inner.setattr(pyscpd, "plan_capacity", plan_capacity)
+            assert main(["plan", "-c", str(source), "-o", str(run), "--no-progress"]) == 0
+        published.update({path.name: path.read_bytes() for path in run.iterdir()})
+        return plan_capacity(chip, config, producer, reporter, level)
+
+    monkeypatch.setattr(pyscpd, "plan_capacity", replace_during_planning)
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 1
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == published
+
+
+def test_plan_saves_the_inputs_it_validated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Edits to the sources during preflight do not change the snapshot published with the artifact."""
+    source = fixture_config(tmp_path)
+    chip = tmp_path / "source-chip.json"
+    chip.write_bytes((Path(CONFIG).parent / "routing_config.json").read_bytes())
+    config_bytes = source.read_bytes()
+    chip_bytes = chip.read_bytes()
+    preflight = pyscpd.plan_problems
+
+    def edit_after_read(classified: bytes, config: bytes, steps: list[str]) -> list[str]:
+        source.write_bytes(b"invalid after the snapshot")
+        chip.write_bytes(b"invalid after the snapshot")
+        return preflight(classified, config, steps)
+
+    monkeypatch.setattr(pyscpd, "plan_problems", edit_after_read)
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(source), "--chip", str(chip), "-o", str(run), "--no-progress"]) == 0
+
+    assert (run / "config.toml").read_bytes() == config_bytes
+    assert (run / "00-chip.json").read_bytes() == chip_bytes
+
+
 def test_plan_refuses_a_file_as_its_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A run directory that is a file is refused with a line that says so, and the file stays."""
     afile = tmp_path / "afile"
@@ -834,6 +1051,15 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
     assert plan(run) == 0
     capsys.readouterr()
     handed: list[bytes | None] = []
+    overlays = {run / "01-capacity.fb", run / "02-global.fb"}
+    reads: set[Path] = set()
+    read_bytes = Path.read_bytes
+
+    def read_overlay(path: Path) -> bytes:
+        if path in overlays:
+            assert path not in reads, f"{path.name} was read again after verification"
+            reads.add(path)
+        return read_bytes(path)
 
     def planning_geometry(
         data: bytes,
@@ -846,11 +1072,12 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
         return drawing(data, chip, stage, capacity, global_routing)
 
     monkeypatch.setattr(cli, "planning_geometry", planning_geometry)
+    monkeypatch.setattr(Path, "read_bytes", read_overlay)
     output = tmp_path / f"{stage}.svg"
 
     assert main(["plot", "--run-dir", str(run), "--stage", stage, "-o", str(output)]) == 0
 
-    expected = None if drawn is None else (run / "02-global.fb").read_bytes()
+    expected = None if drawn is None else read_bytes(run / "02-global.fb")
     assert handed == [expected]
     if stage == "global":
         assert '<g class="l-raster">' in output.read_text(encoding="utf-8")
@@ -872,10 +1099,7 @@ def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixt
 def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A step that failed keeps its old artifact without a record, and a changed input outdates every artifact.
-
-    Either way the picture of the step is refused, since it would show what the run inputs no longer make.
-    """
+    """A failed rerun preserves a current artifact, while a change to its inputs makes it stale."""
     run = tmp_path / "run"
     assert plan(run, "--stop-after", "assign") == 0
     capsys.readouterr()
@@ -890,18 +1114,6 @@ def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
         patched.setattr(pyscpd, "assign", broken)
         assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 1
     capsys.readouterr()
-    assert (run / "03-assign.fb").is_file()
-    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 1
-    assert "03-assign.fb carries no record of the inputs it was made from" in capsys.readouterr().err
-    assert not output.exists()
-    # inspect still prints the artifact, after a warning.
-    assert main(["inspect", str(run / "03-assign.fb")]) == 0
-    captured = capsys.readouterr()
-    assert json.loads(captured.out)["output_type"] == "Assignment"
-    assert "⚠ 03-assign.fb carries no record of the inputs it was made from" in captured.err
-
-    assert main(["plan", "-o", str(run), "--stage", "assign", "--no-progress"]) == 0
-    capsys.readouterr()
     assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
     capsys.readouterr()
     assert main(["inspect", str(run / "03-assign.fb")]) == 0
@@ -913,6 +1125,21 @@ def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
     )
     assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 1
     assert "[stages.capacity] in config.toml changed after the capacity step" in capsys.readouterr().err
+    assert main(["inspect", str(run / "01-capacity.fb")]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["output_type"] == "CapacityPlan"
+    assert "[stages.capacity] in config.toml changed after the capacity step" in captured.err
+
+
+def test_plot_checks_the_artifact_it_draws(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A substituted artifact is refused before it reaches the renderer."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    capsys.readouterr()
+    (run / "01-capacity.fb").write_bytes(b"an unrelated result")
+
+    assert main(["plot", "--run-dir", str(run), "--stage", "capacity", "-o", str(tmp_path / "capacity.svg")]) == 1
+    assert "01-capacity.fb does not match its input record" in capsys.readouterr().err
 
 
 @pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
@@ -969,11 +1196,8 @@ def stopping_after(directory: Path, step: str) -> Path:
     Returns:
         The path of the configuration.
     """
-    config = directory / "config.toml"
-    text = Path(CONFIG).read_text(encoding="utf-8")
-    text = text.replace(
-        'input = "routing_config.json"', f'input = "{(Path(CONFIG).parent / "routing_config.json").as_posix()}"'
-    )
+    config = fixture_config(directory)
+    text = config.read_text(encoding="utf-8")
     config.write_text(text + f'\n[run]\nstop_after = "{step}"\n', encoding="utf-8")
     return config
 

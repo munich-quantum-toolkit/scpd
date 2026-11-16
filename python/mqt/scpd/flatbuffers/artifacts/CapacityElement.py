@@ -9,5 +9,5 @@ class CapacityElement(object):
     Target = 1
     # A gate the wires beyond it have to pass.
     Bottleneck = 2
-    # The launcher the chain starts at.
+    # A chamber from which a launcher can be reached.
     Launcher = 3

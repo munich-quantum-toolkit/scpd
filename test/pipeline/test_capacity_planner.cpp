@@ -12,6 +12,7 @@
 // what its plan holds, that it is the same on every run, and what it reports.
 
 #include "MiniFixture.hpp"
+#include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
@@ -223,12 +224,13 @@ TEST(CapacityScene, TakesTheDefaultGridWhenTheConfigurationLeavesItOut) {
 
 TEST(CapacityScene, TakesTheCellsAlongYFromTheConfigurationWhenGiven) {
   auto config = test::miniConfig();
-  config.grid->capacity_cells_y = 7;
+  config.grid->capacity_cells_x = 11;
+  config.grid->capacity_cells_y = 10;
 
   const auto scene = buildScene(test::miniChip(), config);
 
-  EXPECT_EQ(scene.capacity.width, 12U);
-  EXPECT_EQ(scene.capacity.height, 7U);
+  EXPECT_EQ(scene.capacity.width, 11U);
+  EXPECT_EQ(scene.capacity.height, 10U);
 }
 
 TEST(CapacityScene, TakesTheDefaultCrossingPitchWithoutACapacitySection) {
@@ -558,6 +560,44 @@ TEST(CapacityPlanner, LeavesTheBandItTookBackOutOfEveryPartition) {
   EXPECT_GT(freeReserved, 0U);
 }
 
+TEST(CapacityPlanner, ExportsReopenedApproachesOutsideTheBlockedMask) {
+  const auto config = pinchedCorridorConfig();
+  for (const bool atEdge : {false, true}) {
+    SCOPED_TRACE(atEdge);
+    auto chip = pinchedCorridorChip(config, !atEdge);
+    if (atEdge) {
+      const auto q2 = std::ranges::find_if(chip.ports, [](const auto& port) {
+        return port->label == "Q2.port0";
+      });
+      ASSERT_NE(q2, chip.ports.end());
+      (*q2)->center = flatbuffers::geometry::Point(150.0, 105.0);
+    }
+    const auto scene = buildScene(chip, config);
+    const auto plan = makeWatershedPlanner()->run(chip, config, {});
+    EXPECT_EQ(plan.blocked_words, scene.blocked.words());
+
+    std::vector<grid::PartitionOutline> outlines;
+    for (const auto& ring : plan.port_keepout) {
+      grid::PartitionOutline outline{.label = grid::FIRST_PARTITION_LABEL,
+                                     .ring = {}};
+      for (const auto& vertex : ring->vertices) {
+        outline.ring.push_back(grid::layoutToCorner(scene.detail, vertex));
+      }
+      outlines.push_back(std::move(outline));
+    }
+    const auto drawn = grid::rasterizePartitions(outlines, scene.detail);
+    std::size_t reopened = 0;
+    for (std::size_t cell = 0; cell < drawn.size(); ++cell) {
+      const bool shown = drawn[cell] != grid::LABEL_NONE;
+      EXPECT_EQ(shown, scene.keepout.test(cell)) << cell;
+      if (shown && scene.reserved.test(cell) && !scene.blocked.test(cell)) {
+        ++reopened;
+      }
+    }
+    EXPECT_GT(reopened, 0U);
+  }
+}
+
 /// What lies in the alcove of twoPinchChip.
 enum class Alcove : std::uint8_t { None, Empty, WithTarget };
 
@@ -658,6 +698,9 @@ TEST(CapacityPlanner, DropsAGateThatLeadsNowhere) {
       twoPinchChip(config, 20.0, 40.0, Alcove::Empty), config, {});
   EXPECT_FALSE(keepsTheMouth(empty));
   EXPECT_EQ(bottleneckColumns(empty).size(), 1U);
+  EXPECT_EQ(served,
+            makeWatershedPlanner()->run(
+                twoPinchChip(ring, 20.0, 40.0, Alcove::WithTarget), ring, {}));
 }
 
 /// How many chains reach each target port of a plan, counting a target twice
@@ -727,6 +770,65 @@ TEST(CapacityScene, RefusesTwoTargetsOnOneCell) {
                  "cell of the detail grid; a larger [grid] detail_factor "
                  "makes the cells smaller");
   }
+}
+
+TEST(CapacityPlanner, RefusesAPortThatHasNoTarget) {
+  // Artwork covers the whole chip, so no cell is free for the target of Q1.
+  // A plan without that target would never count the wire of Q1.
+  const auto config = twoPinchConfig();
+  const auto chip = io::loadChip(
+      R"({"sampleSpacing": 1.0, "nets": [],
+  "obstacles": [{"polygon": [[0.0, 0.0], [310.0, 0.0], [310.0, 110.0],
+                             [0.0, 110.0]]}],
+  "ports": {
+    "Chip.port0": {"center": [310.0, 55.0], "orientation": 180.0},
+    "Q1.port0": {"center": [40.0, 55.0], "orientation": 0.0}}})",
+      config);
+
+  try {
+    static_cast<void>(makeWatershedPlanner()->run(chip, config, {}));
+    FAIL() << "a port without a target was accepted";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(), "the port Q1.port0 has no target: chip artwork "
+                               "covers every cell of the detail grid");
+  }
+}
+
+TEST(CapacityScene, RefusesAPortThatFacesNoStepOfTheGrid) {
+  // At 10°, the nearest step of the grid is along x, and a threshold on the
+  // components of the direction would take the diagonal. Either band would
+  // miss the actual approach of the port.
+  auto chip = test::miniChip();
+  for (auto& port : chip.ports) {
+    if (port->label == "Q1.port0") {
+      port->orientation = 10.0;
+    }
+  }
+
+  try {
+    static_cast<void>(buildScene(chip, test::miniConfig()));
+    FAIL() << "a port at 10° was accepted";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_STREQ(error.what(),
+                 "the orientation of a routable port has to be a multiple of "
+                 "45°, so that its approach runs along an axis or a diagonal "
+                 "of the grid; Q1.port0 faces 10°");
+  }
+}
+
+TEST(CapacityScene, TakesEveryMultipleOf45DegreesAsAStepOfTheGrid) {
+  // The benchmark chips give orientations beyond a full turn and below zero.
+  auto chip = test::miniChip();
+  const std::vector<double> orientations{-270.0, 45.0, 405.0, 180.0 + 1e-9,
+                                         315.0};
+  std::size_t next = 0;
+  for (auto& port : chip.ports) {
+    if (design::isRoutable(port->role)) {
+      port->orientation = orientations.at(next++ % orientations.size());
+    }
+  }
+  ASSERT_GT(next, 0U);
+  EXPECT_EQ(orientationProblem(chip), std::nullopt);
 }
 
 /// A border along the middle row of the detail grid, from one edge of the

@@ -79,7 +79,7 @@ def available() -> tuple[bool, str]:
         Whether Gurobi can be used, and why not when it cannot.
     """
     try:
-        import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
+        import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[import-not-found]
     except ImportError as error:
         return False, f"gurobipy is not installed ({error})"
     environment = gurobipy.Env(empty=True)
@@ -162,7 +162,7 @@ def solve_mps(
             first.
     """
     try:
-        import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
+        import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[import-not-found]
     except ImportError as error:
         msg = "gurobipy is not installed; install it and a license, or use the highs backend"
         raise SolverUnavailableError(msg) from error

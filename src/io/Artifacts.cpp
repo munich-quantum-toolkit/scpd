@@ -20,6 +20,7 @@
 #include <flatbuffers/verifier.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -121,6 +122,26 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
   }
   if (plan.detail_grid == nullptr) {
     problems.emplace_back("detail grid: missing");
+  } else {
+    constexpr std::uint64_t wordBits = 64;
+    const auto& grid = *plan.detail_grid;
+    const auto cells = static_cast<std::uint64_t>(grid.width) * grid.height;
+    if (cells != 0 &&
+        (grid.cell_width <= 0.0 || grid.cell_height <= 0.0 ||
+         !std::isfinite(grid.cell_width) || !std::isfinite(grid.cell_height) ||
+         !std::isfinite(grid.origin.x()) || !std::isfinite(grid.origin.y()))) {
+      problems.emplace_back("detail grid: origin and cell steps must be "
+                            "finite, with positive steps");
+    }
+    const auto words = (cells + wordBits - 1) / wordBits;
+    const auto tail = cells % wordBits;
+    if (plan.blocked_words.size() != words) {
+      problems.push_back(std::format("blocked detail mask has {}, expected {}",
+                                     counted(plan.blocked_words.size(), "word"),
+                                     words));
+    } else if (tail != 0 && (plan.blocked_words.back() >> tail) != 0) {
+      problems.emplace_back("blocked detail cells have nonzero padding");
+    }
   }
   requireEach(plan.partitions, "partition", problems);
   for (std::size_t index = 0; index < plan.partitions.size(); ++index) {

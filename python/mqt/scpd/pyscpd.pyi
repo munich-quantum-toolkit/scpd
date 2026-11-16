@@ -46,6 +46,9 @@ def assign(
 def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, as (stage, names) pairs in pipeline order."""
 
+def validate_artifact(artifact: bytes) -> None:
+    """Raise ValueError if the stored artifact is invalid."""
+
 def set_solver(solve: Callable | None) -> None:
     """Register the external solver of the process, or clear it with None. The callable receives the MPS text, the variable names in model order, a time limit, a relative gap and a thread count, and returns (status, objective, values, bound, gap, nodes): bound and gap are NaN and nodes is None where the solver reports none. Raises TypeError when solve is neither callable nor None. The module clears the solver at interpreter exit."""
 

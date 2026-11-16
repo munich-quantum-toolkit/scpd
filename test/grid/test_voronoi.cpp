@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cfenv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -59,6 +60,20 @@ TEST(MedialAxis, RunsAlongTheMiddleOfAStraightCorridor) {
     EXPECT_NEAR(edge.y0, center, 1.5);
     EXPECT_NEAR(edge.y1, center, 1.5);
   }
+}
+
+TEST(MedialAxis, RejectsAProjectedEdgeFarOutsideTheGrid) {
+  // Four nearly collinear sites yield a finite edge over 19 billion cells
+  // long, far beyond the grid and the range of a 32-bit sample count.
+  BitGrid mask(300'000, 3);
+  mask.setCell(0, 0);
+  mask.setCell(100'000, 0);
+  mask.setCell(200'000, 1);
+  mask.setCell(299'999, 2);
+
+  std::feclearexcept(FE_INVALID);
+  EXPECT_TRUE(medialAxis(mask).empty());
+  EXPECT_EQ(std::fetestexcept(FE_INVALID), 0);
 }
 
 TEST(MedialAxis, DropsTheEdgesOfOneWallAgainstItself) {

@@ -163,7 +163,7 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
     for stage in PLANNING_STAGES:
         geometry = planning_geometry(directory.artifact(stage).read_bytes(), model, stage, capacity)
         assert not geometry.is_empty(), stage
-        assert len(layout_svg(model, planning=geometry).encode("utf-8")) < SVG_LIMIT, stage
+        assert len(layout_svg(model, stage=stage, planning=geometry).encode("utf-8")) < SVG_LIMIT, stage
         if HAS_KLAYOUT:
             from mqt.scpd.export import write_layout  # ruff: ignore[import-outside-top-level]  # needs the optional dependency
 

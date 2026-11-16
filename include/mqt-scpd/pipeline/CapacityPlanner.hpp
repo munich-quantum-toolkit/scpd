@@ -44,8 +44,9 @@ struct MQT_SCPD_PIPELINE_EXPORT CapacityScene {
   /// The cells a port band blocked that were free before. They are obstacles
   /// but not chip artwork, and a bottleneck that ends on one is budgeted
   /// differently. Where the stage took a band back to place the target of its
-  /// port beyond artwork, the cells of the band are free again but stay
-  /// reserved: they belong to no partition.
+  /// port beyond artwork or inside the grid, the cells of the band are free
+  /// again, so that a chain can reach the target, but stay reserved for the
+  /// approach of the port: they belong to no partition.
   grid::BitGrid reserved;
   /// Every cell the approaches of the ports took from the free space: the
   /// bands of the routable ports, before the targets were dug back out. It
@@ -115,6 +116,15 @@ crossingSlots(const grid::PartitionBorder& border, const CapacityScene& scene,
 hasLauncherSlot(const flatbuffers::design::PortT& port);
 
 /**
+ * @brief Checks that the Capacity stage has a launch point.
+ *
+ * @param chip The classified chip.
+ * @return The problem when no port has a launcher slot, or none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+launcherProblem(const ChipT& chip);
+
+/**
  * @brief Returns where the Capacity stage places the slot of each launcher.
  *
  * A launcher with a direction gets a slot at the center of the detail cell
@@ -125,7 +135,7 @@ hasLauncherSlot(const flatbuffers::design::PortT& port);
  * @param config The run configuration, whose grid section places the cells.
  * @return The slot positions in layout units, in port order.
  * @throws std::invalid_argument When the detail grid of the configuration has
- * no cells or more than MAX_DETAIL_CELLS.
+ * no cells, too many cells, or steps that differ by more than 10%.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<geometry::Point>
 launcherSlotPositions(const ChipT& chip, const ConfigT& config);
@@ -144,7 +154,7 @@ launcherSlotPositions(const ChipT& chip, const ConfigT& config);
 inline constexpr std::uint64_t MAX_DETAIL_CELLS = 25'000'000;
 
 /**
- * @brief Checks the size of the detail grid that a configuration asks for.
+ * @brief Checks the cell count and aspect ratio of the detail grid.
  *
  * The detail grid has `capacity_cells_x` times `detail_factor` cells along x,
  * and `capacity_cells_y` times `detail_factor` along y. With
@@ -155,11 +165,26 @@ inline constexpr std::uint64_t MAX_DETAIL_CELLS = 25'000'000;
  * @param chip The classified chip, whose box sets the aspect ratio.
  * @param config The run configuration.
  * @return The problem when the detail grid has more than MAX_DETAIL_CELLS
- * cells. None when it has fewer, and none when the configuration or the chip
- * gives no grid at all; buildScene() refuses those.
+ * cells or its longer cell step exceeds its shorter step by over 10%.
+ * None when neither limit is exceeded or there is no grid.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
 detailGridProblem(const ChipT& chip, const ConfigT& config);
+
+/**
+ * @brief Checks that the approach of every routable port runs along the grid.
+ *
+ * The band and the target of a port follow one of the eight steps of the
+ * grid. Only an orientation at a multiple of 45° matches such a step; any
+ * other orientation would put the band and the target beside the actual
+ * approach of the port.
+ *
+ * @param chip The classified chip.
+ * @return The problem, naming every routable port whose orientation is not a
+ * multiple of 45°, or none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
+orientationProblem(const ChipT& chip);
 
 /**
  * @brief Builds the grids and masks of a run.
@@ -171,7 +196,9 @@ detailGridProblem(const ChipT& chip, const ConfigT& config);
  * @param config The run configuration.
  * @return The scene.
  * @throws std::invalid_argument When the configuration carries no design
- * rules, when its detail grid has no cells or more than MAX_DETAIL_CELLS,
+ * rules, when its detail grid is empty, too large, or not near square,
+ * when a routable port faces no step of the grid, as orientationProblem()
+ * checks, when chip artwork leaves no cell free for the target of a port,
  * when the targets of two ports lie on one detail cell, or when the chip has
  * no launcher.
  */

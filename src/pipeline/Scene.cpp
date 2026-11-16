@@ -62,6 +62,11 @@ constexpr double BACKWARD_BAND_FACTOR = 3.0;
 /// free space surrounds takes no part in the capacity chains.
 constexpr double BRIDGE_FORWARD_FACTOR = 2.0;
 
+/// How far an orientation may lie from a multiple of 45°, in degrees, and
+/// still count as one. It absorbs the rounding of an angle that a layout
+/// tool computed.
+constexpr double ORIENTATION_TOLERANCE = 1e-6;
+
 /// The capacity grid a configuration asks for.
 grid::GridMetrics capacityGrid(const geometry::BoundingBox& box,
                                const flatbuffers::config::GridParamsT& params) {
@@ -108,18 +113,17 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
   if (params.capacity_cells_x == 0 || params.detail_factor == 0) {
     return std::nullopt;
   }
-  // The figures stay in floating point, so that no product of two 32-bit
-  // figures wraps around. They are whole numbers, and every one at or below
-  // the limit is exact.
+  geometry::BoundingBox box;
+  try {
+    box = grid::chipBounds(chip);
+  } catch (const std::invalid_argument&) {
+    return std::nullopt;
+  }
+  // Keep the figures in floating point so that products of configuration
+  // values cannot overflow. The counts are exact up to the grid limit.
   const double capacityWidth = params.capacity_cells_x;
   double capacityHeight = params.capacity_cells_y;
   if (params.capacity_cells_y == 0) {
-    geometry::BoundingBox box;
-    try {
-      box = grid::chipBounds(chip);
-    } catch (const std::invalid_argument&) {
-      return std::nullopt;
-    }
     const auto ratio = box.height() / box.width();
     if (!std::isfinite(ratio) || !(ratio > 0.0)) {
       return std::nullopt;
@@ -131,14 +135,63 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
   const auto width = capacityWidth * factor;
   const auto height = capacityHeight * factor;
   const auto cells = width * height;
-  if (cells <= static_cast<double>(MAX_DETAIL_CELLS)) {
+  if (cells > static_cast<double>(MAX_DETAIL_CELLS)) {
+    return std::format("[grid] asks for a detail grid of {:.0f} × {:.0f} = "
+                       "{:.0f} cells, a capacity grid of {:.0f} × {:.0f} cells "
+                       "times detail_factor {:.0f}; the limit is {} cells",
+                       width, height, cells, capacityWidth, capacityHeight,
+                       factor, MAX_DETAIL_CELLS);
+  }
+
+  if (width < 2.0 || height < 2.0 || !(box.width() > 0.0) ||
+      !(box.height() > 0.0)) {
     return std::nullopt;
   }
-  return std::format("[grid] asks for a detail grid of {:.0f} × {:.0f} = "
-                     "{:.0f} cells, a capacity grid of {:.0f} × {:.0f} cells "
-                     "times detail_factor {:.0f}; the limit is {} cells",
-                     width, height, cells, capacityWidth, capacityHeight,
-                     factor, MAX_DETAIL_CELLS);
+  // Port headings and the clearance search use square lattice steps. Allow
+  // the rounding of the cell counts while bounding the error of those steps.
+  constexpr double maxStepRatio = 1.1;
+  const auto xStep = box.width() / (width - 1.0);
+  const auto yStep = box.height() / (height - 1.0);
+  if (std::max(xStep, yStep) > std::min(xStep, yStep) * maxStepRatio) {
+    return std::format(
+        "[grid] needs near-square detail cells for the capacity step; "
+        "{:.0f} × {:.0f} cells give steps of {:.6g} × {:.6g} layout units, "
+        "which differ by more than 10%; {}increase capacity_cells_x",
+        width, height, xStep, yStep,
+        params.capacity_cells_y == 0 ? "" : "set capacity_cells_y to 0 or ");
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> launcherProblem(const ChipT& chip) {
+  if (std::ranges::any_of(chip.ports, [](const auto& port) {
+        return port != nullptr && hasLauncherSlot(*port);
+      })) {
+    return std::nullopt;
+  }
+  return "the chip carries no launcher a wire could be routed to";
+}
+
+std::optional<std::string> orientationProblem(const ChipT& chip) {
+  std::string ports;
+  for (const auto& port : chip.ports) {
+    if (!design::isRoutable(port->role)) {
+      continue;
+    }
+    const auto remainder = std::abs(std::fmod(port->orientation, 45.0));
+    // An orientation that is not a number fails the comparison too.
+    if (std::min(remainder, 45.0 - remainder) <= ORIENTATION_TOLERANCE) {
+      continue;
+    }
+    ports += std::format("{}{} faces {}°", ports.empty() ? "" : ", ",
+                         port->label, port->orientation);
+  }
+  if (ports.empty()) {
+    return std::nullopt;
+  }
+  return "the orientation of a routable port has to be a multiple of 45°, so "
+         "that its approach runs along an axis or a diagonal of the grid; " +
+         ports;
 }
 
 std::vector<geometry::Point> launcherSlotPositions(const ChipT& chip,
@@ -224,9 +277,15 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     throw std::invalid_argument("the configuration carries no design rules");
   }
   const auto& rules = *config.rules;
+  if (auto problem = orientationProblem(chip)) {
+    throw std::invalid_argument(*std::move(problem));
+  }
 
   CapacityScene scene;
   std::tie(scene.capacity, scene.detail) = gridsOf(chip, config);
+  if (auto problem = launcherProblem(chip)) {
+    throw std::invalid_argument(*std::move(problem));
+  }
 
   // The mask carries no obstacle keepout. The keepout makes the clearance a
   // hard constraint on a search, and nothing searches on this grid: the stage
@@ -259,9 +318,6 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       continue;
     }
     const auto step = grid::orientationStep(port.orientation);
-    if (step.x == 0 && step.y == 0) {
-      continue;
-    }
     const auto center = scene.detail.clampToCell(port.center);
     const grid::PortBand band{
         .center = center,
@@ -288,13 +344,19 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
       }
     }
 
+    // Without a target the port would be on no chain, and the plan would
+    // never count its wire.
     const auto target =
         grid::placeTargetBeyondBand(scene.blocked, beforeBands, stamped, step);
-    if (target.has_value()) {
-      scene.reserved.set(*target, false);
-      scene.targetCell.push_back(*target);
-      scene.targetPort.push_back(index);
+    if (!target.has_value()) {
+      throw std::invalid_argument(
+          std::format("the port {} has no target: chip artwork covers every "
+                      "cell of the detail grid",
+                      port.label));
     }
+    scene.reserved.set(*target, false);
+    scene.targetCell.push_back(*target);
+    scene.targetPort.push_back(index);
   }
 
   // A chain reaches a target through its cell and puts the port of that cell
@@ -327,11 +389,6 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     scene.reserved.set(slot, false);
     scene.launcherCell.push_back(slot);
     scene.launcherPort.push_back(index);
-  }
-
-  if (scene.launcherCell.empty()) {
-    throw std::invalid_argument(
-        "the chip carries no launcher a wire could be routed to");
   }
 
   // A target has to be reachable, and the bands are stamped one port at a

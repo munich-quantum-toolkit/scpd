@@ -83,20 +83,44 @@ def load_chip(config: ConfigT, config_path: Path, chip_path: Path | None = None)
 
     Returns:
         The classified chip as bytes of the ``design.fbs`` schema.
-
-    Raises:
-        ChipError: If the input cannot be read, is not a valid chip input, or does not fit the
-            configuration. The message names every problem.
     """
     path = chip_input_path(config, config_path, chip_path)
+    return classify_chip(config, read_chip_text(path), path)
+
+
+def read_chip_text(path: Path) -> str:
+    """Read the exact UTF-8 text of a chip input.
+
+    Returns:
+        The source text, with its line endings intact.
+
+    Raises:
+        ChipError: If the file cannot be read or is not UTF-8.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_bytes().decode("utf-8")
     except OSError as error:
         msg = f"cannot read the chip input {path}: {error}"
         raise ChipError(msg) from error
     except UnicodeDecodeError as error:
         msg = f"cannot read the chip input {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
         raise ChipError(msg) from error
+
+
+def classify_chip(config: ConfigT, text: str, path: Path) -> bytes:
+    """Classify a chip input that the caller has read.
+
+    Args:
+        config: The loaded configuration.
+        text: The chip input.
+        path: The source path for diagnostics.
+
+    Returns:
+        The classified chip as bytes of the design schema.
+
+    Raises:
+        ChipError: If the text is not a valid chip input or does not fit the configuration.
+    """
     try:
         return pyscpd.load_chip(text, write_config(config))
     except ValueError as error:

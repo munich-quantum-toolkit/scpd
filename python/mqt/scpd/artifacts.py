@@ -8,13 +8,9 @@
 
 """Checked reading and writing of stage artifacts.
 
-The generated FlatBuffers code neither enforces the required fields when Python writes a buffer nor
-verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
-silently. The functions here check the identifier and every field the schema marks as required, so
-an artifact that Python writes or reads is complete. They also check that the lists of an assignment
-hold one entry per ring node. Checking the other values, such as a role left unset, a dimension of
-zero or a connection that does not end at its ring node, is the core's job: the core refuses such an
-artifact when it reads it.
+The generated FlatBuffers code does not verify buffers on read or enforce required fields on write.
+The native reader checks the buffer structure and artifact contents before Python unpacks an
+artifact. The writer checks required fields before serialization.
 """
 
 from __future__ import annotations
@@ -24,7 +20,8 @@ from typing import TYPE_CHECKING
 
 import flatbuffers
 
-from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
+from . import pyscpd
+from .flatbuffers.artifacts.Artifact import ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
@@ -51,7 +48,7 @@ if TYPE_CHECKING:
     from .flatbuffers.geometry.Segment import SegmentT
 
 #: The file identifier that records the schema version, as ``artifacts.fbs`` declares it.
-IDENTIFIER = b"SCP1"
+IDENTIFIER = b"SCP2"
 
 _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.CapacityPlan: CapacityPlanT,
@@ -63,7 +60,7 @@ _OUTPUT_TYPES: dict[int, type] = {
 
 
 class ArtifactError(ValueError):
-    """Bytes that are not a complete artifact of this schema, or an artifact that is not complete."""
+    """An invalid artifact or a buffer that cannot be read as one."""
 
 
 def write_artifact(artifact: ArtifactT) -> bytes:
@@ -97,22 +94,17 @@ def read_artifact(data: bytes) -> ArtifactT:
         The artifact as a native object.
 
     Raises:
-        ArtifactError: If the bytes do not carry the schema identifier, cannot be decoded, or omit a
-            required field.
+        ArtifactError: If the buffer or artifact contents are invalid.
     """
-    if not Artifact.ArtifactBufferHasIdentifier(data, 0, size_prefixed=False):
-        msg = f"bytes are not an artifact of this schema: the identifier is not {IDENTIFIER!r}"
-        raise ArtifactError(msg)
     try:
-        artifact = ArtifactT.InitFromPackedBuf(data)
+        pyscpd.validate_artifact(data)
+    except ValueError as error:
+        raise ArtifactError(str(error)) from error
+    try:
+        return ArtifactT.InitFromPackedBuf(data)
     except (IndexError, struct.error, UnicodeDecodeError) as error:
         msg = f"bytes are not an artifact of this schema: {error}"
         raise ArtifactError(msg) from error
-    problems = _problems(artifact)
-    if problems:
-        msg = f"artifact is not complete: {'; '.join(problems)}"
-        raise ArtifactError(msg)
-    return artifact
 
 
 def _problems(artifact: ArtifactT) -> list[str]:
@@ -144,6 +136,7 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _check_list(output.launchers, "launchers", _launcher_problems, problems)
         _check_list(output.nodes, "nodes", _node_problems, problems)
         _require(output.chains, "chains", problems)
+        _require(output.blockedWords, "blocked_words", problems)
     elif isinstance(output, GlobalRoutingT):
         _check_list(output.lattices, "lattices", _lattice_problems, problems)
         _check_list(output.connections, "connections", _connection_problems, problems)

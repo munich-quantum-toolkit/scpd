@@ -32,7 +32,7 @@ class CapacityPlan(object):
         return cls.GetRootAs(buf, offset)
     @classmethod
     def CapacityPlanBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
-        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x31", size_prefixed=size_prefixed)
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x32", size_prefixed=size_prefixed)
 
     # CapacityPlan
     def Init(self, buf: bytes, pos: int):
@@ -206,16 +206,9 @@ class CapacityPlan(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
         return o == 0
 
-    # What the approaches of the ports keep clear, as closed rings in layout
-    # units: the strip a wire leaves each routable port along, extended
-    # forward and backward.
-    #
-    # These are obstacles to everything the stages route, and they are not
-    # chip artwork, so they are a layer of their own rather than more
-    # polygons of the chip. Only the cells that were free before a band took
-    # them are here; where a band covers artwork, the artwork is already
-    # drawn. The rings follow the cells, so a band along a diagonal is the
-    # staircase the grid blocks.
+    # Closed rings in layout units for drawing the port approaches. They
+    # cover cells that were free before a band took them, including cells
+    # that the planner reopened. They do not determine routing obstacles.
     # CapacityPlan
     def PortKeepout(self, j: int) -> Optional[Polygon]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
@@ -240,8 +233,38 @@ class CapacityPlan(object):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
         return o == 0
 
+    # The blocked cells of detail_grid after the planner places all targets
+    # and launcher slots. Cell i in row-major order is bit i % 64 of word
+    # i / 64, starting at the least significant bit. Padding bits are zero.
+    # CapacityPlan
+    def BlockedWords(self, j: int):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+        if o != 0:
+            a = self._tab.Vector(o)
+            return self._tab.Get(flatbuffers.number_types.Uint64Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 8))
+        return 0
+
+    # CapacityPlan
+    def BlockedWordsAsNumpy(self):
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+        if o != 0:
+            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint64Flags, o)
+        return 0
+
+    # CapacityPlan
+    def BlockedWordsLength(self) -> int:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+        if o != 0:
+            return self._tab.VectorLen(o)
+        return 0
+
+    # CapacityPlan
+    def BlockedWordsIsNone(self) -> bool:
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
+        return o == 0
+
 def CapacityPlanStart(builder: flatbuffers.Builder):
-    builder.StartObject(9)
+    builder.StartObject(10)
 
 def Start(builder: flatbuffers.Builder):
     CapacityPlanStart(builder)
@@ -342,6 +365,18 @@ def CapacityPlanStartPortKeepoutVector(builder, numElems: int) -> int:
 def StartPortKeepoutVector(builder, numElems: int) -> int:
     return CapacityPlanStartPortKeepoutVector(builder, numElems)
 
+def CapacityPlanAddBlockedWords(builder: flatbuffers.Builder, blockedWords: int):
+    builder.PrependUOffsetTRelativeSlot(9, flatbuffers.number_types.UOffsetTFlags.py_type(blockedWords), 0)
+
+def AddBlockedWords(builder: flatbuffers.Builder, blockedWords: int):
+    CapacityPlanAddBlockedWords(builder, blockedWords)
+
+def CapacityPlanStartBlockedWordsVector(builder, numElems: int) -> int:
+    return builder.StartVector(8, numElems, 8)
+
+def StartBlockedWordsVector(builder, numElems: int) -> int:
+    return CapacityPlanStartBlockedWordsVector(builder, numElems)
+
 def CapacityPlanEnd(builder: flatbuffers.Builder) -> int:
     return builder.EndObject()
 
@@ -374,6 +409,7 @@ class CapacityPlanT(object):
         nodes = None,
         chains = None,
         portKeepout = None,
+        blockedWords = None,
     ):
         self.capacityGrid = capacityGrid  # type: Optional[mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT]
         self.detailGrid = detailGrid  # type: Optional[mqt.scpd.flatbuffers.artifacts.GridExtent.GridExtentT]
@@ -384,6 +420,7 @@ class CapacityPlanT(object):
         self.nodes = nodes  # type: Optional[List[mqt.scpd.flatbuffers.artifacts.CapacityNode.CapacityNodeT]]
         self.chains = chains  # type: Optional[List[int]]
         self.portKeepout = portKeepout  # type: Optional[List[mqt.scpd.flatbuffers.geometry.Polygon.PolygonT]]
+        self.blockedWords = blockedWords  # type: Optional[List[int]]
 
     @classmethod
     def InitFromBuf(cls, buf, pos):
@@ -465,6 +502,13 @@ class CapacityPlanT(object):
                 else:
                     polygon_ = mqt.scpd.flatbuffers.geometry.Polygon.PolygonT.InitFromObj(capacityPlan.PortKeepout(i))
                     self.portKeepout.append(polygon_)
+        if not capacityPlan.BlockedWordsIsNone():
+            if np is None:
+                self.blockedWords = []
+                for i in range(capacityPlan.BlockedWordsLength()):
+                    self.blockedWords.append(capacityPlan.BlockedWords(i))
+            else:
+                self.blockedWords = capacityPlan.BlockedWordsAsNumpy()
 
     # CapacityPlanT
     def Pack(self, builder):
@@ -528,6 +572,14 @@ class CapacityPlanT(object):
             for i in reversed(range(len(self.portKeepout))):
                 builder.PrependUOffsetTRelative(portKeepoutlist[i])
             portKeepout = builder.EndVector()
+        if self.blockedWords is not None:
+            if np is not None and type(self.blockedWords) is np.ndarray:
+                blockedWords = builder.CreateNumpyVector(self.blockedWords)
+            else:
+                CapacityPlanStartBlockedWordsVector(builder, len(self.blockedWords))
+                for i in reversed(range(len(self.blockedWords))):
+                    builder.PrependUint64(self.blockedWords[i])
+                blockedWords = builder.EndVector()
         CapacityPlanStart(builder)
         if self.capacityGrid is not None:
             CapacityPlanAddCapacityGrid(builder, capacityGrid)
@@ -547,5 +599,7 @@ class CapacityPlanT(object):
             CapacityPlanAddChains(builder, chains)
         if self.portKeepout is not None:
             CapacityPlanAddPortKeepout(builder, portKeepout)
+        if self.blockedWords is not None:
+            CapacityPlanAddBlockedWords(builder, blockedWords)
         capacityPlan = CapacityPlanEnd(builder)
         return capacityPlan

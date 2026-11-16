@@ -121,6 +121,9 @@ block(
   boost_config_SOURCE_DIR)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
+# HiGHS reads this setting during configure. Keep it off for dependencies even when a previous
+# configure enabled IPO in the project's cache.
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 # The tests of the dependencies: HiGHS would otherwise add its test tree and the CTest dashboard
 # targets. The project's own tests do not depend on this variable.
 set(BUILD_TESTING OFF)
@@ -136,18 +139,11 @@ set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(${FETCH_PACKAGES})
 endblock()
 
-# HiGHS is always built without link-time optimization. The project switches it on for Release
-# builds only after the dependencies are made available, so a first configure builds HiGHS without
-# it and a later configure, which finds the setting in the cache, builds HiGHS with it. The two
-# builds round some floating-point results differently, so a solve could depend on how often the
-# build directory was configured.
-#
-# HiGHS is also always built without its assertions, as its own build does for Release. In a Debug
-# build an assertion of its bookkeeping, which compares two bounds to 1e-12, stops a solve on a
-# rounding difference that it leaves without effect otherwise. No HiGHS header changes the layout of
-# a type with NDEBUG, so the project's own code may still be built with assertions.
+# HiGHS is always built without its assertions, as its own build does for Release. In a Debug build
+# an assertion of its bookkeeping, which compares two bounds to 1e-12, stops a solve on a rounding
+# difference that it leaves without effect otherwise. No HiGHS header changes the layout of a type
+# with NDEBUG, so the project's own code may still be built with assertions.
 if(TARGET highs)
-  set_target_properties(highs PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
   target_compile_definitions(highs PRIVATE NDEBUG)
 endif()
 

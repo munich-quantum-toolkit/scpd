@@ -79,34 +79,32 @@ of the chip input, `config.toml` and `00-chip.json`. Every command that takes
 `-c` reads that `config.toml` with the chip copy beside it, so
 `mqt-scpd doctor -c runs/33q/config.toml` checks the inputs of the run.
 
+`plan` accepts a new directory, an empty directory, or a directory with a valid
+`.mqt-scpd-run` marker. It reads a single snapshot of the configuration and chip
+input. Once the requested stages finish, it saves those exact inputs with their
+artifacts and replaces any previous run outputs. A planning failure leaves the
+previous run intact. If a writer stops while replacing files, the next planning
+command restores the previous files before using the run.
+
 `--stop-after <step>`, or `stop_after` in the `[run]` section of the
 configuration, ends a run after a step. `--stage <step>` runs one step again on
-the copies a run carries and deletes the artifacts of every later step:
+the copies a run carries. A successful rerun deletes the artifacts of every
+later step:
 
 ```console
 mqt-scpd plan -o runs/33q --stage assign
 ```
 
 Beside each artifact a step writes a record of its inputs, for example
-`01-capacity.inputs.json`. The record holds a digest of the chip copy and of
-each section of `config.toml` that the step reads. `SCPD_SOLVER` is not an
-input: it chooses the backend of one invocation, and a step that resumes under
-another backend can give another artifact. `--stage` refuses a step when the
-chip copy or such a section has changed since an earlier step wrote its
-artifact, because the step would read an artifact that the current configuration
-does not make. The message names the section and the step to run again, in the
-block of the refused step; running that step deletes the artifacts of every
-later step:
-
-```console
-📌 assign
-   ✗ [design_rules] in config.toml changed after the capacity step wrote 01-capacity.fb; run the capacity step again
-
-✗ stopped at assign after 0.00s
-```
-
-A step may run again after a change to a section that only it reads, such as
-`[stages.assignment]` for the assign step.
+`01-capacity.inputs.json`. The record holds digests of the classified chip, the
+configuration sections the step reads, the artifacts it reads, and the artifact
+it writes. Resuming or drawing a run checks these digests before using an
+artifact. The message names the section and the step to run again, in the block
+of the refused step; a successful rerun of that step deletes the artifacts of
+every later step. A step may run again after a change to a section that only it
+reads, such as `[stages.assignment]` for the assign step. `SCPD_SOLVER` chooses
+the backend for one invocation and is outside the input record. A step that
+resumes with a different backend can write a different artifact.
 
 `plot` and `render` draw a planning step of a run over the chip:
 
@@ -129,13 +127,14 @@ edges that the inner circuit selected. The capacity picture shows the partition
 borders. The assign picture shows each ring port joined to its feed by a black
 dashed chord, over light borders and with the green inner wires of the global
 step. All three show the cells the grid blocked, in dark gray under the artwork:
-the artwork as the grid rasterizes it, and the approach of every port. No
-picture shows the gates. The capacity and assign pictures leave out the borders
-of partitions that the artwork closes in on every side, such as the free space
-inside a ring of qubits. Every other partition is shaded in a light gray that
-differs from its neighbors. Opened on its own in a browser, the picture has a
-**Layers** panel in its top left corner that shows and hides each layer, and it
-leaves out the finest detail when zoomed out.
+this raster is the one stored in the Capacity artifact. Port approach polygons
+also include reservations reopened while placing targets. The SVG leaves out the
+gates. The capacity and assign pictures leave out the borders of partitions that
+the artwork closes in on every side, such as the free space inside a ring of
+qubits. Every other partition is shaded in a light gray that differs from its
+neighbors. Opened on its own in a browser, the picture has a **Layers** panel in
+its top left corner that shows and hides each layer, and it leaves out the
+finest detail when zoomed out.
 
 {doc}`terminal_output` describes what a run prints and what `-v`, `-vv` and
 `-vvv` add.
