@@ -146,7 +146,7 @@ def test_preparing_again_starts_the_run_afresh(tmp_path: Path, monkeypatch: pyte
     with pytest.raises(RuntimeError, match="broke"):
         run_through(directory, ["capacity"])
 
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+    assert sorted(path.name for path in directory.path.iterdir()) == [".mqt-scpd-run", "00-chip.json", "config.toml"]
 
 
 def test_a_run_starts_again_from_its_own_inputs(tmp_path: Path) -> None:
@@ -159,7 +159,7 @@ def test_a_run_starts_again_from_its_own_inputs(tmp_path: Path) -> None:
 
     assert directory.config.read_bytes() == CONFIG.read_bytes()
     assert directory.chip.read_bytes() == (FIXTURE / "routing_config.json").read_bytes()
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+    assert sorted(path.name for path in directory.path.iterdir()) == [".mqt-scpd-run", "00-chip.json", "config.toml"]
 
 
 def test_a_run_started_from_its_own_configuration_keeps_its_chip_copy(tmp_path: Path) -> None:
@@ -174,7 +174,7 @@ def test_a_run_started_from_its_own_configuration_keeps_its_chip_copy(tmp_path: 
     directory.prepare(directory.config)
 
     assert directory.chip.read_bytes() == (FIXTURE / "routing_config.json").read_bytes()
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+    assert sorted(path.name for path in directory.path.iterdir()) == [".mqt-scpd-run", "00-chip.json", "config.toml"]
 
 
 def test_preparing_refuses_a_directory_that_holds_a_configuration_of_its_own(tmp_path: Path) -> None:
@@ -204,10 +204,28 @@ def test_preparing_refuses_a_directory_that_holds_files_of_another_task(tmp_path
     for path, content in files.items():
         path.write_bytes(content)
 
-    with pytest.raises(RunError, match=r"is not a run directory: it holds files and no 00-chip\.json"):
+    with pytest.raises(RunError, match=r"is not a run directory: it holds files without a valid \.mqt-scpd-run marker"):
         directory.prepare(CONFIG)
 
     assert {path: path.read_bytes() for path in foreign.iterdir()} == files
+
+
+@pytest.mark.parametrize("directory_marker", [False, True], ids=["file", "directory"])
+def test_foreign_chip_copy_does_not_authorize_replacing_a_directory(
+    tmp_path: Path, directory_marker: bool
+) -> None:
+    """An unrelated chip and artifact with conventional names do not identify a run."""
+    directory = RunDirectory(tmp_path)
+    if directory_marker:
+        directory.chip.mkdir()
+    else:
+        directory.chip.write_bytes((FIXTURE / "routing_config.json").read_bytes())
+    directory.artifact("capacity").write_bytes(b"unrelated")
+
+    with pytest.raises(RunError, match="is not a run directory"):
+        directory.prepare(CONFIG)
+
+    assert directory.artifact("capacity").read_bytes() == b"unrelated"
 
 
 def test_preparing_takes_an_empty_directory(tmp_path: Path) -> None:
@@ -217,7 +235,7 @@ def test_preparing_takes_an_empty_directory(tmp_path: Path) -> None:
 
     directory.prepare(CONFIG)
 
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+    assert sorted(path.name for path in directory.path.iterdir()) == [".mqt-scpd-run", "00-chip.json", "config.toml"]
 
 
 @pytest.mark.usefixtures("later_step")
@@ -233,6 +251,7 @@ def test_a_step_writes_its_artifact_and_removes_the_later_ones(tmp_path: Path) -
     assert directory.artifact("capacity").is_file()
     assert not directory.artifact("later").exists()
     assert sorted(path.name for path in directory.path.iterdir()) == [
+        ".mqt-scpd-run",
         "00-chip.json",
         "01-capacity.fb",
         "01-capacity.inputs.json",
@@ -250,7 +269,7 @@ def test_preparing_removes_the_artifacts_of_every_step(tmp_path: Path) -> None:
 
     directory.prepare(CONFIG)
 
-    assert sorted(path.name for path in directory.path.iterdir()) == ["00-chip.json", "config.toml"]
+    assert sorted(path.name for path in directory.path.iterdir()) == [".mqt-scpd-run", "00-chip.json", "config.toml"]
 
 
 @pytest.mark.usefixtures("later_step")
@@ -439,12 +458,13 @@ def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: p
 
 
 @pytest.mark.usefixtures("later_step")
-def test_a_step_that_fails_removes_the_later_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A step that raises leaves no artifact of a later step, which came from the step's old artifact."""
+def test_a_step_that_fails_keeps_the_later_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed stage preserves the previous completed outputs and their records."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
     run_through(directory, ["capacity"])
     write_later(directory)
+    before = artifacts_of(directory)
 
     def broken(*args: object) -> bytes:
         del args
@@ -455,7 +475,7 @@ def test_a_step_that_fails_removes_the_later_artifacts(tmp_path: Path, monkeypat
     with pytest.raises(RuntimeError, match="broke"):
         run_through(directory, ["capacity"])
 
-    assert sorted(path.name for path in directory.path.glob("*.fb")) == ["01-capacity.fb"]
+    assert artifacts_of(directory) == before
 
 
 def test_an_artifact_is_replaced_whole_or_not_at_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

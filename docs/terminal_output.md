@@ -118,8 +118,8 @@ The example shortens the two port lists. The report has these parts:
 1. The configuration and the chip input it names.
 2. One line `WARNING: <warning>` per key that no stage reads any more.
 3. One line `PROBLEM: <problem>` per problem. A problem is an error in the
-   configuration or the chip, or anything that would stop a run of the steps up
-   to `[run] stop_after`.
+   configuration or the chip, or a preflight problem in a step up to
+   `[run] stop_after`. Each step can also report problems it finds while planning.
 4. The counts of obstacles and ports.
 5. The roles of the ports: the count, the pattern and the first three labels of
    each role.
@@ -172,7 +172,7 @@ The run has these parts:
 
 `plan` checks the configuration and the chip before its first stage. A problem
 prints one error line on stderr and no header, and the run directory stays as it
-was.
+was. A stage failure also leaves a previously completed run intact.
 
 ### Levels
 

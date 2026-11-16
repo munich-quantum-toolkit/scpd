@@ -19,13 +19,15 @@ import argparse
 import contextlib
 import os
 import sys
+import tempfile
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import pyscpd
 from .artifacts import ArtifactError
-from .chip import ChipError, decode_chip, load_chip
-from .config import ConfigError, load_config, removed_keys_in, write_config
+from .chip import ChipError, classify_chip, decode_chip, load_chip
+from .config import ConfigError, load_config, removed_keys, removed_keys_in, write_config
 from .console import Console, size, write_out
 from .doctor import run_doctor
 from .export import HAS_KLAYOUT
@@ -38,6 +40,7 @@ from .steps import STEPS
 if TYPE_CHECKING:
     from .console import StageBlock
     from .flatbuffers.config.Config import ConfigT
+    from .run import RunInputs
 
 
 def _positive_int(text: str) -> int:
@@ -110,6 +113,7 @@ def command_plan(args: argparse.Namespace) -> int:
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
 
     directory = RunDirectory(args.output)
+    snapshot: RunInputs | None = None
     if args.stage is not None:
         # A resumed step reads the configuration and the chip the run carries, so that it equals
         # the step of an uninterrupted run.
@@ -117,28 +121,53 @@ def command_plan(args: argparse.Namespace) -> int:
         steps = [args.stage]
         subject = directory.path.resolve().name
         chip = directory.classified_chip(config)
+        warnings = removed_keys_in(directory.config)
     else:
-        config, chip_input = directory.inputs(args.config, args.chip)
-        _validated(config, args.config)
+        snapshot = directory.inputs(args.config, args.chip)
+        config = _validated(snapshot.config, args.config)
         configured = config.run.stopAfter if config.run is not None else None
         steps = steps_until(args.stop_after if args.stop_after is not None else configured)
         subject = _subject(args.config)
-        chip = load_chip(config, args.config, chip_input)
-    # Every check runs before a fresh run deletes the artifacts of the run it replaces.
+        chip = classify_chip(config, snapshot.chip_text, snapshot.chip_path)
+        warnings = removed_keys(tomllib.loads(snapshot.config_text))
+
     config_bytes = write_config(config)
     if problems := pyscpd.plan_problems(chip, config_bytes, steps):
         raise ConfigError("; ".join(problems))
-    if args.stage is None:
-        directory.prepare(args.config, args.chip)
-
     console.header("plan", subject, str(directory.path))
-    for warning in removed_keys_in(args.config if args.stage is None else directory.config):
+    for warning in warnings:
         console.warning(warning)
+    with contextlib.ExitStack() as cleanup:
+        work = directory
+        if snapshot is not None:
+            directory.path.parent.mkdir(parents=True, exist_ok=True)
+            staging = cleanup.enter_context(tempfile.TemporaryDirectory(dir=directory.path.parent))
+            work = RunDirectory(Path(staging) / "run")
+            work.prepare_inputs(snapshot)
+        return _run_plan(directory, work, console, steps, config, chip, args.verbose)
+
+
+def _run_plan(
+    directory: RunDirectory,
+    work: RunDirectory,
+    console: Console,
+    steps: list[str],
+    config: ConfigT,
+    chip: bytes,
+    verbosity: int,
+) -> int:
+    """Run the steps and publish a staged run after its last step.
+
+    Returns:
+        The exit code.
+    """
     last: str | None = None
     for step in steps:
         with console.stage(step) as block:
             try:
-                result = directory.run_stage(step, config, chip, BlockReporter(block), args.verbose)
+                result = work.run_stage(step, config, chip, BlockReporter(block), verbosity)
+                if work is not directory and step == steps[-1]:
+                    directory.publish(work)
             except KeyboardInterrupt:
                 block.failure("interrupted")
                 console.closing(stopped_after=last, failed=step)
@@ -265,8 +294,8 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
 def _stale_reason(artifact: Path) -> str | None:
     """Why an artifact of a run directory no longer matches the inputs of the run.
 
-    A step that failed keeps its old artifact without a record, and an input of the run can change
-    after a step wrote its artifact. An artifact outside a run directory has no record to check.
+    An input of the run can change after a step wrote its artifact. An artifact outside a run
+    directory has no record to check.
 
     Returns:
         The reason, or None when the artifact is current or lies outside a run directory.

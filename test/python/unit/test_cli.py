@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from mqt.scpd import cli, pyscpd
+from mqt.scpd import pyscpd
 from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.cli import main
 from mqt.scpd.export import HAS_KLAYOUT
@@ -360,6 +361,7 @@ def test_plan_runs_every_step_into_the_run_directory(tmp_path: Path, capsys: pyt
     assert plan(run) == 0
 
     assert sorted(path.name for path in run.iterdir()) == [
+        ".mqt-scpd-run",
         "00-chip.json",
         "01-capacity.fb",
         "01-capacity.inputs.json",
@@ -611,6 +613,48 @@ def test_a_refused_run_keeps_the_run_it_would_replace(tmp_path: Path, capsys: py
     assert sorted(before) == ["01-capacity.fb"]
 
 
+def test_failed_replacement_preserves_the_completed_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planner failure preserves the previous inputs, artifact, record, and unrelated files."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    (run / "notes.txt").write_text("keep me", encoding="utf-8")
+    before = {path.name: path.read_bytes() for path in run.iterdir()}
+
+    def fail(*args: object) -> bytes:
+        del args
+        msg = "scene construction failed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(pyscpd, "plan_capacity", fail)
+    assert plan(run) == 1
+
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+def test_plan_saves_the_inputs_it_validated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Edits to the sources during preflight do not change the snapshot published with the artifact."""
+    source = fixture_config(tmp_path)
+    chip = tmp_path / "source-chip.json"
+    chip.write_bytes((Path(CONFIG).parent / "routing_config.json").read_bytes())
+    config_bytes = source.read_bytes()
+    chip_bytes = chip.read_bytes()
+    preflight = pyscpd.plan_problems
+
+    def edit_after_read(classified: bytes, config: bytes, steps: list[str]) -> list[str]:
+        source.write_bytes(b"invalid after the snapshot")
+        chip.write_bytes(b"invalid after the snapshot")
+        return preflight(classified, config, steps)
+
+    monkeypatch.setattr(pyscpd, "plan_problems", edit_after_read)
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(source), "--chip", str(chip), "-o", str(run), "--no-progress"]) == 0
+
+    assert (run / "config.toml").read_bytes() == config_bytes
+    assert (run / "00-chip.json").read_bytes() == chip_bytes
+
+
 def test_plan_refuses_a_file_as_its_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A run directory that is a file is refused with a line that says so, and the file stays."""
     afile = tmp_path / "afile"
@@ -675,10 +719,7 @@ def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixt
 def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A step that failed keeps its old artifact without a record, and a changed input outdates every artifact.
-
-    Either way the picture of the step is refused, since it would show what the run inputs no longer make.
-    """
+    """A failed rerun preserves a current artifact, while a change to its inputs makes it stale."""
     run = tmp_path / "run"
     assert plan(run) == 0
     capsys.readouterr()
@@ -693,18 +734,6 @@ def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
         patched.setattr(pyscpd, "plan_capacity", broken)
         assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 1
     capsys.readouterr()
-    assert (run / "01-capacity.fb").is_file()
-    assert main(["plot", "--run-dir", str(run), "--stage", "capacity", "-o", str(output)]) == 1
-    assert "01-capacity.fb carries no record of the inputs it was made from" in capsys.readouterr().err
-    assert not output.exists()
-    # inspect still prints the artifact, after a warning.
-    assert main(["inspect", str(run / "01-capacity.fb")]) == 0
-    captured = capsys.readouterr()
-    assert json.loads(captured.out)["output_type"] == "CapacityPlan"
-    assert "⚠ 01-capacity.fb carries no record of the inputs it was made from" in captured.err
-
-    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
-    capsys.readouterr()
     assert main(["plot", "--run-dir", str(run), "--stage", "capacity", "-o", str(output)]) == 0
     capsys.readouterr()
     assert main(["inspect", str(run / "01-capacity.fb")]) == 0
@@ -716,6 +745,10 @@ def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
     )
     assert main(["plot", "--run-dir", str(run), "--stage", "capacity", "-o", str(output)]) == 1
     assert "[stages.capacity] in config.toml changed after the capacity step" in capsys.readouterr().err
+    assert main(["inspect", str(run / "01-capacity.fb")]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["output_type"] == "CapacityPlan"
+    assert "[stages.capacity] in config.toml changed after the capacity step" in captured.err
 
 
 @pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")

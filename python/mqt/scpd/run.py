@@ -25,22 +25,22 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
+import tempfile
 from dataclasses import dataclass
 from itertools import starmap
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from . import pyscpd
 from ._version import version as __version__
-from .chip import RUN_CHIP, ChipError, chip_input_path, load_chip
-from .config import load_config, write_config
+from .chip import RUN_CHIP, chip_input_path, load_chip, read_chip_text
+from .config import load_config, parse_config, read_config_text, write_config
 from .console import Figure
 from .flatbuffers.config.GridParams import GridParamsT
 from .steps import STEPS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
     from .flatbuffers.config.Config import ConfigT
 
@@ -51,6 +51,7 @@ __all__ = [
     "BlockReporter",
     "RunDirectory",
     "RunError",
+    "RunInputs",
     "StageResult",
     "input_digests",
     "steps_until",
@@ -200,6 +201,19 @@ class StageResult:
     size: int
 
 
+@dataclass(frozen=True)
+class RunInputs:
+    """The exact inputs of a fresh run."""
+
+    config: ConfigT
+    config_text: str
+    chip_path: Path
+    chip_text: str
+
+
+_RUN_MARKER = b"MQT SCPD run directory\n"
+
+
 class RunDirectory:
     """The directory of one run, and the steps that fill it."""
 
@@ -250,64 +264,98 @@ class RunDirectory:
         """The copy of the chip input that the run uses."""
         return self.path / RUN_CHIP
 
-    def inputs(self, config_path: Path, chip_path: Path | None = None) -> tuple[ConfigT, Path]:
-        """Read the configuration of a new run and find its chip input, without changing the directory.
+    @property
+    def marker(self) -> Path:
+        """The file that identifies a directory created by MQT SCPD."""
+        return self.path / ".mqt-scpd-run"
 
-        Args:
-            config_path: The configuration to run.
-            chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
-                Without one, the configuration of another run takes that run's chip copy, as
-                :func:`~mqt.scpd.chip.chip_input_path` finds it.
-
-        Returns:
-            The configuration and the chip input.
+    def _check_destination(self) -> None:
+        """Refuse to write into a directory that does not belong to a run.
 
         Raises:
-            RunError: If the path is a file, or if the directory holds files and no chip copy, so
-                that it is not a run directory. A new run deletes the artifacts of the run it
-                replaces, and these could be files of another task.
-            ChipError: If the chip input is not a file.
+            RunError: If the destination is a file, link, or unrecognized non-empty directory.
         """
-        config = load_config(config_path)
-        chip = chip_input_path(config, config_path, chip_path)
+        if self.path.is_symlink():
+            msg = f"{self.path} is not a run directory: it is a symbolic link"
+            raise RunError(msg)
         if self.path.exists() and not self.path.is_dir():
             msg = f"{self.path} is not a run directory: it is a file"
             raise RunError(msg)
-        if self.path.is_dir() and not self.chip.exists() and any(self.path.iterdir()):
-            msg = f"{self.path} is not a run directory: it holds files and no {RUN_CHIP}"
+        if self.path.is_dir() and any(self.path.iterdir()) and not self._owned():
+            msg = f"{self.path} is not a run directory: it holds files without a valid {self.marker.name} marker"
             raise RunError(msg)
-        if not chip.is_file():
-            msg = f"cannot read the chip input {chip}: there is no such file"
-            raise ChipError(msg)
-        return config, chip
 
-    def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
-        """Create the directory, or start it afresh, and copy the inputs into it.
+    def _owned(self) -> bool:
+        """Check the run marker before modifying existing files.
 
-        The directory has to be new, empty or a run directory, as :meth:`inputs` checks. Every
-        artifact of an earlier run in the directory is deleted first, so no artifact stays beside
-        inputs it was not made from.
+        Returns:
+            Whether the directory has a regular marker with the expected contents.
+        """
+        try:
+            return not self.marker.is_symlink() and self.marker.is_file() and self.marker.read_bytes() == _RUN_MARKER
+        except OSError:
+            return False
+
+    def inputs(self, config_path: Path, chip_path: Path | None = None) -> RunInputs:
+        """Read the exact inputs for a fresh run without changing its destination.
 
         Args:
             config_path: The configuration to run.
-            chip_path: A chip input that replaces the configured one, as for :meth:`inputs`.
+            chip_path: An optional replacement for the configured chip input.
 
         Returns:
-            The configuration.
+            The parsed configuration and the source texts to classify and publish.
         """
-        config, chip = self.inputs(config_path, chip_path)
+        self._check_destination()
+        config_text = read_config_text(config_path)
+        config = parse_config(config_text, source=str(config_path))
+        chip = chip_input_path(config, config_path, chip_path)
+        return RunInputs(config, config_text, chip, read_chip_text(chip))
+
+    def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
+        """Start a run directory from input files.
+
+        Returns:
+            The parsed configuration.
+        """
+        snapshot = self.inputs(config_path, chip_path)
+        self.prepare_inputs(snapshot)
+        return snapshot.config
+
+    def prepare_inputs(self, snapshot: RunInputs) -> None:
+        """Initialize a run from an input snapshot and clear its previous stage outputs."""
+        self._check_destination()
         self.path.mkdir(parents=True, exist_ok=True)
         for stage in STAGE_FILES:
             for path in (self.artifact(stage), self.record(stage)):
                 path.unlink(missing_ok=True)
                 path.with_name(f"{path.name}.tmp").unlink(missing_ok=True)
-        # The chip comes first: a directory that holds a chip copy and no configuration is never
-        # taken for a directory of somebody else's configuration. An input that already is the copy
-        # of the run, as when a run is started again from its own files, stays where it is.
-        for source, copy in ((chip, self.chip), (config_path, self.config)):
-            if not (copy.exists() and copy.samefile(source)):
-                shutil.copyfile(source, copy)
-        return config
+        _write_whole(self.chip, snapshot.chip_text.encode("utf-8"))
+        _write_whole(self.config, snapshot.config_text.encode("utf-8"))
+        _write_whole(self.marker, _RUN_MARKER)
+
+    def publish(self, pending: RunDirectory) -> None:
+        """Publish the managed files of a completed run from a staging directory on the same volume."""
+        self._check_destination()
+        if not self.path.exists():
+            pending.path.rename(self.path)
+            return
+        # Validate every target before replacing any file. Leave unrelated files alone.
+        sources = [pending.chip, pending.config]
+        for stage in STAGE_FILES:
+            sources.extend((pending.artifact(stage), pending.record(stage)))
+        for source in sources:
+            target = self.path / source.name
+            if target.exists() and not target.is_file():
+                msg = f"cannot replace {target}: it is not a file"
+                raise RunError(msg)
+        for source in sources:
+            target = self.path / source.name
+            if source.is_file():
+                source.replace(target)
+            else:
+                target.unlink(missing_ok=True)
+        pending.marker.replace(self.marker)
 
     def load(self) -> ConfigT:
         """Read the configuration of an existing run.
@@ -359,6 +407,7 @@ class RunDirectory:
                 if an input of an earlier step has changed since that step wrote its artifact. A
                 refused step leaves the directory as it was.
         """
+        self._check_destination()
         path = self.artifact(stage)
         if stage not in ARTIFACT_INPUTS:
             msg = f"no core call runs the {stage} step"
@@ -377,13 +426,9 @@ class RunDirectory:
         if stage not in calls:
             msg = f"no core call runs the {stage} step"
             raise RunError(msg)
-        # The artifacts of the later steps go before the core runs, so that a step that fails leaves
-        # none of them beside an input they were not made from.
-        self.invalidate_after(stage)
-        self.record(stage).unlink(missing_ok=True)
         data = calls[stage]()
         _write_whole(path, data)
-        # The record comes after the artifact, so an artifact never carries the record of other inputs.
+        self.invalidate_after(stage)
         record = {name: digests[name] for name in STEP_INPUTS[stage]}
         _write_whole(self.record(stage), (json.dumps(record, indent=2) + "\n").encode("utf-8"))
         return StageResult(stage=stage, path=path, size=len(data))
@@ -410,8 +455,7 @@ class RunDirectory:
         """Refuse the artifact of a step, and every earlier artifact, when an input changed since.
 
         A picture of a step draws its artifact over the earlier ones, so each of them has to come
-        from the inputs the run holds now. A step that failed keeps its old artifact without a
-        record, and that artifact is refused as well.
+        from the inputs the run holds now.
 
         Args:
             stage: The step.
@@ -471,7 +515,8 @@ class RunDirectory:
 
 def _write_whole(path: Path, data: bytes) -> None:
     """Write a file under its own name only once all of it is written."""
-    partial = path.with_name(path.name + ".tmp")
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
+        partial = Path(handle.name)
     try:
         partial.write_bytes(data)
         partial.replace(path)
