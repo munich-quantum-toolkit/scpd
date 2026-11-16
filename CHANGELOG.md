@@ -12,22 +12,22 @@ releases may include breaking changes.
 
 ### Added
 
-- 📝 Add a reference of every `config.toml` key ([#140])
+- 📝 Add a reference of every `config.toml` key ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory and
-  can stop after a step or run one step again ([#140]) ([**@FeldmeierMichael**])
+  can stop after a step or run one step again ([#166]) ([**@FeldmeierMichael**])
 - ✨ Add `list-algorithms`, and draw the planning stages of a run directory with
-  `plot` and `render` ([#140]) ([**@FeldmeierMichael**])
-- 🎨 Draw `plot` pictures like a mask in a layout tool ([#140])
+  `plot` and `render` ([#166]) ([**@FeldmeierMichael**])
+- 🎨 Draw `plot` pictures like a mask in a layout tool ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add the Capacity stage, which partitions the free space at its bottlenecks
-  and budgets the wires of every capacity chain ([#140])
+  and budgets the wires of every capacity chain ([#166])
   ([**@FeldmeierMichael**])
-- ➕ Add Boost.Polygon, Boost.Config and `rich` as dependencies ([#140])
+- ➕ Add Boost.Polygon, Boost.Config and `rich` as dependencies ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add bridge pairs, components, the stage sections and `[run]` to the
-  configuration ([#140]) ([**@FeldmeierMichael**])
-- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#140])
+  configuration ([#166]) ([**@FeldmeierMichael**])
+- ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
@@ -66,10 +66,10 @@ releases may include breaking changes.
 
 ### Changed
 
-- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#140])
+- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
   ([**@FeldmeierMichael**])
 - 🎨 Change the output and the exit codes of the commands to the format of
-  `docs/terminal_output.md` ([#140]) ([**@FeldmeierMichael**])
+  `docs/terminal_output.md` ([#166]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
   floating-point contraction off (`-ffp-contract=off`, and
   `/clang:-ffp-contract=off` for clang-cl), also inside a parent project that
@@ -89,7 +89,13 @@ releases may include breaking changes.
 
 ### Fixed
 
-- 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#140])
+- 🐛 Preserve completed runs on planning failures and verify artifact provenance
+  when resuming or drawing a run ([#166]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
+- 🐛 Store the actual Capacity obstacle raster in `SCP2` artifacts and use the
+  same artifact validation for inspection and drawing ([#166])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
+- 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#166])
   ([**@FeldmeierMichael**], [**@marcelwa**])
 
 <!-- Version links -->
@@ -98,7 +104,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
-[#140]: https://github.com/munich-quantum-toolkit/scpd/pull/140
+[#166]: https://github.com/munich-quantum-toolkit/scpd/pull/166
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
 [#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111
 [#98]: https://github.com/munich-quantum-toolkit/scpd/pull/98

@@ -70,10 +70,10 @@ The run directory also keeps a copy of the configuration and of the chip input,
 `mqt-scpd doctor -c runs/33q/config.toml` checks the inputs of the run.
 
 `plan` accepts a new directory, an empty directory, or a directory with a valid
-`.mqt-scpd-run` marker. It reads a single snapshot of the configuration and
-chip input. Once the requested stages finish, it saves those exact inputs
-with their artifacts and replaces any previous run outputs. A planning
-failure leaves the previous run intact.
+`.mqt-scpd-run` marker. It reads a single snapshot of the configuration and chip
+input. Once the requested stages finish, it saves those exact inputs with their
+artifacts and replaces any previous run outputs. A planning failure leaves the
+previous run intact.
 
 `--stop-after <step>`, or `stop_after` in the `[run]` section of the
 configuration, ends a run after a step. `--stage <step>` runs one step again on
@@ -85,12 +85,13 @@ mqt-scpd plan -o runs/33q --stage capacity
 ```
 
 Beside each artifact a step writes a record of its inputs, for example
-`01-capacity.inputs.json`. The record holds digests of the classified chip,
-the configuration sections the step reads, and the artifact bytes. Resuming or
-drawing a run checks these digests before using an artifact. The message names the section and the step to run again, in the
-block of the refused step; running that step deletes the artifacts of every
-later step. A step may run again after a change to a section that only it reads,
-such as `[stages.capacity]` for the capacity step.
+`01-capacity.inputs.json`. The record holds digests of the classified chip, the
+configuration sections the step reads, and the artifact bytes. Resuming or
+drawing a run checks these digests before using an artifact. The message names
+the section and the step to run again, in the block of the refused step; running
+that step deletes the artifacts of every later step. A step may run again after
+a change to a section that only it reads, such as `[stages.capacity]` for the
+capacity step.
 
 `plot` and `render` draw a planning step of a run over the chip:
 
@@ -102,13 +103,14 @@ mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 An SVG shows the chip like a layout tool shows a mask: hatched metal on a light
 substrate, a millimeter grid, rulers and a scale bar. Every port is a red
 marker. The capacity picture shows the partition borders and the cells the grid
-blocked, in dark gray under the artwork: the artwork as the grid rasterizes it,
-and the approach of every port. It shows no gates. It leaves out the borders of
-partitions that the artwork closes in on every side, such as the free space
-inside a ring of qubits. Every other partition is shaded in a light gray that
-differs from its neighbors. Opened on its own in a browser, the picture has a
-**Layers** panel in its top left corner that shows and hides each layer, and it
-leaves out the finest detail when zoomed out.
+blocked, in dark gray under the artwork. The separate port approach layer
+includes reservations that the planner reopened while placing targets. It shows
+no gates. It leaves out the borders of partitions that the artwork closes in on
+every side, such as the free space inside a ring of qubits. Every other
+partition is shaded in a light gray that differs from its neighbors. Opened on
+its own in a browser, the picture has a **Layers** panel in its top left corner
+that shows and hides each layer, and it leaves out the finest detail when zoomed
+out.
 
 {doc}`terminal_output` describes what a run prints and what `-v` and `-vv` add.
 
