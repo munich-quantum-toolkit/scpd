@@ -190,6 +190,10 @@ narrower than about 0.7 wire spacings rules this out.
 | `relative_gap` | `0.0`   | The relative gap at which a solve may stop; `0.0` keeps the gap of the backend; not negative  |
 | `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
 
+The Gurobi backend requires `gurobipy` and a usable Gurobi license. Install
+`gurobipy` separately. Run `mqt-scpd doctor` with the configuration to check the
+backend before a step that solves.
+
 A solve that the report calls `optimal` is optimal within the relative gap: its
 objective and the best bound the solver proved differ by at most that fraction
 of the objective. With `relative_gap` at `0.0`, the gap is the default of the

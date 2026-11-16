@@ -154,7 +154,8 @@ launcherSlotPositions(const ChipT& chip, const ConfigT& config);
 inline constexpr std::uint64_t MAX_DETAIL_CELLS = 25'000'000;
 
 /**
- * @brief Checks the cell count and aspect ratio of the detail grid.
+ * @brief Checks the chip extent, cell count and aspect ratio of the detail
+ * grid.
  *
  * The detail grid has `capacity_cells_x` times `detail_factor` cells along x,
  * and `capacity_cells_y` times `detail_factor` along y. With
@@ -164,9 +165,10 @@ inline constexpr std::uint64_t MAX_DETAIL_CELLS = 25'000'000;
  *
  * @param chip The classified chip, whose box sets the aspect ratio.
  * @param config The run configuration.
- * @return The problem when the detail grid has more than MAX_DETAIL_CELLS
- * cells or its longer cell step exceeds its shorter step by over 10%.
- * None when neither limit is exceeded or there is no grid.
+ * @return The problem when the chip has no positive, finite extent, the detail
+ * grid has more than MAX_DETAIL_CELLS cells, or its longer cell step exceeds
+ * its shorter step by over 10%. None when these checks pass or the
+ * configuration specifies zero capacity cells or zero detail factor.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::optional<std::string>
 detailGridProblem(const ChipT& chip, const ConfigT& config);

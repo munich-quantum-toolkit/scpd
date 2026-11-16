@@ -503,6 +503,31 @@ def test_assignment_names_a_missing_global_artifact(tmp_path: Path) -> None:
         directory.check_current("assign", digests)
 
 
+def test_assignment_cannot_publish_after_global_is_rerun(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A solver may publish a different Global artifact for the same settings."""
+    directory = RunDirectory(tmp_path / "run")
+    config = directory.prepare(CONFIG)
+    chip = directory.classified_chip(config)
+    run_through(directory, list(STEPS))
+    old_assignment = directory.artifact("assign").read_bytes()
+    routing = read_artifact(directory.artifact("global").read_bytes())
+    routing.producer = "another solve"
+    new_routing = write_artifact(routing)
+    monkeypatch.setattr(pyscpd, "route_global", lambda *_args: new_routing)
+
+    def assign(*args: object) -> bytes:
+        del args
+        directory.run_stage("global", config, chip)
+        return old_assignment
+
+    monkeypatch.setattr(pyscpd, "assign", assign)
+    with pytest.raises(RunError, match=r"an earlier artifact .* changed during planning"):
+        directory.run_stage("assign", config, chip)
+
+    assert directory.artifact("global").read_bytes() == new_routing
+    assert not directory.artifact("assign").exists()
+
+
 def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A step that raises writes nothing, and the artifact of its last run stays."""
     directory = RunDirectory(tmp_path / "run")

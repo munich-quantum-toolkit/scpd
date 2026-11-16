@@ -25,6 +25,8 @@ checks the stages through `[run] stop_after`. Its default includes Assignment.
 See [the configuration reference](docs/configuration.md) for launcher order,
 ring counts and solver settings.
 
+The Linux x86-64 wheels require a processor with the POPCNT instruction.
+
 GDS/OASIS planning exports preserve holes in the port approach layer. Run
 `mqt-scpd render` again to update exported files.
 

@@ -30,9 +30,10 @@ releases may include breaking changes.
 - ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add Global routing on Hanan lattices and Assignment of ring ports to
-  launchers and feedline chains ([#167]) ([**@FeldmeierMichael**])
+  launchers and feedline chains ([#167]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
 - ➕ Add HiGHS, optional Gurobi support, and the solver configuration ([#167])
-  ([**@FeldmeierMichael**])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🎨 Draw Global and Assignment artifacts with the stored Capacity raster
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins

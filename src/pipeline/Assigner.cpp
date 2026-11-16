@@ -1174,7 +1174,7 @@ std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
     return std::nullopt;
   }
   if (detailGridProblem(chip, config).has_value()) {
-    // planProblems() reports a grid above the limit.
+    // planProblems() reports invalid grids before checking launcher positions.
     return std::nullopt;
   }
   return placesProblem(launcherSlotPositions(chip, config));

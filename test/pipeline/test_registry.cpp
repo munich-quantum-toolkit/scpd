@@ -327,6 +327,19 @@ TEST(PlanProblems, RecommendsFinerCapacityCellsWhenHeightIsDerived) {
   EXPECT_EQ(problems.front().find("set capacity_cells_y"), std::string::npos);
 }
 
+TEST(PlanProblems, RefuseAChipWithNoGridExtent) {
+  auto chip = test::miniChip();
+  chip.obstacles.clear();
+  for (auto& port : chip.ports) {
+    port->center = {port->center.x(), 0.0};
+  }
+
+  for (const auto* step : {"capacity", "assign"}) {
+    EXPECT_TRUE(mentions(planProblems(chip, test::miniConfig(), {step}),
+                         "a grid needs a box with a positive, finite extent"));
+  }
+}
+
 TEST(PlanProblems, AcceptADetailGridAtTheLimit) {
   auto config = test::miniConfig();
   config.grid->capacity_cells_x = 100;
