@@ -19,7 +19,6 @@ import argparse
 import contextlib
 import os
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -108,7 +107,6 @@ def command_plan(args: argparse.Namespace) -> int:
         ConfigError: If the core refuses a value of the configuration, or if the configuration
             and the chip would stop one of the steps, as ``pyscpd.plan_problems`` reports it. The
             run directory stays as it was.
-        BrokenPipeError: If the reader of the output went away, also while a stage wrote.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
 
@@ -137,13 +135,8 @@ def command_plan(args: argparse.Namespace) -> int:
     console.header("plan", subject, str(directory.path))
     for warning in warnings:
         console.warning(warning)
-    with contextlib.ExitStack() as cleanup:
-        work = directory
-        if snapshot is not None:
-            directory.path.parent.mkdir(parents=True, exist_ok=True)
-            staging = cleanup.enter_context(tempfile.TemporaryDirectory(dir=directory.path.parent))
-            work = RunDirectory(Path(staging) / "run")
-            work.prepare_inputs(snapshot)
+    staging = directory.staging(snapshot) if snapshot is not None else contextlib.nullcontext(directory)
+    with staging as work:
         return _run_plan(directory, work, console, steps, config, chip, args.verbose)
 
 
@@ -160,6 +153,9 @@ def _run_plan(
 
     Returns:
         The exit code.
+
+    Raises:
+        BrokenPipeError: If the reader of the output went away while a stage wrote.
     """
     last: str | None = None
     for step in steps:

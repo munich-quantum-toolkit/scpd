@@ -119,7 +119,8 @@ The example shortens the two port lists. The report has these parts:
 2. One line `WARNING: <warning>` per key that no stage reads any more.
 3. One line `PROBLEM: <problem>` per problem. A problem is an error in the
    configuration or the chip, or a preflight problem in a step up to
-   `[run] stop_after`. Each step can also report problems it finds while planning.
+   `[run] stop_after`. Each step can also report problems it finds while
+   planning.
 4. The counts of obstacles and ports.
 5. The roles of the ports: the count, the pattern and the first three labels of
    each role.

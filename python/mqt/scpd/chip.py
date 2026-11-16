@@ -83,10 +83,6 @@ def load_chip(config: ConfigT, config_path: Path, chip_path: Path | None = None)
 
     Returns:
         The classified chip as bytes of the ``design.fbs`` schema.
-
-    Raises:
-        ChipError: If the input cannot be read, is not a valid chip input, or does not fit the
-            configuration. The message names every problem.
     """
     path = chip_input_path(config, config_path, chip_path)
     return classify_chip(config, read_chip_text(path), path)

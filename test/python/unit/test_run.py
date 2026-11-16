@@ -212,9 +212,7 @@ def test_preparing_refuses_a_directory_that_holds_files_of_another_task(tmp_path
 
 
 @pytest.mark.parametrize("directory_marker", [False, True], ids=["file", "directory"])
-def test_foreign_chip_copy_does_not_authorize_replacing_a_directory(
-    tmp_path: Path, directory_marker: bool
-) -> None:
+def test_foreign_chip_copy_does_not_authorize_replacing_a_directory(tmp_path: Path, *, directory_marker: bool) -> None:
     """An unrelated chip and artifact with conventional names do not identify a run."""
     directory = RunDirectory(tmp_path)
     if directory_marker:

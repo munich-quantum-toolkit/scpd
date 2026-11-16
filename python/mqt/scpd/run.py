@@ -13,7 +13,7 @@ continued from any completed step. Running a step deletes the artifacts of every
 the directory never holds a later artifact beside an earlier one it did not come from. An artifact
 is written to a file of its own first and then renamed, so no half-written artifact is left behind.
 
-Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip
+Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip,
 of every configuration section the step reads, and of the artifact itself. A step refuses to run
 on an earlier artifact whose bytes or inputs do not match its record.
 
@@ -24,11 +24,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from . import pyscpd
 from ._version import version as __version__
@@ -39,7 +47,7 @@ from .flatbuffers.config.GridParams import GridParamsT
 from .steps import STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Sequence
 
     from .flatbuffers.config.Config import ConfigT
 
@@ -275,13 +283,18 @@ class RunDirectory:
         Raises:
             RunError: If the destination is a file, link, or unrecognized non-empty directory.
         """
-        if self.path.is_symlink():
-            msg = f"{self.path} is not a run directory: it is a symbolic link"
+        try:
+            entry = self.path.lstat()
+        except FileNotFoundError:
+            return
+        junction = os.name == "nt" and entry.st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+        if stat.S_ISLNK(entry.st_mode) or junction:
+            msg = f"{self.path} is not a run directory: it is a directory link"
             raise RunError(msg)
-        if self.path.exists() and not self.path.is_dir():
+        if not stat.S_ISDIR(entry.st_mode):
             msg = f"{self.path} is not a run directory: it is a file"
             raise RunError(msg)
-        if self.path.is_dir() and any(self.path.iterdir()) and not self._owned():
+        if any(self.path.iterdir()) and not self._owned():
             msg = f"{self.path} is not a run directory: it holds files without a valid {self.marker.name} marker"
             raise RunError(msg)
 
@@ -319,43 +332,136 @@ class RunDirectory:
             The parsed configuration.
         """
         snapshot = self.inputs(config_path, chip_path)
-        self.prepare_inputs(snapshot)
+        with self.staging(snapshot) as pending:
+            self.publish(pending)
         return snapshot.config
 
-    def prepare_inputs(self, snapshot: RunInputs) -> None:
-        """Initialize a run from an input snapshot and clear its previous stage outputs."""
+    @contextmanager
+    def staging(self, snapshot: RunInputs) -> Generator[RunDirectory, None, None]:
+        """Create a temporary run from the input snapshot.
+
+        Yields:
+            A run directory on the same volume as the destination.
+        """
+        parent = self.path.absolute().parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as staging:
+            pending = RunDirectory(Path(staging) / "run")
+            pending.path.mkdir()
+            pending.chip.write_bytes(snapshot.chip_text.encode("utf-8"))
+            pending.config.write_bytes(snapshot.config_text.encode("utf-8"))
+            pending.marker.write_bytes(_RUN_MARKER)
+            yield pending
+
+    @contextmanager
+    def _write_lock(self) -> Generator[None, None, None]:
+        """Serialize writers to an existing run.
+
+        Yields:
+            Once the run's write lock is held.
+
+        Raises:
+            RunError: If another writer holds the lock.
+        """
         self._check_destination()
-        self.path.mkdir(parents=True, exist_ok=True)
-        for stage in STAGE_FILES:
-            for path in (self.artifact(stage), self.record(stage)):
-                path.unlink(missing_ok=True)
-                path.with_name(f"{path.name}.tmp").unlink(missing_ok=True)
-        _write_whole(self.chip, snapshot.chip_text.encode("utf-8"))
-        _write_whole(self.config, snapshot.config_text.encode("utf-8"))
-        _write_whole(self.marker, _RUN_MARKER)
+        with self.marker.open("r+b") as marker:
+            try:
+                if os.name == "nt":
+                    # Lock the byte past the contents so readers can check the marker.
+                    marker.seek(0, os.SEEK_END)
+                    msvcrt.locking(marker.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(marker.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as error:
+                msg = f"cannot write {self.path}: the run is in use"
+                raise RunError(msg) from error
+            yield
 
     def publish(self, pending: RunDirectory) -> None:
-        """Publish the managed files of a completed run from a staging directory on the same volume."""
+        """Publish a completed run while preserving unrelated files."""
         self._check_destination()
         if not self.path.exists():
             pending.path.rename(self.path)
             return
-        # Validate every target before replacing any file. Leave unrelated files alone.
+        if not self._owned():
+            # Claim an existing empty directory without replacing it.
+            with self.marker.open("xb") as marker:
+                marker.write(_RUN_MARKER)
         sources = [pending.chip, pending.config]
         for stage in STAGE_FILES:
-            sources.extend((pending.artifact(stage), pending.record(stage)))
-        for source in sources:
-            target = self.path / source.name
-            if target.exists() and not target.is_file():
-                msg = f"cannot replace {target}: it is not a file"
-                raise RunError(msg)
-        for source in sources:
-            target = self.path / source.name
-            if source.is_file():
-                source.replace(target)
-            else:
-                target.unlink(missing_ok=True)
-        pending.marker.replace(self.marker)
+            for source in (pending.artifact(stage), pending.record(stage)):
+                sources.extend((source, source.with_suffix(source.suffix + ".tmp")))
+        self._publish_files(sources)
+
+    def _publish_files(
+        self,
+        sources: Sequence[Path],
+        *,
+        digests: dict[str, str] | None = None,
+        prerequisites: dict[str, bytes] | None = None,
+    ) -> None:
+        """Replace a set of managed files after checking the inputs under the write lock.
+
+        Raises:
+            RunError: If a destination is occupied, inputs changed, or rollback is incomplete.
+            OSError: If the files cannot be published.
+            KeyboardInterrupt: If publication is interrupted.
+        """
+        targets = [self.path / source.name for source in sources]
+        with self._write_lock():
+            if digests is not None:
+                config = self.load()
+                if input_digests(config, self.classified_chip(config)) != digests:
+                    msg = f"the inputs of {self.path} changed during planning; run the step again"
+                    raise RunError(msg)
+                if prerequisites and self._check_records(list(prerequisites), digests, {}) != prerequisites:
+                    msg = f"an earlier artifact of {self.path} changed during planning; run the step again"
+                    raise RunError(msg)
+            for target in targets:
+                if target.exists() and not target.is_file():
+                    msg = f"cannot replace {target}: it is not a file"
+                    raise RunError(msg)
+            originals = [target for target in targets if target.is_file() or target.is_symlink()]
+            replacements = [
+                (source, target) for source, target in zip(sources, targets, strict=True) if source.is_file()
+            ]
+            previous = Path(tempfile.mkdtemp(prefix=".mqt-scpd-previous-", dir=self.path.absolute().parent))
+            saved: list[Path] = []
+            installed: list[Path] = []
+            try:
+                saved.extend(target.replace(previous / target.name) for target in originals)
+                for source, target in replacements:
+                    installed.append(source.replace(target))
+            except (OSError, KeyboardInterrupt):
+                self._restore_files(previous, saved, installed)
+                raise
+            for backup in saved:
+                backup.unlink()
+            previous.rmdir()
+
+    def _restore_files(self, previous: Path, saved: list[Path], installed: list[Path]) -> None:
+        """Restore displaced files, retaining any backup that cannot be put back.
+
+        Raises:
+            RunError: If restoration is incomplete.
+        """
+        backed_up = {backup.name for backup in saved}
+        failures: list[OSError] = []
+        for target in installed:
+            if target.name not in backed_up:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError as error:
+                    failures.append(error)
+        for backup in saved:
+            try:
+                backup.replace(self.path / backup.name)
+            except OSError as error:
+                failures.append(error)
+        if failures:
+            msg = f"cannot restore all files of {self.path}; any remaining backups are in {previous}"
+            raise RunError(msg) from failures[0]
+        previous.rmdir()
 
     def load(self) -> ConfigT:
         """Read the configuration of an existing run.
@@ -431,30 +537,19 @@ class RunDirectory:
             msg = f"no core call runs the {stage} step"
             raise RunError(msg)
         data = calls[stage]()
-        _write_whole(path, data)
-        self.invalidate_after(stage)
         record = {name: digests[name] for name in STEP_INPUTS[stage]}
         record[_ARTIFACT_DIGEST] = hashlib.sha256(data).hexdigest()
-        _write_whole(self.record(stage), (json.dumps(record, indent=2) + "\n").encode("utf-8"))
+        with tempfile.TemporaryDirectory(dir=self.path.absolute().parent) as staging:
+            pending = RunDirectory(Path(staging))
+            pending.artifact(stage).write_bytes(data)
+            pending.record(stage).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+            sources = [
+                file
+                for step in ordered[ordered.index(stage) :]
+                for file in (pending.artifact(step), pending.record(step))
+            ]
+            self._publish_files(sources, digests=digests, prerequisites=verified)
         return StageResult(stage=stage, path=path, size=len(data))
-
-    def invalidate_after(self, stage: str) -> list[Path]:
-        """Delete the artifact and the record of every step after one.
-
-        Args:
-            stage: The step whose later steps lose their artifacts.
-
-        Returns:
-            The files that were removed.
-        """
-        names = list(STAGE_FILES)
-        removed = []
-        for later in names[names.index(stage) + 1 :]:
-            for path in (self.artifact(later), self.record(later)):
-                if path.is_file():
-                    path.unlink()
-                    removed.append(path)
-        return removed
 
     def check_current(self, stage: str, digests: dict[str, str], *, data: bytes | None = None) -> None:
         """Check that the artifact and its preceding stages match their records.
@@ -506,13 +601,3 @@ class RunDirectory:
                     )
                     raise RunError(msg)
         return artifacts
-
-def _write_whole(path: Path, data: bytes) -> None:
-    """Write a file under its own name only once all of it is written."""
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as handle:
-        partial = Path(handle.name)
-    try:
-        partial.write_bytes(data)
-        partial.replace(path)
-    finally:
-        partial.unlink(missing_ok=True)

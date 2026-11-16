@@ -459,9 +459,6 @@ def load_config(path: Path, *, strict: bool = False) -> ConfigT:
 
     Returns:
         The configuration.
-
-    Raises:
-        ConfigError: If the file cannot be read or has a problem.
     """
     return parse_config(read_config_text(path), source=str(path), strict=strict)
 

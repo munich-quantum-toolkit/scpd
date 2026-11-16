@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 
 from mqt.scpd import cli, pyscpd
-from mqt.scpd import pyscpd
 from mqt.scpd.artifacts import write_artifact
 from mqt.scpd.cli import main
 from mqt.scpd.export import HAS_KLAYOUT
@@ -613,9 +612,7 @@ def test_a_refused_run_keeps_the_run_it_would_replace(tmp_path: Path, capsys: py
     assert sorted(before) == ["01-capacity.fb"]
 
 
-def test_failed_replacement_preserves_the_completed_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_failed_replacement_preserves_the_completed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A planner failure preserves the previous inputs, artifact, record, and unrelated files."""
     run = tmp_path / "run"
     assert plan(run) == 0
@@ -631,6 +628,58 @@ def test_failed_replacement_preserves_the_completed_run(
     assert plan(run) == 1
 
     assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+def test_failed_publication_restores_the_completed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed file replacement leaves the completed run readable."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    before = {path.name: path.read_bytes() for path in run.iterdir()}
+
+    source = fixture_config(tmp_path)
+    source.write_text(source.read_text(encoding="utf-8") + "\n# revised source\n", encoding="utf-8")
+    replace = Path.replace
+    locked = run / "01-capacity.fb"
+
+    def fail(source: Path, target: Path) -> Path:
+        if target == locked and source.parent.name == "run":
+            msg = "the artifact could not be replaced"
+            raise PermissionError(msg)
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail)
+    assert main(["plan", "-c", str(source), "-o", str(run), "--no-progress"]) == 1
+
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+def test_plan_can_publish_in_an_empty_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run accepts the current directory if it is empty."""
+    monkeypatch.chdir(tmp_path)
+    assert plan(Path()) == 0
+    assert (tmp_path / "01-capacity.fb").is_file()
+
+
+def test_a_slow_resumed_step_cannot_overwrite_a_new_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A step calculated from old inputs cannot replace a newer run."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    source = fixture_config(tmp_path)
+    text = source.read_text(encoding="utf-8").replace("capacity_cells_x = 12", "capacity_cells_x = 13")
+    source.write_text(text, encoding="utf-8")
+    plan_capacity = pyscpd.plan_capacity
+    published: dict[str, bytes] = {}
+
+    def replace_during_planning(chip: bytes, config: bytes, producer: str, reporter: object, level: int) -> bytes:
+        with monkeypatch.context() as inner:
+            inner.setattr(pyscpd, "plan_capacity", plan_capacity)
+            assert main(["plan", "-c", str(source), "-o", str(run), "--no-progress"]) == 0
+        published.update({path.name: path.read_bytes() for path in run.iterdir()})
+        return plan_capacity(chip, config, producer, reporter, level)
+
+    monkeypatch.setattr(pyscpd, "plan_capacity", replace_during_planning)
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 1
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == published
 
 
 def test_plan_saves_the_inputs_it_validated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
