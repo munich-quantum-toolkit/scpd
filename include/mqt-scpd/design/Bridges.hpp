@@ -79,6 +79,17 @@ bridgeMatchesOf(const flatbuffers::design::ChipT& chip,
                 const BridgeRules& rules);
 
 /**
+ * @brief Pairs the ports with exactly one endpoint on each side of their rule.
+ *
+ * @param chip The classified chip.
+ * @param matches The result of bridgeMatchesOf() for this chip.
+ * @return The unambiguous pairs, ordered by rule and first-side port index.
+ */
+[[nodiscard]] MQT_SCPD_DESIGN_EXPORT std::vector<BridgePair>
+bridgePairsOf(const flatbuffers::design::ChipT& chip,
+              const std::vector<std::vector<BridgeMatch>>& matches);
+
+/**
  * @brief Groups the routable ports of a chip by component and pairs them.
  *
  * The ports of a coupler pair off across its artwork. A port that no rule
@@ -87,10 +98,8 @@ bridgeMatchesOf(const flatbuffers::design::ChipT& chip,
  *
  * Which two ports pair is declared: a rule names both sides of the crossing,
  * each with one capture group, and two ports of one component pair when they
- * match the two sides of one rule with equal captures. The rules apply in the
- * order the configuration lists them, and each rule over the ports of a
- * component in ascending order, so the pairing depends on the configuration
- * alone.
+ * are the only matches on the two sides of one rule with equal captures.
+ * The pairs follow the configured rule order, then the first-side port index.
  *
  * @param chip The classified chip. A port without a component, or with a role
  * no wire runs to, takes no part.

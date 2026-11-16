@@ -255,7 +255,7 @@ TEST(ConfigValidation, TheBridgePatternAndTheBridgeRulesMustAgree) {
                       "port 'Coupler1_2.port2' is a bridge_pair port that no "
                       "bridge rule pairs",
                       "port 'Coupler1_2.port1' is a bridge_pair port without "
-                      "a partner in component 'Coupler1_2'"}));
+                      "a unique partner in component 'Coupler1_2'"}));
 
   // No rule at all, while the pattern still names two ports.
   config.ports->bridge_pairs.clear();
@@ -274,6 +274,31 @@ TEST(ConfigValidation, TheBridgePatternAndTheBridgeRulesMustAgree) {
             "port 'Coupler1_2.port1' is paired by 2 bridge rule sides");
 }
 
+TEST(ConfigValidation, ABridgeRuleNeedsOnePortPerSideAndCapture) {
+  ChipT chip = smallChip();
+  for (const auto* label : {"Coupler3_4.port1", "Coupler3_4.port2",
+                            "Coupler3_4.port3", "Coupler3_4.port4"}) {
+    auto port = std::make_unique<PortT>();
+    port->label = label;
+    port->center = Point(0.0, 0.0);
+    port->role = UnassignedRole::BridgePair;
+    port->component = "Coupler3_4";
+    chip.ports.push_back(std::move(port));
+  }
+
+  ConfigT config = manualConfig();
+  config.ports->patterns->bridge_pair = R"(^Coupler\d+_\d+\.port[1-4]$)";
+  auto rule = couplerRule();
+  rule->first = R"(^(Coupler\d+_\d+)\.port[13]$)";
+  rule->second = R"(^(Coupler\d+_\d+)\.port[24]$)";
+  config.ports->bridge_pairs.push_back(std::move(rule));
+
+  const auto problems = validate(config, chip);
+  ASSERT_EQ(problems.size(), 4U);
+  EXPECT_NE(problems.front().find("without a unique partner"),
+            std::string::npos);
+}
+
 TEST(ConfigValidation, ABridgePortNeedsItsPartnerInItsComponent) {
   // The rule pairs port1 with port2, but the coupler carries only port1, so
   // the wire would end inside the coupler.
@@ -290,7 +315,7 @@ TEST(ConfigValidation, ABridgePortNeedsItsPartnerInItsComponent) {
   config.ports->bridge_pairs.push_back(couplerRule());
   EXPECT_EQ(validate(config, chip),
             (Problems{"port 'Coupler1_2.port1' is a bridge_pair port without "
-                      "a partner in component 'Coupler1_2'"}));
+                      "a unique partner in component 'Coupler1_2'"}));
 }
 
 TEST(ConfigValidation, ABridgePortNeedsAComponent) {

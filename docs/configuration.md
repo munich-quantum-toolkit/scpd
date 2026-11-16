@@ -50,8 +50,9 @@ port.
 
 Each rule pairs the two `bridge_pair` ports that a wire crosses a component
 between. Both sides are regular expressions with exactly one capture group. Two
-ports pair when they belong to one component and their captures are equal. The
-rules apply in the order the file lists them.
+ports pair when they belong to one component and their captures are equal. Each
+component and capture must match one port per side of its rule. The pairs follow
+the rule order in the file.
 
 | Key      | Default | Meaning                           |
 | -------- | ------- | --------------------------------- |
@@ -101,12 +102,11 @@ The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
 refuse a larger grid before the first stage of a run through the capacity step,
 and name the grid that the configuration asks for.
 
-The Capacity stage measures clearance on a square lattice and treats a
-diagonal step as a 45° port approach. It accepts a longer detail cell step
-up to 10% larger than the shorter step to allow for rounding the grid
-dimensions. Set `capacity_cells_y = 0` to derive it from the chip aspect ratio.
-Increase `capacity_cells_x` if a low resolution still produces cells outside
-this limit.
+The Capacity stage measures clearance on a square lattice and treats a diagonal
+step as a 45° port approach. It accepts a longer detail cell step up to 10%
+larger than the shorter step to allow for rounding the grid dimensions. Set
+`capacity_cells_y = 0` to derive it from the chip aspect ratio. Increase
+`capacity_cells_x` if a low resolution still produces cells outside this limit.
 
 ## `[stages.capacity]`
 
