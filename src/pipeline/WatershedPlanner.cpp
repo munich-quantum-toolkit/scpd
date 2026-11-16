@@ -900,6 +900,7 @@ public:
     fillBottlenecks(plan, candidates, chains, scene, capacities);
     fillLaunchers(plan, scene);
     fillPortKeepout(plan, scene);
+    plan.blocked_words = scene.blocked.words();
     report.line(
         Detail::Steps,
         std::format("{}{}{}", counted(plan.partitions.size(), "partition"),

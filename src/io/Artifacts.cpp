@@ -118,6 +118,19 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
   }
   if (plan.detail_grid == nullptr) {
     problems.emplace_back("detail grid: missing");
+  } else {
+    constexpr std::uint64_t wordBits = 64;
+    const auto cells = static_cast<std::uint64_t>(plan.detail_grid->width) *
+                       plan.detail_grid->height;
+    const auto words = (cells + wordBits - 1) / wordBits;
+    const auto tail = cells % wordBits;
+    if (plan.blocked_words.size() != words) {
+      problems.push_back(
+          std::format("blocked detail mask has {}, expected {}",
+                      counted(plan.blocked_words.size(), "word"), words));
+    } else if (tail != 0 && (plan.blocked_words.back() >> tail) != 0) {
+      problems.emplace_back("blocked detail cells have nonzero padding");
+    }
   }
   requireEach(plan.partitions, "partition", problems);
   for (std::size_t index = 0; index < plan.partitions.size(); ++index) {

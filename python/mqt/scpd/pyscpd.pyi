@@ -27,5 +27,8 @@ def plan_capacity(
 def algorithms() -> list[tuple[str, list[str]]]:
     """The implementations this build ships, as (stage, names) pairs in pipeline order."""
 
+def validate_artifact(artifact: bytes) -> None:
+    """Raise ValueError if the stored artifact is invalid."""
+
 def artifact_to_json(artifact: bytes) -> str:
     """Render a stage artifact as JSON. The field names, the enum names and the union tags come from the schema, so the JSON follows it without a second description of the model. Raises ValueError when the bytes are not a complete artifact of this schema version."""

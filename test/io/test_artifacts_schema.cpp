@@ -79,7 +79,7 @@ std::unique_ptr<BridgeT> makeBridge() {
 }
 
 TEST(ArtifactSchema, IdentifierRecordsTheSchemaVersion) {
-  EXPECT_STREQ(ArtifactIdentifier(), "SCP1");
+  EXPECT_STREQ(ArtifactIdentifier(), "SCP2");
   EXPECT_STREQ(ArtifactExtension(), "fb");
 }
 
@@ -120,6 +120,30 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
   EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
+}
+
+TEST(ArtifactSchema, RefusesAnIncompleteBlockedMask) {
+  auto plan = emptyPlan();
+  plan.detail_grid->width = 65;
+  plan.detail_grid->height = 1;
+  plan.blocked_words = {1};
+  EXPECT_EQ(
+      validate(wrap(plan)),
+      (std::vector<std::string>{"blocked detail mask has 1 word, expected 2"}));
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(plan)))),
+               std::invalid_argument);
+
+  plan.blocked_words = {1, 2};
+  EXPECT_EQ(
+      validate(wrap(plan)),
+      (std::vector<std::string>{"blocked detail cells have nonzero padding"}));
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(plan)))),
+               std::invalid_argument);
+
+  plan.blocked_words = {1, 1};
+  const auto artifact = readArtifact(writeArtifact(wrap(plan)));
+  ASSERT_NE(artifact.output.AsCapacityPlan(), nullptr);
+  EXPECT_EQ(artifact.output.AsCapacityPlan()->blocked_words, plan.blocked_words);
 }
 
 TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {
@@ -427,6 +451,13 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnArtifactWithoutItsProducer) {
                    std::invalid_argument);
     }
   }
+}
+
+TEST(ArtifactSchema, ReadArtifactRejectsThePreviousSchemaVersion) {
+  auto bytes = writeArtifact(wrap(GlobalRoutingT{}));
+  constexpr std::array<std::uint8_t, 4> previous{'S', 'C', 'P', '1'};
+  std::ranges::copy(previous, std::next(bytes.begin(), 4));
+  EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
 }
 
 TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {

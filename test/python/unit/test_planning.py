@@ -11,13 +11,14 @@
 from __future__ import annotations
 
 import math
+import sys
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.scpd.artifacts import read_artifact, write_artifact
+from mqt.scpd.artifacts import ArtifactError, read_artifact, write_artifact
 from mqt.scpd.chip import decode_chip
 from mqt.scpd.flatbuffers.artifacts.Artifact import ArtifactT
 from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
@@ -76,7 +77,6 @@ def test_the_capacity_picture_holds_the_partitions_and_the_launchers(run: RunDir
     assert all(len(ring) >= 3 for partition in geometry.partitions for ring in partition)
     assert geometry.borders
     assert len(geometry.launchers) == 4
-    # The grid blocks a border of cells along its edge.
     assert geometry.blocked
     assert len(geometry.partition_tones) == len(geometry.partitions)
 
@@ -100,6 +100,7 @@ def test_a_partition_keeps_its_rings_together(run: RunDirectory) -> None:
         launchers=[],
         nodes=[],
         chains=[],
+        blockedWords=[0] * 3,
     )
     data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
 
@@ -147,6 +148,7 @@ def test_the_pieces_of_a_border_close_together_are_one_run(run: RunDirectory) ->
         launchers=[],
         nodes=[],
         chains=[],
+        blockedWords=[0] * 7,
     )
     data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
 
@@ -160,29 +162,22 @@ def _square(label: int, x0: float, y0: float, x1: float, y1: float) -> Partition
     return PartitionT(label=label, outlines=[PolygonT(vertices=corners)])
 
 
-def test_the_blocked_cells_leave_out_what_is_too_thin_to_block(run: RunDirectory) -> None:
-    """A strip of one cell between two partitions is not a blockage; a block of four cells is."""
+def test_the_blocked_cells_include_a_one_cell_wall(run: RunDirectory) -> None:
+    """A one-cell wall and a block both appear even where the partitions stop short."""
     grid = GridExtentT(width=12, height=12, origin=PointT(0.5, 0.5), cellWidth=1.0, cellHeight=1.0)
-    # Columns 0 to 4 and 6 to 11 are free, except a block of four by four cells at 7 to 10 and 4 to 7.
-    partitions = [
-        _square(2, 0.0, 0.0, 5.0, 12.0),
-        PartitionT(
-            label=3,
-            outlines=[
-                PolygonT(vertices=[PointT(6.0, 0.0), PointT(12.0, 0.0), PointT(12.0, 12.0), PointT(6.0, 12.0)]),
-                PolygonT(vertices=[PointT(7.0, 4.0), PointT(11.0, 4.0), PointT(11.0, 8.0), PointT(7.0, 8.0)]),
-            ],
-        ),
-    ]
+    expected = {(5, y) for y in range(12)} | {(x, y) for x in range(7, 11) for y in range(4, 8)}
+    mask = sum(1 << (y * grid.width + x) for x, y in expected)
+    words = [(mask >> bit) & ((1 << 64) - 1) for bit in range(0, grid.width * grid.height, 64)]
     plan = CapacityPlanT(
         capacityGrid=grid,
         detailGrid=grid,
-        partitions=partitions,
+        partitions=[],
         borders=[],
         bottlenecks=[],
         launchers=[],
         nodes=[],
         chains=[],
+        blockedWords=words,
     )
     data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
 
@@ -194,7 +189,7 @@ def test_the_blocked_cells_leave_out_what_is_too_thin_to_block(run: RunDirectory
         for x in range(int(ring[0][0]), int(ring[1][0]))
         for y in range(int(ring[0][1]), int(ring[2][1]))
     }
-    assert cells == {(x, y) for x in range(7, 11) for y in range(4, 8)}
+    assert cells == expected
 
 
 def test_the_borders_of_closed_in_partitions_are_kept_apart(run: RunDirectory) -> None:
@@ -219,6 +214,7 @@ def test_the_borders_of_closed_in_partitions_are_kept_apart(run: RunDirectory) -
         launchers=[],
         nodes=[],
         chains=[],
+        blockedWords=[0] * 7,
     )
     data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
 
@@ -264,7 +260,7 @@ def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> b
     """
     nodes = [
         CapacityNodeT(kind=CapacityElement.Launcher, id=0, next=[1]),
-        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, next=[2, 3]),
+        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, capacity=2, next=[2, 3]),
         CapacityNodeT(kind=CapacityElement.Target, id=1, next=[1] if cyclic else []),
         CapacityNodeT(kind=CapacityElement.Target, id=99, next=[]),
     ]
@@ -278,6 +274,7 @@ def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> b
         launchers=[],
         nodes=nodes,
         chains=[0] if chains is None else chains,
+        blockedWords=[0],
         portKeepout=[PolygonT(vertices=[PointT(0.0, 0.0), PointT(10.0, 0.0), PointT(0.0, 10.0)])],
     )
     return write_artifact(ArtifactT(producer="test", outputType=StageOutput.CapacityPlan, output=plan))
@@ -303,8 +300,23 @@ def test_a_capacity_chain_joins_the_ports_and_the_gates_it_names(run: RunDirecto
     assert geometry.keepout == [[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]]
 
 
-def test_a_cyclic_capacity_chain_is_drawn_once(run: RunDirectory) -> None:
-    """A chain that leads back to a node it passed draws each link once and ends."""
-    geometry = planning_geometry(capacity_plan(cyclic=True), chip_of(run), "capacity")
+def test_a_cyclic_capacity_chain_is_refused(run: RunDirectory) -> None:
+    """The artifact reader rejects a cyclic chain before drawing it."""
+    with pytest.raises(ArtifactError, match="link in a cycle"):
+        planning_geometry(capacity_plan(cyclic=True), chip_of(run), "capacity")
 
-    assert geometry.chains == [((50.0, 0.0), (2000.0, 200.0)), ((2000.0, 200.0), (50.0, 0.0))]
+
+def test_a_long_capacity_chain_draws_without_recursing(run: RunDirectory) -> None:
+    """Draw every link of a chain deeper than the Python call stack."""
+    artifact = read_artifact(capacity_plan())
+    plan = artifact.output
+    assert isinstance(plan, CapacityPlanT)
+    count = sys.getrecursionlimit() + 1
+    plan.nodes = [
+        CapacityNodeT(kind=CapacityElement.Bottleneck, id=0, capacity=2, next=[child])
+        for child in range(1, count)
+    ] + [CapacityNodeT(kind=CapacityElement.Target, id=1, next=[])]
+
+    geometry = planning_geometry(write_artifact(artifact), chip_of(run), "capacity")
+
+    assert len(geometry.chains) == count - 1

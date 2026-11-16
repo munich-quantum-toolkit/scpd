@@ -224,6 +224,13 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "pipeline order.");
 
   m.def(
+      "validate_artifact",
+      [](const nb::bytes& artifact) {
+        static_cast<void>(mqt::scpd::io::readArtifact(asSpan(artifact)));
+      },
+      "artifact"_a, "Raise ValueError if the stored artifact is invalid.");
+
+  m.def(
       "artifact_to_json",
       [](const nb::bytes& artifact) {
         return mqt::scpd::io::artifactToJson(asSpan(artifact));

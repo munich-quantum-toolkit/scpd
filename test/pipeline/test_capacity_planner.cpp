@@ -558,6 +558,43 @@ TEST(CapacityPlanner, LeavesTheBandItTookBackOutOfEveryPartition) {
   EXPECT_GT(freeReserved, 0U);
 }
 
+TEST(CapacityPlanner, ExportsReopenedApproachesOutsideTheBlockedMask) {
+  const auto config = pinchedCorridorConfig();
+  for (const bool atEdge : {false, true}) {
+    SCOPED_TRACE(atEdge);
+    auto chip = pinchedCorridorChip(config, !atEdge);
+    if (atEdge) {
+      const auto q2 = std::ranges::find_if(
+          chip.ports, [](const auto& port) { return port->label == "Q2.port0"; });
+      ASSERT_NE(q2, chip.ports.end());
+      (*q2)->center = flatbuffers::geometry::Point(150.0, 105.0);
+    }
+    const auto scene = buildScene(chip, config);
+    const auto plan = makeWatershedPlanner()->run(chip, config, {});
+    EXPECT_EQ(plan.blocked_words, scene.blocked.words());
+
+    std::vector<grid::PartitionOutline> outlines;
+    for (const auto& ring : plan.port_keepout) {
+      grid::PartitionOutline outline{.label = grid::FIRST_PARTITION_LABEL,
+                                     .ring = {}};
+      for (const auto& vertex : ring->vertices) {
+        outline.ring.push_back(grid::layoutToCorner(scene.detail, vertex));
+      }
+      outlines.push_back(std::move(outline));
+    }
+    const auto drawn = grid::rasterizePartitions(outlines, scene.detail);
+    std::size_t reopened = 0;
+    for (std::size_t cell = 0; cell < drawn.size(); ++cell) {
+      const bool shown = drawn[cell] != grid::LABEL_NONE;
+      EXPECT_EQ(shown, scene.keepout.test(cell)) << cell;
+      if (shown && scene.reserved.test(cell) && !scene.blocked.test(cell)) {
+        ++reopened;
+      }
+    }
+    EXPECT_GT(reopened, 0U);
+  }
+}
+
 /// What lies in the alcove of twoPinchChip.
 enum class Alcove : std::uint8_t { None, Empty, WithTarget };
 

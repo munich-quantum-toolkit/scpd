@@ -9,10 +9,9 @@ np = import_numpy()
 
 # One link of a capacity chain.
 #
-# A chain is a tree and FlatBuffers has no recursive table, so the nodes are
-# stored flat and a link names its branches by index. Two chains can then
-# share a subtree without storing it twice. A target lies on one chain only,
-# so a shared subtree holds no target.
+# A link names its branches by index. The flat node list keeps serialization
+# depth fixed and lets two chains share a subtree. A target lies on one
+# chain only, so a shared subtree holds no target.
 class CapacityNode(object):
     __slots__ = ['_tab']
 
@@ -29,7 +28,7 @@ class CapacityNode(object):
         return cls.GetRootAs(buf, offset)
     @classmethod
     def CapacityNodeBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
-        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x31", size_prefixed=size_prefixed)
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x32", size_prefixed=size_prefixed)
 
     # CapacityNode
     def Init(self, buf: bytes, pos: int):
