@@ -13,6 +13,7 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
+#include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
@@ -151,7 +152,11 @@ TEST(PlanProblems, AcceptADetailGridAtTheLimit) {
   config.grid->detail_factor = 50;
   ASSERT_EQ(100U * 50U * 100U * 50U, MAX_DETAIL_CELLS);
 
-  EXPECT_TRUE(planProblems(test::miniChip(), config, allSteps()).empty());
+  auto chip = test::miniChip();
+  const auto box = grid::chipBounds(chip);
+  chip.ports.push_back(std::make_unique<flatbuffers::design::PortT>());
+  chip.ports.back()->center = {box.minX, box.minY + box.width()};
+  EXPECT_TRUE(planProblems(chip, config, allSteps()).empty());
 }
 
 TEST(PlanProblems, CountTheDetailCellsAlongYFromTheAspectRatio) {
@@ -190,6 +195,30 @@ TEST(PlanProblems, NameEveryRoutablePortThatFacesNoStepOfTheGrid) {
                 "of the grid; Q1.port0 faces 10°, Q2.port1 faces -100°"});
   // A run that does not take the capacity step stamps no band.
   EXPECT_TRUE(planProblems(chip, test::miniConfig(), {}).empty());
+}
+
+TEST(PlanProblems, RefuseAChipWithoutALauncher) {
+  auto chip = test::miniChip();
+  std::erase_if(chip.ports, [](const auto& port) {
+    return hasLauncherSlot(*port);
+  });
+
+  EXPECT_EQ(planProblems(chip, test::miniConfig(), allSteps()),
+            std::vector<std::string>{
+                "the chip carries no launcher a wire could be routed to"});
+}
+
+TEST(PlanProblems, RejectDetailCellsThatDistortTheLayoutMetric) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 9;
+  config.grid->capacity_cells_y = 5;
+  config.grid->detail_factor = 1;
+  const auto chip = test::miniChip();
+
+  const auto problems = planProblems(chip, config, allSteps());
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_NE(problems.front().find("near-square detail cells"), std::string::npos);
+  EXPECT_THROW(static_cast<void>(buildScene(chip, config)), std::invalid_argument);
 }
 
 TEST(PlanProblems, RefuseADetailGridBeyondTheRangeOfAnAxis) {

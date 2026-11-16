@@ -88,6 +88,7 @@ std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
     // The capacity step builds the detail grid and stamps the port bands.
     note(detailGridProblem(chip, config));
     note(orientationProblem(chip));
+    note(launcherProblem(chip));
   }
   return problems;
 }

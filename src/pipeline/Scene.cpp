@@ -113,18 +113,17 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
   if (params.capacity_cells_x == 0 || params.detail_factor == 0) {
     return std::nullopt;
   }
-  // The figures stay in floating point, so that no product of two 32-bit
-  // figures wraps around. They are whole numbers, and every one at or below
-  // the limit is exact.
+  geometry::BoundingBox box;
+  try {
+    box = grid::chipBounds(chip);
+  } catch (const std::invalid_argument&) {
+    return std::nullopt;
+  }
+  // Keep the figures in floating point so that products of configuration
+  // values cannot overflow. The counts are exact up to the grid limit.
   const double capacityWidth = params.capacity_cells_x;
   double capacityHeight = params.capacity_cells_y;
   if (params.capacity_cells_y == 0) {
-    geometry::BoundingBox box;
-    try {
-      box = grid::chipBounds(chip);
-    } catch (const std::invalid_argument&) {
-      return std::nullopt;
-    }
     const auto ratio = box.height() / box.width();
     if (!std::isfinite(ratio) || !(ratio > 0.0)) {
       return std::nullopt;
@@ -136,14 +135,41 @@ std::optional<std::string> detailGridProblem(const ChipT& chip,
   const auto width = capacityWidth * factor;
   const auto height = capacityHeight * factor;
   const auto cells = width * height;
-  if (cells <= static_cast<double>(MAX_DETAIL_CELLS)) {
+  if (cells > static_cast<double>(MAX_DETAIL_CELLS)) {
+    return std::format("[grid] asks for a detail grid of {:.0f} × {:.0f} = "
+                       "{:.0f} cells, a capacity grid of {:.0f} × {:.0f} cells "
+                       "times detail_factor {:.0f}; the limit is {} cells",
+                       width, height, cells, capacityWidth, capacityHeight,
+                       factor, MAX_DETAIL_CELLS);
+  }
+
+  if (width < 2.0 || height < 2.0 || !(box.width() > 0.0) ||
+      !(box.height() > 0.0)) {
     return std::nullopt;
   }
-  return std::format("[grid] asks for a detail grid of {:.0f} × {:.0f} = "
-                     "{:.0f} cells, a capacity grid of {:.0f} × {:.0f} cells "
-                     "times detail_factor {:.0f}; the limit is {} cells",
-                     width, height, cells, capacityWidth, capacityHeight,
-                     factor, MAX_DETAIL_CELLS);
+  // Port headings and the clearance search use square lattice steps. Allow
+  // the rounding of the cell counts while bounding the error of those steps.
+  constexpr double MAX_STEP_RATIO = 1.1;
+  const auto xStep = box.width() / (width - 1.0);
+  const auto yStep = box.height() / (height - 1.0);
+  if (std::max(xStep, yStep) > std::min(xStep, yStep) * MAX_STEP_RATIO) {
+    return std::format(
+        "[grid] needs near-square detail cells for the capacity step; "
+        "{:.0f} × {:.0f} cells give steps of {:.6g} × {:.6g} layout units, "
+        "which differ by more than 10%; set capacity_cells_y to 0 or increase "
+        "the capacity grid resolution",
+        width, height, xStep, yStep);
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> launcherProblem(const ChipT& chip) {
+  if (std::ranges::any_of(chip.ports, [](const auto& port) {
+        return port != nullptr && hasLauncherSlot(*port);
+      })) {
+    return std::nullopt;
+  }
+  return "the chip carries no launcher a wire could be routed to";
 }
 
 std::optional<std::string> orientationProblem(const ChipT& chip) {
@@ -244,6 +270,9 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
 
   CapacityScene scene;
   std::tie(scene.capacity, scene.detail) = gridsOf(chip, config);
+  if (auto problem = launcherProblem(chip)) {
+    throw std::invalid_argument(*std::move(problem));
+  }
 
   // The mask carries no obstacle keepout. The keepout makes the clearance a
   // hard constraint on a search, and nothing searches on this grid: the stage
@@ -347,11 +376,6 @@ CapacityScene buildScene(const ChipT& chip, const ConfigT& config) {
     scene.reserved.set(slot, false);
     scene.launcherCell.push_back(slot);
     scene.launcherPort.push_back(index);
-  }
-
-  if (scene.launcherCell.empty()) {
-    throw std::invalid_argument(
-        "the chip carries no launcher a wire could be routed to");
   }
 
   // A target has to be reachable, and the bands are stamped one port at a

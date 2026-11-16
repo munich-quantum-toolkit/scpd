@@ -101,6 +101,13 @@ The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
 refuse a larger grid before the first stage of a run through the capacity step,
 and name the grid that the configuration asks for.
 
+The Capacity stage measures clearance on a square lattice and treats a
+diagonal step as a 45° port approach. It accepts a longer detail cell step
+up to 10% larger than the shorter step to allow for rounding the grid
+dimensions. Set `capacity_cells_y = 0` to derive it from the chip aspect ratio.
+Increase `capacity_cells_x` if a low resolution still produces cells outside
+this limit.
+
 ## `[stages.capacity]`
 
 | Key                    | Default | Meaning                                                                                                                                                 |

@@ -130,10 +130,11 @@ selectedCapacityPlanner(const ConfigT& config);
  * it have run. The check reads only the chip and the configuration:
  *
  * - every step names an implementation this build registers;
- * - a run through the capacity step asks for a detail grid of at most
- *   MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
- * - a run through the capacity step has every routable port face a step of
- *   the grid, as orientationProblem() checks.
+ * - a run through the capacity step asks for a near-square detail grid of
+ *   at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - every routable port faces a step of that grid, as orientationProblem()
+ *   checks;
+ * - the chip has at least one port with a launcher slot.
  *
  * @param chip The classified chip.
  * @param config The run configuration.

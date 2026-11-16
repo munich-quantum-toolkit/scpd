@@ -224,12 +224,13 @@ TEST(CapacityScene, TakesTheDefaultGridWhenTheConfigurationLeavesItOut) {
 
 TEST(CapacityScene, TakesTheCellsAlongYFromTheConfigurationWhenGiven) {
   auto config = test::miniConfig();
-  config.grid->capacity_cells_y = 7;
+  config.grid->capacity_cells_x = 11;
+  config.grid->capacity_cells_y = 10;
 
   const auto scene = buildScene(test::miniChip(), config);
 
-  EXPECT_EQ(scene.capacity.width, 12U);
-  EXPECT_EQ(scene.capacity.height, 7U);
+  EXPECT_EQ(scene.capacity.width, 11U);
+  EXPECT_EQ(scene.capacity.height, 10U);
 }
 
 TEST(CapacityScene, TakesTheDefaultCrossingPitchWithoutACapacitySection) {
