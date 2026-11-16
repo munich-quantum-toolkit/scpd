@@ -21,6 +21,7 @@
 #include <array>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <stdexcept>
@@ -126,6 +127,8 @@ TEST(ArtifactSchema, RefusesAnIncompleteBlockedMask) {
   auto plan = emptyPlan();
   plan.detail_grid->width = 65;
   plan.detail_grid->height = 1;
+  plan.detail_grid->cell_width = 1.0;
+  plan.detail_grid->cell_height = 1.0;
   plan.blocked_words = {1};
   EXPECT_EQ(
       validate(wrap(plan)),
@@ -143,7 +146,21 @@ TEST(ArtifactSchema, RefusesAnIncompleteBlockedMask) {
   plan.blocked_words = {1, 1};
   const auto artifact = readArtifact(writeArtifact(wrap(plan)));
   ASSERT_NE(artifact.output.AsCapacityPlan(), nullptr);
-  EXPECT_EQ(artifact.output.AsCapacityPlan()->blocked_words, plan.blocked_words);
+  EXPECT_EQ(artifact.output.AsCapacityPlan()->blocked_words,
+            plan.blocked_words);
+}
+
+TEST(ArtifactSchema, RefusesAnInvalidDetailCellStep) {
+  auto plan = emptyPlan();
+  plan.detail_grid->width = 1;
+  plan.detail_grid->height = 1;
+  plan.detail_grid->cell_width = 1.0;
+  plan.blocked_words = {1};
+  for (const auto step : {0.0, std::numeric_limits<double>::quiet_NaN()}) {
+    plan.detail_grid->cell_height = step;
+    EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(plan)))),
+                 std::invalid_argument);
+  }
 }
 
 TEST(ArtifactSchema, RefusesACapacityChainThatLeavesItsNodesOrIsNoTree) {

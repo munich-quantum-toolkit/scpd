@@ -184,7 +184,7 @@ def test_read_rejects_the_previous_schema_identifier() -> None:
     data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT())))
     data[4:8] = b"SCP1"
 
-    with pytest.raises(ArtifactError, match="identifier.*SCP2"):
+    with pytest.raises(ArtifactError, match=r"identifier.*SCP2"):
         read_artifact(bytes(data))
 
 
