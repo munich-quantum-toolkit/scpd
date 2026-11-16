@@ -228,8 +228,9 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     if not artifact.is_file():
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
-    directory.check_current(args.stage, input_digests(config, chip_bytes))
-    geometry = planning_geometry(artifact.read_bytes(), decode_chip(chip_bytes), args.stage)
+    data = artifact.read_bytes()
+    directory.check_current(args.stage, input_digests(config, chip_bytes), data=data)
+    geometry = planning_geometry(data, decode_chip(chip_bytes), args.stage)
     return chip_bytes, title, geometry
 
 
@@ -291,7 +292,7 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
     return 0
 
 
-def _stale_reason(artifact: Path) -> str | None:
+def _stale_reason(artifact: Path, data: bytes) -> str | None:
     """Why an artifact of a run directory no longer matches the inputs of the run.
 
     An input of the run can change after a step wrote its artifact. An artifact outside a run
@@ -306,7 +307,7 @@ def _stale_reason(artifact: Path) -> str | None:
         return None
     try:
         config = directory.load()
-        directory.check_current(stage, input_digests(config, directory.classified_chip(config)))
+        directory.check_current(stage, input_digests(config, directory.classified_chip(config)), data=data)
     except (RunError, ConfigError, ChipError) as error:
         return str(error)
     return None
@@ -321,9 +322,10 @@ def command_inspect(args: argparse.Namespace) -> int:
     Returns:
         The exit code.
     """
-    if (reason := _stale_reason(args.artifact)) is not None:
+    data = args.artifact.read_bytes()
+    if (reason := _stale_reason(args.artifact, data)) is not None:
         Console(file=sys.stderr).warning(reason)
-    text = artifact_to_json(args.artifact.read_bytes())
+    text = artifact_to_json(data)
     if args.output is None:
         write_out(text)
     else:

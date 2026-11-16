@@ -14,9 +14,8 @@ the directory never holds a later artifact beside an earlier one it did not come
 is written to a file of its own first and then renamed, so no half-written artifact is left behind.
 
 Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip
-and of every configuration section the step reads. A step refuses to run on an earlier artifact
-whose inputs have changed since, so a resumed step never reads an artifact that the current
-configuration would not make.
+of every configuration section the step reads, and of the artifact itself. A step refuses to run
+on an earlier artifact whose bytes or inputs do not match its record.
 
 Python does the file work. The core never opens a file: it takes bytes and returns bytes.
 """
@@ -212,6 +211,7 @@ class RunInputs:
 
 
 _RUN_MARKER = b"MQT SCPD run directory\n"
+_ARTIFACT_DIGEST = "artifact_sha256"
 
 
 class RunDirectory:
@@ -413,10 +413,14 @@ class RunDirectory:
             msg = f"no core call runs the {stage} step"
             raise RunError(msg)
         digests = input_digests(config, chip)
-        self._check_unchanged(stage, digests)
-        # Each step reads the artifacts of the steps before it, and a missing one stops the step
-        # before anything is deleted.
-        inputs = [self._read(earlier) for earlier in ARTIFACT_INPUTS[stage]]
+        ordered = list(STAGE_FILES)
+        verified = self._check_records(ordered[: ordered.index(stage)], digests, {})
+        inputs = []
+        for earlier in ARTIFACT_INPUTS[stage]:
+            if earlier not in verified:
+                msg = f"{self.artifact(earlier).name} is missing; run the {earlier} step first"
+                raise RunError(msg)
+            inputs.append(verified[earlier])
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 2)
@@ -430,6 +434,7 @@ class RunDirectory:
         _write_whole(path, data)
         self.invalidate_after(stage)
         record = {name: digests[name] for name in STEP_INPUTS[stage]}
+        record[_ARTIFACT_DIGEST] = hashlib.sha256(data).hexdigest()
         _write_whole(self.record(stage), (json.dumps(record, indent=2) + "\n").encode("utf-8"))
         return StageResult(stage=stage, path=path, size=len(data))
 
@@ -451,51 +456,47 @@ class RunDirectory:
                     removed.append(path)
         return removed
 
-    def check_current(self, stage: str, digests: dict[str, str]) -> None:
-        """Refuse the artifact of a step, and every earlier artifact, when an input changed since.
-
-        A picture of a step draws its artifact over the earlier ones, so each of them has to come
-        from the inputs the run holds now.
+    def check_current(self, stage: str, digests: dict[str, str], *, data: bytes | None = None) -> None:
+        """Check that the artifact and its preceding stages match their records.
 
         Args:
             stage: The step.
             digests: The digests of the inputs the run holds now, as :func:`input_digests` gives them.
+            data: The artifact bytes the caller will consume, if it already read them.
 
         Raises:
-            RunError: If one of the artifacts has no readable record, or if an input it records has
-                changed.
+            RunError: If an artifact has no readable record or its bytes or inputs have changed.
         """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
         names = list(STAGE_FILES)
-        self._check_records(names[: names.index(stage) + 1], digests)
+        self._check_records(names[: names.index(stage) + 1], digests, {stage: data} if data is not None else {})
 
-    def _check_unchanged(self, stage: str, digests: dict[str, str]) -> None:
-        """Refuse a step when an earlier artifact was made from inputs that have changed since.
+    def _check_records(
+        self, stages: Sequence[str], digests: dict[str, str], artifacts: dict[str, bytes]
+    ) -> dict[str, bytes]:
+        """Read and verify the artifacts that are present. The caller reports missing stage inputs.
 
-        Raises:
-            RunError: If an earlier artifact has no readable record, or if an input it records has
-                changed.
-        """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
-        names = list(STAGE_FILES)
-        self._check_records(names[: names.index(stage)], digests)
-
-    def _check_records(self, stages: Sequence[str], digests: dict[str, str]) -> None:
-        """Refuse artifacts made from inputs that have changed since.
-
-        A missing artifact is left to the caller, which names the step to run first.
+        Returns:
+            The exact bytes that passed verification.
 
         Raises:
-            RunError: If an artifact has no readable record, or if an input it records has changed.
+            RunError: If an artifact has no readable record or its bytes or inputs have changed.
         """
         for earlier in stages:
             artifact = self.artifact(earlier)
-            if not artifact.is_file():
-                continue
+            if earlier not in artifacts:
+                try:
+                    artifacts[earlier] = artifact.read_bytes()
+                except FileNotFoundError:
+                    continue
             try:
                 record = json.loads(self.record(earlier).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 record = None
-            if not isinstance(record, dict) or set(record) != set(STEP_INPUTS[earlier]):
+            if not isinstance(record, dict) or set(record) != {*STEP_INPUTS[earlier], _ARTIFACT_DIGEST}:
                 msg = f"{artifact.name} carries no record of the inputs it was made from; run the {earlier} step again"
+                raise RunError(msg)
+            if record[_ARTIFACT_DIGEST] != hashlib.sha256(artifacts[earlier]).hexdigest():
+                msg = f"{artifact.name} does not match its input record; run the {earlier} step again"
                 raise RunError(msg)
             for name in STEP_INPUTS[earlier]:
                 if record[name] != digests[name]:
@@ -504,14 +505,7 @@ class RunDirectory:
                         f"{where} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
                     )
                     raise RunError(msg)
-
-    def _read(self, stage: str) -> bytes:
-        path = self.artifact(stage)
-        if not path.is_file():
-            msg = f"{path.name} is missing; run the {stage} step first"
-            raise RunError(msg)
-        return path.read_bytes()
-
+        return artifacts
 
 def _write_whole(path: Path, data: bytes) -> None:
     """Write a file under its own name only once all of it is written."""

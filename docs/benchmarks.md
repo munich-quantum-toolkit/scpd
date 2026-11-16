@@ -85,11 +85,9 @@ mqt-scpd plan -o runs/33q --stage capacity
 ```
 
 Beside each artifact a step writes a record of its inputs, for example
-`01-capacity.inputs.json`. The record holds a digest of the chip copy and of
-each section of `config.toml` that the step reads. `--stage` refuses a step when
-the chip copy or such a section has changed since an earlier step wrote its
-artifact, because the step would read an artifact that the current configuration
-does not make. The message names the section and the step to run again, in the
+`01-capacity.inputs.json`. The record holds digests of the classified chip,
+the configuration sections the step reads, and the artifact bytes. Resuming or
+drawing a run checks these digests before using an artifact. The message names the section and the step to run again, in the
 block of the refused step; running that step deletes the artifacts of every
 later step. A step may run again after a change to a section that only it reads,
 such as `[stages.capacity]` for the capacity step.

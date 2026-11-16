@@ -26,6 +26,7 @@ from mqt.scpd.run import (
     BlockReporter,
     RunDirectory,
     RunError,
+    input_digests,
     steps_until,
 )
 from mqt.scpd.steps import STEPS
@@ -435,6 +436,21 @@ def test_a_step_refuses_an_earlier_artifact_without_a_record(tmp_path: Path, rec
         RunError, match=r"01-capacity\.fb carries no record of the inputs it was made from; run the capacity step again"
     ):
         run_through(directory, ["later"])
+
+
+def test_an_artifact_must_match_its_inputs_record(tmp_path: Path) -> None:
+    """A record from another publication does not authorize overwritten artifact bytes."""
+    directory = RunDirectory(tmp_path / "run")
+    config = directory.prepare(CONFIG)
+    chip = directory.classified_chip(config)
+    directory.run_stage("capacity", config, chip)
+    digests = input_digests(config, chip)
+    directory.check_current("capacity", digests)
+
+    directory.artifact("capacity").write_bytes(b"artifact of another publication")
+
+    with pytest.raises(RunError, match=r"01-capacity\.fb does not match its input record"):
+        directory.check_current("capacity", digests)
 
 
 def test_a_step_that_fails_keeps_the_old_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -751,6 +751,17 @@ def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
     assert "[stages.capacity] in config.toml changed after the capacity step" in captured.err
 
 
+def test_plot_checks_the_artifact_it_draws(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A substituted artifact is refused before it reaches the renderer."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    capsys.readouterr()
+    (run / "01-capacity.fb").write_bytes(b"an unrelated result")
+
+    assert main(["plot", "--run-dir", str(run), "--stage", "capacity", "-o", str(tmp_path / "capacity.svg")]) == 1
+    assert "01-capacity.fb does not match its input record" in capsys.readouterr().err
+
+
 @pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
 @pytest.mark.usefixtures("vector_type")
 def test_render_writes_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
