@@ -73,7 +73,8 @@ The run directory also keeps a copy of the configuration and of the chip input,
 `.mqt-scpd-run` marker. It reads a single snapshot of the configuration and chip
 input. Once the requested stages finish, it saves those exact inputs with their
 artifacts and replaces any previous run outputs. A planning failure leaves the
-previous run intact.
+previous run intact. If a writer stops while replacing files, the next planning
+command restores the previous files before using the run.
 
 `--stop-after <step>`, or `stop_after` in the `[run]` section of the
 configuration, ends a run after a step. `--stage <step>` runs one step again on

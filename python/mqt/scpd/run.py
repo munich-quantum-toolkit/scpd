@@ -27,7 +27,7 @@ import json
 import os
 import stat
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from itertools import starmap
 from pathlib import Path
@@ -48,6 +48,7 @@ from .steps import STEPS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
+    from typing import BinaryIO
 
     from .flatbuffers.config.Config import ConfigT
 
@@ -277,6 +278,11 @@ class RunDirectory:
         """The file that identifies a directory created by MQT SCPD."""
         return self.path / ".mqt-scpd-run"
 
+    @property
+    def _recovery(self) -> Path:
+        """The journal directory of a publication that may need recovery."""
+        return self.path / ".mqt-scpd-recovery"
+
     def _check_destination(self) -> None:
         """Refuse to write into a directory that does not belong to a run.
 
@@ -294,20 +300,33 @@ class RunDirectory:
         if not stat.S_ISDIR(entry.st_mode):
             msg = f"{self.path} is not a run directory: it is a file"
             raise RunError(msg)
-        if any(self.path.iterdir()) and not self._owned():
+        if any(self.path.iterdir()) and not self._owned() and not self._partial_claim():
             msg = f"{self.path} is not a run directory: it holds files without a valid {self.marker.name} marker"
             raise RunError(msg)
 
-    def _owned(self) -> bool:
-        """Check the run marker before modifying existing files.
-
-        Returns:
-            Whether the directory has a regular marker with the expected contents.
-        """
+    def _marker_content(self) -> bytes | None:
+        """Return the marker contents only for a regular file."""
         try:
-            return not self.marker.is_symlink() and self.marker.is_file() and self.marker.read_bytes() == _RUN_MARKER
+            if self.marker.is_symlink() or not self.marker.is_file():
+                return None
+            with self.marker.open("rb", buffering=0) as marker:
+                size = os.fstat(marker.fileno()).st_size
+                return marker.read(size) if size <= len(_RUN_MARKER) else None
         except OSError:
-            return False
+            return None
+
+    def _owned(self) -> bool:
+        """Return whether this directory has a valid run marker."""
+        return self._marker_content() == _RUN_MARKER
+
+    def _partial_claim(self) -> bool:
+        """Return whether the only file is a partially written run marker."""
+        content = self._marker_content()
+        return (
+            content is not None
+            and _RUN_MARKER.startswith(content)
+            and all(entry == self.marker for entry in self.path.iterdir())
+        )
 
     def inputs(self, config_path: Path, chip_path: Path | None = None) -> RunInputs:
         """Read the exact inputs for a fresh run without changing its destination.
@@ -320,10 +339,11 @@ class RunDirectory:
             The parsed configuration and the source texts to classify and publish.
         """
         self._check_destination()
-        config_text = read_config_text(config_path)
-        config = parse_config(config_text, source=str(config_path))
-        chip = chip_input_path(config, config_path, chip_path)
-        return RunInputs(config, config_text, chip, read_chip_text(chip))
+        with self._write_lock() if self._owned() else nullcontext():
+            config_text = read_config_text(config_path)
+            config = parse_config(config_text, source=str(config_path))
+            chip = chip_input_path(config, config_path, chip_path)
+            return RunInputs(config, config_text, chip, read_chip_text(chip))
 
     def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
         """Start a run directory from input files.
@@ -331,6 +351,7 @@ class RunDirectory:
         Returns:
             The parsed configuration.
         """
+        self.recover()
         snapshot = self.inputs(config_path, chip_path)
         with self.staging(snapshot) as pending:
             self.publish(pending)
@@ -343,9 +364,13 @@ class RunDirectory:
         Yields:
             A run directory on the same volume as the destination.
         """
+        self._check_destination()
         parent = self.path.absolute().parent
+        if self.path.is_dir():
+            self._claim()
+            parent = self.path
         parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=parent) as staging:
+        with tempfile.TemporaryDirectory(prefix=".mqt-scpd-stage-", dir=parent) as staging:
             pending = RunDirectory(Path(staging) / "run")
             pending.path.mkdir()
             pending.chip.write_bytes(snapshot.chip_text.encode("utf-8"))
@@ -353,9 +378,55 @@ class RunDirectory:
             pending.marker.write_bytes(_RUN_MARKER)
             yield pending
 
+    def _claim(self) -> None:
+        """Claim an existing empty directory by creating its marker exclusively.
+
+        Raises:
+            RunError: If the destination was claimed or filled by another writer.
+        """
+        if self._owned():
+            return
+        try:
+            marker = self.marker.open("x+b")
+        except FileExistsError as error:
+            if self._owned():
+                return
+            if not self._partial_claim():
+                msg = f"cannot write {self.path}: the directory is no longer empty"
+                raise RunError(msg) from error
+            marker = self.marker.open("r+b")
+        with marker, self._marker_lock(marker):
+            if self._owned():
+                return
+            if not self._partial_claim():
+                msg = f"cannot write {self.path}: the directory is no longer empty"
+                raise RunError(msg)
+            marker.seek(0)
+            marker.write(_RUN_MARKER)
+            marker.flush()
+
+    def recover(self) -> None:
+        """Restore an interrupted publication before reading inputs for a write."""
+        if not self._recovery.exists() and not self._recovery.is_symlink():
+            return
+        with self._write_lock():
+            pass
+
     @contextmanager
     def _write_lock(self) -> Generator[None, None, None]:
         """Serialize writers to an existing run.
+
+        Yields:
+            Once the run's write lock is held.
+        """
+        self._check_destination()
+        with self.marker.open("r+b") as marker, self._marker_lock(marker):
+            self._recover_locked()
+            yield
+
+    @contextmanager
+    def _marker_lock(self, marker: BinaryIO) -> Generator[None, None, None]:
+        """Hold the same lock while creating or using a run marker.
 
         Yields:
             Once the run's write lock is held.
@@ -363,19 +434,23 @@ class RunDirectory:
         Raises:
             RunError: If another writer holds the lock.
         """
-        self._check_destination()
-        with self.marker.open("r+b") as marker:
-            try:
-                if os.name == "nt":
-                    # Lock the byte past the contents so readers can check the marker.
-                    marker.seek(0, os.SEEK_END)
-                    msvcrt.locking(marker.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    fcntl.flock(marker.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as error:
-                msg = f"cannot write {self.path}: the run is in use"
-                raise RunError(msg) from error
+        try:
+            if os.name == "nt":
+                # Lock beyond the contents so readers can check the marker.
+                marker.seek(len(_RUN_MARKER))
+                msvcrt.locking(marker.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(marker.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            msg = f"cannot write {self.path}: the run is in use"
+            raise RunError(msg) from error
+        try:
             yield
+        finally:
+            if os.name == "nt":
+                with suppress(OSError):
+                    marker.seek(len(_RUN_MARKER))
+                    msvcrt.locking(marker.fileno(), msvcrt.LK_UNLCK, 1)
 
     def publish(self, pending: RunDirectory) -> None:
         """Publish a completed run while preserving unrelated files."""
@@ -383,10 +458,7 @@ class RunDirectory:
         if not self.path.exists():
             pending.path.rename(self.path)
             return
-        if not self._owned():
-            # Claim an existing empty directory without replacing it.
-            with self.marker.open("xb") as marker:
-                marker.write(_RUN_MARKER)
+        self._claim()
         sources = [pending.chip, pending.config]
         for stage in STAGE_FILES:
             for source in (pending.artifact(stage), pending.record(stage)):
@@ -425,42 +497,91 @@ class RunDirectory:
             replacements = [
                 (source, target) for source, target in zip(sources, targets, strict=True) if source.is_file()
             ]
-            previous = Path(tempfile.mkdtemp(prefix=".mqt-scpd-previous-", dir=self.path.absolute().parent))
-            saved: list[Path] = []
-            installed: list[Path] = []
+            previous = sources[0].parent / "recovery"
+            previous.mkdir()
+            with (previous / "pending.json").open("w", encoding="utf-8") as journal:
+                json.dump([target.name for _, target in replacements if target not in originals], journal)
+                journal.flush()
+                os.fsync(journal.fileno())
+            previous.rename(self._recovery)
             try:
-                saved.extend(target.replace(previous / target.name) for target in originals)
+                for target in originals:
+                    target.replace(self._recovery / target.name)
                 for source, target in replacements:
-                    installed.append(source.replace(target))
+                    source.replace(target)
+                (self._recovery / "pending.json").rename(self._recovery / "committed.json")
             except (OSError, KeyboardInterrupt):
-                self._restore_files(previous, saved, installed)
+                self._recover_locked()
                 raise
-            for backup in saved:
-                backup.unlink()
-            previous.rmdir()
+            self._recover_locked()
 
-    def _restore_files(self, previous: Path, saved: list[Path], installed: list[Path]) -> None:
-        """Restore displaced files, retaining any backup that cannot be put back.
+    def _recover_locked(self) -> None:
+        """Restore an interrupted publication and remove completed journals.
 
         Raises:
-            RunError: If restoration is incomplete.
+            RunError: If the journal is unrecognized or recovery failed.
         """
-        backed_up = {backup.name for backup in saved}
-        failures: list[OSError] = []
-        for target in installed:
-            if target.name not in backed_up:
-                try:
-                    target.unlink(missing_ok=True)
-                except OSError as error:
-                    failures.append(error)
-        for backup in saved:
+        previous = self._recovery
+        try:
+            status = previous.lstat()
+        except FileNotFoundError:
+            return
+        junction = os.name == "nt" and status.st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+        invalid = f"cannot use unrecognized recovery journal at {previous}"
+        if not stat.S_ISDIR(status.st_mode) or junction:
+            raise RunError(invalid)
+        entries = set(previous.iterdir())
+        if not entries:
+            previous.rmdir()
+            return
+        pending = previous / "pending.json"
+        committed = previous / "committed.json"
+        markers = entries.intersection({pending, committed})
+        if len(markers) != 1:
+            raise RunError(invalid)
+        journal = markers.pop()
+        if journal.is_symlink() or not journal.is_file():
+            raise RunError(invalid)
+        managed = {self.config.name, self.chip.name}
+        for stage in STAGE_FILES:
+            for path in (self.artifact(stage), self.record(stage)):
+                managed.update((path.name, path.name + ".tmp"))
+        backups = entries - {journal}
+        if any(path.name not in managed or not (path.is_file() or path.is_symlink()) for path in backups):
+            raise RunError(invalid)
+
+        if journal == committed:
+            with suppress(OSError):
+                for backup in backups:
+                    backup.unlink()
+                journal.unlink()
+                previous.rmdir()
+            return
+
+        try:
+            absent = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise RunError(invalid) from error
+        if not isinstance(absent, list) or any(not isinstance(name, str) or name not in managed for name in absent):
+            raise RunError(invalid)
+        if any(backup.name in absent for backup in backups):
+            raise RunError(invalid)
+
+        failed = []
+        for name in absent:
+            try:
+                (self.path / name).unlink(missing_ok=True)
+            except OSError as error:
+                failed.append(error)
+        for backup in backups:
             try:
                 backup.replace(self.path / backup.name)
             except OSError as error:
-                failures.append(error)
-        if failures:
+                failed.append(error)
+        if failed:
             msg = f"cannot restore all files of {self.path}; any remaining backups are in {previous}"
-            raise RunError(msg) from failures[0]
+            raise RunError(msg) from failed[0]
+        journal.unlink()
         previous.rmdir()
 
     def load(self) -> ConfigT:
@@ -514,6 +635,7 @@ class RunDirectory:
                 refused step leaves the directory as it was.
         """
         self._check_destination()
+        self.recover()
         path = self.artifact(stage)
         if stage not in ARTIFACT_INPUTS:
             msg = f"no core call runs the {stage} step"
@@ -539,7 +661,7 @@ class RunDirectory:
         data = calls[stage]()
         record = {name: digests[name] for name in STEP_INPUTS[stage]}
         record[_ARTIFACT_DIGEST] = hashlib.sha256(data).hexdigest()
-        with tempfile.TemporaryDirectory(dir=self.path.absolute().parent) as staging:
+        with tempfile.TemporaryDirectory(prefix=".mqt-scpd-stage-", dir=self.path) as staging:
             pending = RunDirectory(Path(staging))
             pending.artifact(stage).write_bytes(data)
             pending.record(stage).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")

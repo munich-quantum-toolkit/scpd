@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from mqt.scpd import pyscpd
+from mqt.scpd import pyscpd, run
 from mqt.scpd.console import Figure
 from mqt.scpd.run import (
     ARTIFACT_INPUTS,
@@ -161,6 +161,26 @@ def test_a_run_starts_again_from_its_own_inputs(tmp_path: Path) -> None:
     assert directory.config.read_bytes() == CONFIG.read_bytes()
     assert directory.chip.read_bytes() == (FIXTURE / "routing_config.json").read_bytes()
     assert sorted(path.name for path in directory.path.iterdir()) == [".mqt-scpd-run", "00-chip.json", "config.toml"]
+
+
+def test_reading_a_run_snapshot_blocks_competing_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A replay reads both copied inputs while another writer cannot replace them."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    read_config_text = run.read_config_text
+
+    def read_while_replacing(path: Path) -> str:
+        text = read_config_text(path)
+        if path == directory.config:
+            with pytest.raises(RunError, match="the run is in use"):
+                directory.prepare(CONFIG)
+        return text
+
+    monkeypatch.setattr(run, "read_config_text", read_while_replacing)
+    snapshot = directory.inputs(directory.config)
+
+    assert snapshot.config_text.encode("utf-8") == directory.config.read_bytes()
+    assert snapshot.chip_text.encode("utf-8") == directory.chip.read_bytes()
 
 
 def test_a_run_started_from_its_own_configuration_keeps_its_chip_copy(tmp_path: Path) -> None:

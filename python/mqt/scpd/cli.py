@@ -111,6 +111,7 @@ def command_plan(args: argparse.Namespace) -> int:
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
 
     directory = RunDirectory(args.output)
+    directory.recover()
     snapshot: RunInputs | None = None
     if args.stage is not None:
         # A resumed step reads the configuration and the chip the run carries, so that it equals

@@ -653,6 +653,120 @@ def test_failed_publication_restores_the_completed_run(tmp_path: Path, monkeypat
     assert {path.name: path.read_bytes() for path in run.iterdir()} == before
 
 
+@pytest.mark.parametrize("partial", [b"", b"MQT SCPD run"], ids=["empty", "partial"])
+def test_plan_recovers_an_interrupted_directory_claim(tmp_path: Path, partial: bytes) -> None:
+    """A truncated marker in an otherwise empty directory permits another attempt."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.path.mkdir()
+    directory.marker.write_bytes(partial)
+
+    assert plan(directory.path) == 0
+    assert directory.artifact("capacity").is_file()
+
+
+@pytest.mark.parametrize("existing_run", [False, True], ids=["empty", "owned"])
+def test_publication_keeps_moves_on_the_run_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, existing_run: bool
+) -> None:
+    """An existing directory can be on a different filesystem from its parent."""
+    run = tmp_path / "run"
+    run.mkdir()
+    if existing_run:
+        assert plan(run) == 0
+    replace = Path.replace
+
+    def same_filesystem(source: Path, target: Path) -> Path:
+        if source.absolute().is_relative_to(run) != target.absolute().is_relative_to(run):
+            raise OSError(errno.EXDEV, "cross-device rename", str(source))
+        return replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", same_filesystem)
+    assert plan(run) == 0
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
+    assert (run / "01-capacity.fb").is_file()
+
+
+@pytest.mark.parametrize("resume", [True, False], ids=["resumed-stage", "fresh-plan"])
+def test_planning_recovers_interrupted_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, resume: bool
+) -> None:
+    """A process interruption after a rename leaves the prior run available to the next writer."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    before = {path.name: path.read_bytes() for path in run.iterdir()}
+    replace = Path.replace
+
+    def interrupt_after_move(source: Path, target: Path) -> Path:
+        result = replace(source, target)
+        if source == run / "config.toml":
+            raise SystemExit(23)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", interrupt_after_move)
+        with pytest.raises(SystemExit) as info:
+            plan(run)
+        assert info.value.code == 23
+
+    arguments = ["--stage", "capacity"] if resume else ["-c", str(run / "config.toml")]
+    assert main(["plan", "-o", str(run), "--no-progress", *arguments]) == 0
+    assert {path.name: path.read_bytes() for path in run.iterdir()} == before
+
+
+def test_interrupted_cleanup_keeps_the_committed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A writer interrupted after committing never restores the previous run."""
+    run = tmp_path / "run"
+    assert plan(run) == 0
+    source = fixture_config(tmp_path)
+    source.write_text(source.read_text(encoding="utf-8") + "\n# revised source\n", encoding="utf-8")
+    unlink = Path.unlink
+
+    def interrupt_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+        if path.name == "config.toml" and path.parent.parent == run:
+            raise SystemExit(23)
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", interrupt_cleanup)
+        with pytest.raises(SystemExit) as info:
+            main(["plan", "-c", str(source), "-o", str(run), "--no-progress"])
+        assert info.value.code == 23
+
+    assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
+    assert (run / "config.toml").read_bytes() == source.read_bytes()
+
+
+def test_recovery_removes_uncommitted_files_from_an_incomplete_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recovery removes new files that had no prior versions."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(Path(CONFIG))
+    before = {path.name: path.read_bytes() for path in directory.path.iterdir()}
+    replace = Path.replace
+
+    def interrupt_install(source: Path, target: Path) -> Path:
+        result = replace(source, target)
+        if target == directory.artifact("capacity"):
+            raise SystemExit(23)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "replace", interrupt_install)
+        with pytest.raises(SystemExit) as info:
+            plan(directory.path)
+        assert info.value.code == 23
+
+    def fail(*args: object) -> bytes:
+        del args
+        msg = "scene construction failed"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(pyscpd, "plan_capacity", fail)
+    assert main(["plan", "-o", str(directory.path), "--stage", "capacity", "--no-progress"]) == 1
+    assert {path.name: path.read_bytes() for path in directory.path.iterdir()} == before
+
+
 def test_plan_can_publish_in_an_empty_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A run accepts the current directory if it is empty."""
     monkeypatch.chdir(tmp_path)
