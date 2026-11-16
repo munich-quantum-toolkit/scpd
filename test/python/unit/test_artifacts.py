@@ -22,9 +22,12 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import (
     ArtifactT,
 )
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
+from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingEnd, GlobalRoutingStart, GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.artifacts.Wire import WireT
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
@@ -78,7 +81,7 @@ def test_round_trip_keeps_the_producer_and_the_identifier() -> None:
     """A written artifact starts with the identifier and reads back complete."""
     data = write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT()))
 
-    assert data[4:8] == IDENTIFIER
+    assert data[4:8] == b"SCP2"
     back = read_artifact(data)
     assert back.producer == "mqt-scpd test"
     assert back.outputType == StageOutput.GlobalRouting
@@ -162,7 +165,7 @@ def test_read_rejects_a_buffer_without_its_producer() -> None:
     ArtifactAddOutput(builder, output)
     builder.Finish(ArtifactEnd(builder), file_identifier=IDENTIFIER)
 
-    with pytest.raises(ArtifactError, match="producer is missing"):
+    with pytest.raises(ArtifactError, match="verification failed"):
         read_artifact(bytes(builder.Output()))
 
 
@@ -173,7 +176,16 @@ def test_read_rejects_foreign_bytes() -> None:
     with pytest.raises(ArtifactError, match="identifier"):
         read_artifact(bytes(data))
     with pytest.raises(ArtifactError):
-        read_artifact(b"SCP1")
+        read_artifact(IDENTIFIER)
+
+
+def test_read_rejects_the_previous_schema_identifier() -> None:
+    """An artifact using the previous schema must be rebuilt."""
+    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, GlobalRoutingT())))
+    data[4:8] = b"SCP1"
+
+    with pytest.raises(ArtifactError, match=r"identifier.*SCP2"):
+        read_artifact(bytes(data))
 
 
 def test_assignment_round_trips() -> None:
@@ -223,6 +235,28 @@ def _without_port_center() -> CpwCouplerT:
     return coupler
 
 
+def _capacity_plan(**changes: object) -> CapacityPlanT:
+    """A complete, empty capacity plan, with some fields changed.
+
+    Returns:
+        The plan.
+    """
+    plan = CapacityPlanT(
+        capacityGrid=GridExtentT(origin=PointT(0.0, 0.0)),
+        detailGrid=GridExtentT(origin=PointT(0.0, 0.0)),
+        partitions=[],
+        borders=[],
+        bottlenecks=[],
+        launchers=[],
+        nodes=[],
+        chains=[],
+        blockedWords=[],
+    )
+    for name, value in changes.items():
+        setattr(plan, name, value)
+    return plan
+
+
 INCOMPLETE_ARTIFACTS = [
     pytest.param(
         ArtifactT(producer="p", outputType=StageOutput.Assignment, output=GlobalRoutingT()),
@@ -233,6 +267,21 @@ INCOMPLETE_ARTIFACTS = [
         wrap(StageOutput.Assignment, AssignmentT(connections=[ConnectionT()])),
         r"connections\[0\]: target is missing",
         id="connection-target",
+    ),
+    pytest.param(
+        wrap(StageOutput.CapacityPlan, _capacity_plan(detailGrid=None)),
+        "detail_grid is missing",
+        id="capacity-grid",
+    ),
+    pytest.param(
+        wrap(StageOutput.CapacityPlan, _capacity_plan(nodes=[CapacityNodeT()])),
+        r"nodes\[0\]: next is missing",
+        id="capacity-node",
+    ),
+    pytest.param(
+        wrap(StageOutput.CapacityPlan, _capacity_plan(blockedWords=None)),
+        "blocked_words is missing",
+        id="blocked-words",
     ),
     pytest.param(
         wrap(StageOutput.FinalRouting, FinalRoutingT(couplers=None, bridges=[], unresolved=[])),

@@ -61,6 +61,24 @@ def test_problems_end_the_report_with_a_verdict(tmp_path: Path) -> None:
     assert "'Q9.port0' is not a port of the chip" in report.problems[0]
 
 
+def test_a_file_that_is_not_utf8_is_a_problem(tmp_path: Path) -> None:
+    """A configuration or a chip input in another encoding ends the report with a verdict."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    latin = tmp_path / "latin.toml"
+    latin.write_bytes(("# Gr\u00f6\u00dfe\n" + config).encode("latin-1"))
+    report = run_doctor(latin)
+    assert "it is not UTF-8" in report.problems[0]
+    assert report.text().endswith("doctor: 1 problem(s)")
+
+    chip = tmp_path / "chip.json"
+    chip.write_bytes(b"\xff" + (FIXTURE / "routing_config.json").read_bytes())
+    broken = tmp_path / "config.toml"
+    broken.write_text(config.replace('input = "routing_config.json"', 'input = "chip.json"'), encoding="utf-8")
+    report = run_doctor(broken)
+    assert "it is not UTF-8" in report.problems[0]
+    assert report.text().endswith("doctor: 1 problem(s)")
+
+
 def test_a_default_written_out_is_not_a_problem(tmp_path: Path) -> None:
     """The rules for a shipped file are for the benchmarks; a user may write a default out."""
     config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
@@ -73,3 +91,36 @@ def test_a_default_written_out_is_not_a_problem(tmp_path: Path) -> None:
     )
     report = run_doctor(written_out)
     assert report.ok, report.text()
+
+
+def test_the_table_shows_the_bridge_pattern(tmp_path: Path) -> None:
+    """A configuration with a bridge pattern shows it in the table, with the ports it matches."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    bridged = tmp_path / "bridged.toml"
+    bridged.write_text(
+        config.replace(
+            'input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"'
+        ).replace("[ports.patterns]\n", "[ports.patterns]\nbridge_pair = '^C\\d+\\.port[12]$'\n"),
+        encoding="utf-8",
+    )
+
+    report = run_doctor(bridged)
+
+    assert report.ok, report.text()
+    assert "bridge_pair       0  ^C\\d+\\.port[12]$" in report.text()
+
+
+def test_what_would_stop_the_configured_steps_is_a_problem(tmp_path: Path) -> None:
+    """A planner that this build does not register would stop the capacity step."""
+    config = (FIXTURE / "config.toml").read_text(encoding="utf-8")
+    unknown = tmp_path / "unknown.toml"
+    unknown.write_text(
+        config.replace('input = "routing_config.json"', f'input = "{(FIXTURE / "routing_config.json").as_posix()}"')
+        + '\n[stages.capacity]\nplanner = "other-planner"\n',
+        encoding="utf-8",
+    )
+
+    report = run_doctor(unknown)
+    assert report.problems == [
+        "[stages.capacity] planner 'other-planner' is not a known implementation; the registered ones are watershed"
+    ]

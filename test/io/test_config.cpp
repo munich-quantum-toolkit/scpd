@@ -44,7 +44,7 @@ TEST(ConfigBuffer, UnpacksWhatTheBuilderPacked) {
   config.grid = std::make_unique<GridParamsT>();
   config.grid->capacity_cells_x = 25;
   config.grid->capacity_cells_y = 25;
-  config.grid->launcher_offset_x = 20;
+  config.grid->detail_factor = 20;
 
   flatbuffers::FlatBufferBuilder builder;
   builder.Finish(Config::Pack(builder, &config));
@@ -56,7 +56,7 @@ TEST(ConfigBuffer, UnpacksWhatTheBuilderPacked) {
   EXPECT_EQ(back, config);
   EXPECT_EQ(back.ports->sequences->fixed_outer,
             (std::vector<std::string>{"Qb15.port0"}));
-  EXPECT_EQ(back.grid->launcher_offset_y, 15U);
+  EXPECT_EQ(back.grid->detail_factor, 20U);
 }
 
 TEST(ConfigBuffer, RefusesBytesThatAreNotAConfiguration) {

@@ -25,11 +25,13 @@ from mqt.scpd.flatbuffers.artifacts.Artifact import (
     ArtifactT,
 )
 from mqt.scpd.flatbuffers.artifacts.Assignment import AssignmentT
+from mqt.scpd.flatbuffers.artifacts.Bottleneck import BottleneckT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingEnd, GlobalRoutingStart, GlobalRoutingT
+from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.artifacts.Wire import WireT
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
@@ -78,7 +80,38 @@ def artifact(output_type: int, output: object) -> bytes:
 
 
 STAGE_OUTPUTS = [
-    pytest.param(StageOutput.CapacityPlan, CapacityPlanT(), {}, id="capacity"),
+    pytest.param(
+        StageOutput.CapacityPlan,
+        CapacityPlanT(
+            capacityGrid=GridExtentT(width=12, height=9, origin=PointT(1.5, -2.0), cellWidth=10.0, cellHeight=10.0),
+            detailGrid=GridExtentT(origin=PointT(1.5, -2.0)),
+            partitions=[],
+            borders=[],
+            bottlenecks=[BottleneckT(from_=PointT(0.0, 0.0), to=PointT(0.0, 30.0), capacity=1)],
+            launchers=[],
+            nodes=[],
+            chains=[],
+            blockedWords=[],
+        ),
+        {
+            "capacity_grid": {
+                "width": 12,
+                "height": 9,
+                "origin": {"x": 1.5, "y": -2.0},
+                "cell_width": 10.0,
+                "cell_height": 10.0,
+            },
+            "detail_grid": {"origin": {"x": 1.5, "y": -2.0}},
+            "partitions": [],
+            "borders": [],
+            "bottlenecks": [{"from": {"x": 0.0, "y": 0.0}, "to": {"x": 0.0, "y": 30.0}, "capacity": 1}],
+            "launchers": [],
+            "nodes": [],
+            "chains": [],
+            "blocked_words": [],
+        },
+        id="capacity",
+    ),
     pytest.param(
         StageOutput.Assignment,
         AssignmentT(
@@ -191,7 +224,7 @@ STAGE_OUTPUTS = [
 
 @pytest.mark.parametrize(("output_type", "output", "expected"), STAGE_OUTPUTS)
 def test_every_stage_output_renders_the_fields_of_its_schema(output_type: int, output: object, expected: dict) -> None:
-    """The JSON of each of the six stage outputs carries the schema's own field names."""
+    """The JSON of each stage output carries the schema's own field names."""
     document = json.loads(artifact_to_json(artifact(output_type, output)))
 
     assert document["producer"] == "mqt-scpd test"
@@ -215,7 +248,7 @@ def test_bytes_that_are_not_an_artifact_are_refused() -> None:
     with pytest.raises(InspectionError, match="identifier"):
         artifact_to_json(bytes(data))
     with pytest.raises(InspectionError, match="not an artifact"):
-        artifact_to_json(b"\xff\xff\xff\xffSCP1")
+        artifact_to_json(b"\xff\xff\xff\xff" + IDENTIFIER)
 
     # A buffer whose producer is present but empty passes the verifier, and fails the check that
     # every artifact names what wrote it.

@@ -36,6 +36,23 @@ add_mqt_python_binding(
   LINK_LIBS
   MQT::SCPD)
 
+# The extension links FlatBuffers and nlohmann/json in, and the license of each asks that its notice
+# goes with every copy of the binary. The wheel carries them in its .dist-info/licenses directory,
+# taken from the sources that the build fetched. The Boost Software License asks no notice for
+# object code.
+if(SKBUILD)
+  install(
+    FILES ${flatbuffers_SOURCE_DIR}/LICENSE
+    DESTINATION ${SKBUILD_METADATA_DIR}/licenses
+    RENAME FlatBuffers-LICENSE.txt
+    COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
+  install(
+    FILES ${nlohmann_json_SOURCE_DIR}/LICENSE.MIT
+    DESTINATION ${SKBUILD_METADATA_DIR}/licenses
+    RENAME nlohmann_json-LICENSE.txt
+    COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
+endif()
+
 # install the Python stub files in editable mode for better IDE support
 if(SKBUILD_STATE STREQUAL "editable")
   install(

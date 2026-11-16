@@ -15,7 +15,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace mqt::scpd::grid {
@@ -44,6 +46,25 @@ inline constexpr PartitionLabel LABEL_RESERVED = 1;
  * @brief The lowest label of a partition proper.
  */
 inline constexpr PartitionLabel FIRST_PARTITION_LABEL = 2;
+
+/**
+ * @brief Returns the partition label that follows a label.
+ *
+ * A stage that hands out labels one after the other uses this function, so
+ * that it never wraps around to LABEL_NONE or LABEL_RESERVED.
+ *
+ * @param label The label handed out last.
+ * @return The label one above.
+ * @throws std::length_error When the label is the largest one that
+ * PartitionLabel holds.
+ */
+[[nodiscard]] inline PartitionLabel
+nextPartitionLabel(const PartitionLabel label) {
+  if (label == std::numeric_limits<PartitionLabel>::max()) {
+    throw std::length_error("the partition labels ran out");
+  }
+  return static_cast<PartitionLabel>(label + 1);
+}
 
 /**
  * @brief Grows one partition from every seed over the free, unlabeled cells.

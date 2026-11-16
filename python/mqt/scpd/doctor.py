@@ -10,7 +10,7 @@
 
 The doctor loads the configuration, loads and classifies the chip, prints the classification table
 so that a wrong pattern is visible in a second, and prints the outer port ring the run would use,
-checked label by label against the chip.
+checked label by label against the chip. It refuses what would stop a run of the configured steps.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING
 
 from . import pyscpd
 from .chip import ChipError, chip_input_path, decode_chip, load_chip, obstacles_of, ports_of, role_name
-from .config import ConfigError, load_config, write_config
+from .config import ConfigError, load_config, removed_keys_in, write_config
+from .run import RunError, steps_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +46,10 @@ class DoctorReport:
     def say(self, *lines: str) -> None:
         """Append report lines."""
         self.lines.extend(lines)
+
+    def warn(self, warning: str) -> None:
+        """Record a warning, which appears in the report and fails no check."""
+        self.lines.append(f"WARNING: {warning}")
 
     def fail(self, problem: str) -> None:
         """Record a problem, which also appears in the report."""
@@ -72,6 +77,7 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         "launcher": patterns.launcher if patterns else "",
         "resonator": patterns.resonator if patterns else "",
         "conventional": patterns.conventional if patterns else "",
+        "bridge_pair": patterns.bridgePair if patterns else "",
     }
     counts: Counter[str] = Counter()
     examples: dict[str, list[str]] = {}
@@ -82,10 +88,10 @@ def classification_table(chip: ChipT, config: ConfigT) -> list[str]:
         if len(examples[name]) < 3:
             examples[name].append(port.label or "")
     lines = [f"{'role':<13}{'ports':>6}  pattern / first labels"]
-    for name in ("launcher", "resonator", "conventional"):
-        if name not in counts and not pattern_of[name]:
+    for name, pattern in pattern_of.items():
+        if name not in counts and not pattern:
             continue
-        lines.append(f"{name:<13}{counts.get(name, 0):>6}  {pattern_of[name]}")
+        lines.append(f"{name:<13}{counts.get(name, 0):>6}  {pattern}")
         if examples.get(name):
             lines.append(f"{'':<19}  {', '.join(examples[name])}")
     lines.extend(f"{name:<13}{counts[name]:>6}" for name in counts if name not in pattern_of)
@@ -112,12 +118,13 @@ def ring_summary(config: ConfigT) -> list[str]:
     ]
 
 
-def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
+def run_doctor(config_path: Path, *, list_ports: bool = False, chip_path: Path | None = None) -> DoctorReport:
     """Check a configuration and the chip it names.
 
     Args:
         config_path: The ``config.toml`` to check.
         list_ports: Also list every port with its role.
+        chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
 
     Returns:
         The report.
@@ -129,7 +136,9 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
     except ConfigError as error:
         report.fail(str(error))
         return report
-    report.say(f"chip input: {chip_input_path(config, config_path)}")
+    report.say(f"chip input: {chip_input_path(config, config_path, chip_path)}")
+    for warning in removed_keys_in(config_path):
+        report.warn(warning)
 
     config_bytes = write_config(config)
     for problem in pyscpd.validate_config(config_bytes):
@@ -138,11 +147,18 @@ def run_doctor(config_path: Path, *, list_ports: bool = False) -> DoctorReport:
         return report
 
     try:
-        chip_bytes = load_chip(config, config_path)
+        chip_bytes = load_chip(config, config_path, chip_path)
     except ChipError as error:
         report.fail(str(error))
         return report
     chip = decode_chip(chip_bytes)
+    try:
+        steps = steps_until(config.run.stopAfter if config.run is not None else None)
+    except RunError as error:
+        report.fail(str(error))
+        steps = []
+    for problem in pyscpd.plan_problems(chip_bytes, config_bytes, steps):
+        report.fail(problem)
     report.say("", f"obstacles: {len(obstacles_of(chip))}", f"ports: {len(ports_of(chip))}", "")
     report.say(*classification_table(chip, config))
     if list_ports:

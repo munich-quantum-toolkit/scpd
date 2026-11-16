@@ -26,7 +26,7 @@ class Artifact(object):
         return cls.GetRootAs(buf, offset)
     @classmethod
     def ArtifactBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
-        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x31", size_prefixed=size_prefixed)
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x32", size_prefixed=size_prefixed)
 
     # Artifact
     def Init(self, buf: bytes, pos: int):

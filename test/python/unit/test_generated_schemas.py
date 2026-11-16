@@ -106,4 +106,4 @@ def test_config_defaults_are_the_documented_defaults() -> None:
 
     grid = GridParamsT()
     assert (grid.capacityCellsX, grid.capacityCellsY) == (50, 0)
-    assert (grid.launcherOffsetX, grid.launcherOffsetY) == (15, 15)
+    assert grid.detailFactor == 30

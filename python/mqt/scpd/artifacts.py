@@ -8,12 +8,9 @@
 
 """Checked reading and writing of stage artifacts.
 
-The generated FlatBuffers code neither enforces the required fields when Python writes a buffer nor
-verifies a buffer when Python reads one; a buffer without a producer or an output passes through it
-silently. The functions here check the identifier and every field the schema marks as required, so
-an artifact that Python writes is one that the core accepts, and an artifact that Python reads is
-complete. Checking the values themselves, such as a role left unset or a dimension of zero, is the
-core's job.
+The generated FlatBuffers code does not verify buffers on read or enforce required fields on write.
+The native reader checks the buffer structure and artifact contents before Python unpacks an
+artifact. The writer checks required fields before serialization.
 """
 
 from __future__ import annotations
@@ -23,8 +20,10 @@ from typing import TYPE_CHECKING
 
 import flatbuffers
 
-from .flatbuffers.artifacts.Artifact import Artifact, ArtifactT
+from . import pyscpd
+from .flatbuffers.artifacts.Artifact import ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
+from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.StageOutput import StageOutput
@@ -32,6 +31,12 @@ from .flatbuffers.geometry.Arc import ArcT
 from .flatbuffers.geometry.Line import LineT
 
 if TYPE_CHECKING:
+    from .flatbuffers.artifacts.Bottleneck import BottleneckT
+    from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
+    from .flatbuffers.artifacts.GridExtent import GridExtentT
+    from .flatbuffers.artifacts.LauncherSlot import LauncherSlotT
+    from .flatbuffers.artifacts.Partition import PartitionT
+    from .flatbuffers.artifacts.PartitionBorder import PartitionBorderT
     from .flatbuffers.artifacts.Wire import WireT
     from .flatbuffers.design.Bridge import BridgeT
     from .flatbuffers.design.Connection import ConnectionT
@@ -40,9 +45,10 @@ if TYPE_CHECKING:
     from .flatbuffers.geometry.Segment import SegmentT
 
 #: The file identifier that records the schema version, as ``artifacts.fbs`` declares it.
-IDENTIFIER = b"SCP1"
+IDENTIFIER = b"SCP2"
 
 _OUTPUT_TYPES: dict[int, type] = {
+    StageOutput.CapacityPlan: CapacityPlanT,
     StageOutput.Assignment: AssignmentT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
@@ -50,7 +56,7 @@ _OUTPUT_TYPES: dict[int, type] = {
 
 
 class ArtifactError(ValueError):
-    """Bytes that are not a complete artifact of this schema, or an artifact that is not complete."""
+    """An invalid artifact or a buffer that cannot be read as one."""
 
 
 def write_artifact(artifact: ArtifactT) -> bytes:
@@ -84,22 +90,17 @@ def read_artifact(data: bytes) -> ArtifactT:
         The artifact as a native object.
 
     Raises:
-        ArtifactError: If the bytes do not carry the schema identifier, cannot be decoded, or omit a
-            required field.
+        ArtifactError: If the buffer or artifact contents are invalid.
     """
-    if not Artifact.ArtifactBufferHasIdentifier(data, 0, size_prefixed=False):
-        msg = f"bytes are not an artifact of this schema: the identifier is not {IDENTIFIER!r}"
-        raise ArtifactError(msg)
     try:
-        artifact = ArtifactT.InitFromPackedBuf(data)
+        pyscpd.validate_artifact(data)
+    except ValueError as error:
+        raise ArtifactError(str(error)) from error
+    try:
+        return ArtifactT.InitFromPackedBuf(data)
     except (IndexError, struct.error, UnicodeDecodeError) as error:
         msg = f"bytes are not an artifact of this schema: {error}"
         raise ArtifactError(msg) from error
-    problems = _problems(artifact)
-    if problems:
-        msg = f"artifact is not complete: {'; '.join(problems)}"
-        raise ArtifactError(msg)
-    return artifact
 
 
 def _problems(artifact: ArtifactT) -> list[str]:
@@ -118,8 +119,22 @@ def _problems(artifact: ArtifactT) -> list[str]:
     if expected is not None and not isinstance(artifact.output, expected):
         problems.append("output does not match its type tag")
         return problems
-    if isinstance(artifact.output, AssignmentT):
-        _check_list(artifact.output.connections, "connections", _connection_problems, problems)
+    output = artifact.output
+    if isinstance(output, CapacityPlanT):
+        for grid, name in ((output.capacityGrid, "capacity_grid"), (output.detailGrid, "detail_grid")):
+            if grid is None:
+                problems.append(f"{name} is missing")
+            else:
+                problems.extend(f"{name}: {problem}" for problem in _grid_problems(grid))
+        _check_list(output.partitions, "partitions", _partition_problems, problems)
+        _check_list(output.borders, "borders", _border_problems, problems)
+        _check_list(output.bottlenecks, "bottlenecks", _bottleneck_problems, problems)
+        _check_list(output.launchers, "launchers", _launcher_problems, problems)
+        _check_list(output.nodes, "nodes", _node_problems, problems)
+        _require(output.chains, "chains", problems)
+        _require(output.blockedWords, "blocked_words", problems)
+    elif isinstance(output, AssignmentT):
+        _check_list(output.connections, "connections", _connection_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -130,6 +145,45 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
     return problems
+
+
+def _require(value: object, name: str, problems: list[str]) -> None:
+    """Report a required field that is missing."""
+    if value is None:
+        problems.append(f"{name} is missing")
+
+
+def _missing(item: object, fields: tuple[tuple[str, str], ...]) -> list[str]:
+    """The required fields of one table that are missing, by the names the schema gives them.
+
+    Returns:
+        One message per missing field.
+    """
+    return [f"{name} is missing" for attribute, name in fields if getattr(item, attribute) is None]
+
+
+def _grid_problems(grid: GridExtentT) -> list[str]:
+    return _missing(grid, (("origin", "origin"),))
+
+
+def _partition_problems(partition: PartitionT) -> list[str]:
+    return _missing(partition, (("outlines", "outlines"),))
+
+
+def _border_problems(border: PartitionBorderT) -> list[str]:
+    return _missing(border, (("samples", "samples"), ("center", "center")))
+
+
+def _bottleneck_problems(bottleneck: BottleneckT) -> list[str]:
+    return _missing(bottleneck, (("from_", "from"), ("to", "to")))
+
+
+def _launcher_problems(slot: LauncherSlotT) -> list[str]:
+    return _missing(slot, (("port", "port"), ("position", "position")))
+
+
+def _node_problems(node: CapacityNodeT) -> list[str]:
+    return _missing(node, (("next", "next"),))
 
 
 def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]

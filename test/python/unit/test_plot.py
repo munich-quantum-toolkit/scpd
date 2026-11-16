@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
+import json
 import re
-from itertools import starmap
+from itertools import pairwise, starmap
 from pathlib import Path
 
 # The parsed SVG is the output of the code under test, not foreign input.
@@ -22,9 +23,12 @@ import pytest
 from mqt.scpd.chip import decode_chip, load_chip, obstacles_of, ports_of, vertices_of
 from mqt.scpd.config import load_config
 from mqt.scpd.flatbuffers.design.Chip import ChipT
+from mqt.scpd.flatbuffers.design.Port import PortT
+from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
-from mqt.scpd.plot import OBSTACLE_FILL, PlotError, layout_svg, simplify
+from mqt.scpd.planning import PlanningGeometry
+from mqt.scpd.plot import METAL_FILL, PARTITION_TONES, PORT_COLOR, PlotError, layout_svg, simplify
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
 SVG = "{http://www.w3.org/2000/svg}"
@@ -65,14 +69,12 @@ def test_the_layout_view_keeps_every_vertex() -> None:
     svg = layout_svg(model, title="mini")
 
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
-    paths = {path.get("class"): path.get("d") or "" for path in root.findall(f"{SVG}path")}
-    drawn = sum(data.count("M") + data.count("l") for data in paths.values())
-    assert drawn == _distinct_vertices(model)
+    assert sum(len(subpath) for subpath in _subpaths(svg)) == _distinct_vertices(model)
     style = root.find(f"{SVG}style")
     assert style is not None
     assert style.text is not None
-    assert OBSTACLE_FILL in style.text
-    circles = root.findall(f"{SVG}circle")
+    assert METAL_FILL in style.text
+    circles = list(root.iter(f"{SVG}circle"))
     assert len([c for c in circles if c.find(f"{SVG}title") is not None]) == len(ports_of(model))
     classes = {c.get("class") for c in circles}
     assert {"launcher", "resonator", "conventional"} <= classes
@@ -114,7 +116,7 @@ def _subpaths(svg: str) -> list[list[tuple[float, float]]]:
         One vertex list per subpath, in path order.
     """
     subpaths = []
-    for data in re.findall(r'<path class="[of]" d="([^"]*)"', svg):
+    for data in re.findall(r'<path (?:class="f"|id="metal") d="([^"]*)"', svg):
         for subpath in filter(None, data.split("Z")):
             x = y = 0.0
             vertices = []
@@ -130,7 +132,7 @@ def _doubled_area(vertices: list[tuple[float, float]]) -> float:
 
 
 def test_overlapping_obstacles_of_opposite_winding_leave_no_hole() -> None:
-    """Every subpath winds the same way, so the nonzero rule fills an overlap instead of cancelling it."""
+    """Every subpath winds the same way, so the nonzero rule fills an overlap instead of canceling it."""
     clockwise = [(0.0, 0.0), (0.0, 10.0), (10.0, 10.0), (10.0, 0.0)]
     counterclockwise = [(5.0, 5.0), (15.0, 5.0), (15.0, 15.0), (5.0, 15.0)]
     assert _doubled_area(clockwise) < 0 < _doubled_area(counterclockwise)
@@ -146,3 +148,166 @@ def test_relative_steps_do_not_accumulate_rounding() -> None:
     # The first and the last input vertex share their x, so they must share it in the picture.
     assert rebuilt[-1][0] == pytest.approx(rebuilt[0][0], abs=1e-6)
     assert max(x for x, _ in rebuilt) - rebuilt[0][0] == pytest.approx(round(999 * 1.0004, 3), abs=1e-6)
+
+
+def _mini() -> ChipT:
+    config_path = FIXTURE / "config.toml"
+    return decode_chip(load_chip(load_config(config_path), config_path))
+
+
+def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
+    """Every kind of planning shape is one group with its own stroke, and a gate shows its budget."""
+    geometry = PlanningGeometry(
+        partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
+        borders=[[(0.0, 50.0), (50.0, 50.0), (100.0, 50.0)]],
+        bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
+        launchers=[(50.0, 50.0)],
+    )
+
+    svg = layout_svg(_mini(), planning=geometry)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = {group.get("class") for group in root.iter(f"{SVG}g")}
+    assert {"l-partition", "l-border", "l-bottleneck", "l-launcher"} <= groups
+    assert any(text.text == "3" for text in root.iter(f"{SVG}text"))
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-border>path" in style.text
+
+
+def test_a_planning_stage_without_shapes_changes_nothing() -> None:
+    """An empty overlay draws the same picture as none."""
+    model = _mini()
+    assert layout_svg(model, planning=PlanningGeometry()) == layout_svg(model)
+
+
+def test_every_port_is_one_marker_of_one_color() -> None:
+    """A port keeps its role as the class of its marker, and the legend counts every port once."""
+    chip = ChipT(
+        ports=[PortT(label="Coupler1_2.port1", center=PointT(0.0, 0.0), role=UnassignedRole.BridgePair)],
+        obstacles=[PolygonT(vertices=[PointT(-5.0, -5.0), PointT(5.0, -5.0), PointT(5.0, 5.0)])],
+    )
+
+    root = ET.fromstring(layout_svg(chip))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    markers = [circle for circle in root.iter(f"{SVG}circle") if circle.find(f"{SVG}title") is not None]
+    assert [circle.get("class") for circle in markers] == ["bridge_pair"]
+    assert any(text.text == "port (1)" for text in root.iter(f"{SVG}text"))
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert f".x-ports circle{{fill:{PORT_COLOR}" in style.text
+
+
+def _groups(svg: str) -> set[str | None]:
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    return {group.get("class") for group in root.iter(f"{SVG}g")}
+
+
+def test_a_stage_leaves_out_what_its_picture_does_not_need() -> None:
+    """The capacity picture shows borders, not outlines or gates; keep-out and chains never show."""
+    geometry = PlanningGeometry(
+        partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
+        borders=[[(0.0, 50.0), (100.0, 50.0)]],
+        bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
+        keepout=[[(0.0, 0.0), (5.0, 0.0), (5.0, 5.0)]],
+        chains=[((0.0, 0.0), (10.0, 10.0))],
+    )
+
+    capacity = _groups(layout_svg(_mini(), stage="capacity", planning=geometry))
+    assert "l-border" in capacity
+    assert capacity.isdisjoint({"l-partition", "l-bottleneck", "l-keepout", "l-chain"})
+
+    other = _groups(layout_svg(_mini(), planning=geometry))
+    assert {"l-partition", "l-bottleneck"} <= other
+    assert other.isdisjoint({"l-keepout", "l-chain"})
+
+
+def test_the_panel_lists_the_layers_the_picture_carries() -> None:
+    """The layer panel names every layer that is drawn and none that is not."""
+    svg = layout_svg(_mini(), title="mini", stage="layout")
+
+    found = re.search(r"L = (\[.*?\]), f = ", svg)
+    assert found is not None
+    layers = json.loads(found[1])
+    names = [name for name, _, _ in layers]
+    assert {"Grid", "Metal", "Ports", "Frame"} <= set(names)
+    assert "Borders" not in names
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    assert any(text.text == "LAYOUT" for text in root.iter(f"{SVG}text"))
+
+
+def test_a_border_is_drawn_without_its_staircase() -> None:
+    """A slanted border drawn as single-cell steps comes out as one line, and a real bend stays."""
+    staircase = [(float(step), float(step)) for step in range(0, 21, 2)]
+    stairs = [point for a, b in pairwise(staircase) for point in (a, (b[0], a[1]))] + [staircase[-1]]
+    bend = [(0.0, 0.0), (2.0, 0.0), (4.0, 0.0), (4.0, 2.0), (4.0, 4.0)]
+
+    svg = layout_svg(_mini(), planning=PlanningGeometry(borders=[stairs, bend]))
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-border")
+    data = layer.find(f"{SVG}path")
+    assert data is not None
+    runs = [re.findall(r"(-?[\d.]+) (-?[\d.]+)", run) for run in (data.get("d") or "").split("M")[1:]]
+    assert [len(run) for run in runs] == [2, 3]
+
+
+def test_the_blocked_cells_lie_under_the_artwork() -> None:
+    """Every blocked rectangle is one subpath of a layer drawn before the metal."""
+    blocked = [
+        [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+        [(20.0, 0.0), (30.0, 0.0), (30.0, 10.0), (20.0, 10.0)],
+    ]
+
+    svg = layout_svg(_mini(), stage="capacity", planning=PlanningGeometry(blocked=blocked))
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-raster")
+    data = layer.find(f"{SVG}path")
+    assert data is not None
+    assert (data.get("d") or "").count("M") == 2
+    assert svg.index('class="l-raster"') < svg.index('<use class="o"')
+    assert 'class="l-raster"' not in layout_svg(
+        _mini(), planning=PlanningGeometry(borders=[[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]])
+    )
+
+
+def test_a_border_of_one_cell_edge_is_left_out() -> None:
+    """Two partitions that touch at one point only have a border of one edge, which reads as a speck."""
+    geometry = PlanningGeometry(borders=[[(0.0, 0.0), (1.0, 0.0)], [(0.0, 5.0), (1.0, 5.0), (2.0, 5.0)]])
+
+    root = ET.fromstring(layout_svg(_mini(), planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-border")
+    data = layer.find(f"{SVG}path")
+    assert data is not None
+    assert (data.get("d") or "").count("M") == 1
+
+
+def test_the_partitions_take_the_gray_of_their_tone_where_the_stage_shows_them() -> None:
+    """The capacity picture shades each toned partition under the grid; others do not."""
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    geometry = PlanningGeometry(partitions=[[square], [square], [square]], partition_tones=[0, 1, None])
+
+    svg = layout_svg(_mini(), stage="capacity", planning=geometry)
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-tone")
+    assert [path.get("fill") for path in layer.findall(f"{SVG}path")] == list(PARTITION_TONES[:2])
+    assert svg.index('class="l-tone"') < svg.index('class="x-grid')
+    assert 'class="l-tone"' not in layout_svg(_mini(), planning=geometry)
+
+
+def test_the_tone_of_a_partition_leaves_its_hole_open() -> None:
+    """The rings of a partition make one path filled even-odd, so the hole in it stays unshaded."""
+    outer = [(0.0, 0.0), (30.0, 0.0), (30.0, 30.0), (0.0, 30.0)]
+    hole = [(10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)]
+    geometry = PlanningGeometry(partitions=[[outer, hole]], partition_tones=[0])
+
+    root = ET.fromstring(layout_svg(_mini(), stage="capacity", planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+
+    (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-tone")
+    (path,) = layer.findall(f"{SVG}path")
+    assert path.get("fill-rule") == "evenodd"
+    assert (path.get("d") or "").count("M") == 2
