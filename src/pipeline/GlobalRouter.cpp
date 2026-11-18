@@ -723,7 +723,8 @@ private:
     obstacles.reserve(chip.obstacles.size());
     for (const auto& polygon : chip.obstacles) {
       if (polygon->vertices.size() >= 3) {
-        obstacles.push_back({polygon.get(), geometry::boundingBox(*polygon)});
+        obstacles.push_back({.polygon = polygon.get(),
+                             .bounds = geometry::boundingBox(*polygon)});
       }
     }
     std::vector<Lattice> lattices;

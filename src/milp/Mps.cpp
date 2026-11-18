@@ -13,6 +13,7 @@
 #include "mqt-scpd/milp/Model.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -72,8 +73,8 @@ std::string toMps(const Model& model) {
   requireMpsName(model.name(), "model name");
   // The HiGHS free-format reader accepts arguments after these headers, so
   // the following fields do not disambiguate a column with one of these names.
-  constexpr std::string_view sectionNames[] = {"NAME", "OBJSENSE", "QCMATRIX",
-                                               "QSECTION", "CSECTION"};
+  constexpr std::array<std::string_view, 5> sectionNames = {
+      "NAME", "OBJSENSE", "QCMATRIX", "QSECTION", "CSECTION"};
   for (const auto& variable : model.variables()) {
     requireMpsName(variable.name, "variable name");
     if (std::ranges::any_of(sectionNames, [&](const std::string_view section) {

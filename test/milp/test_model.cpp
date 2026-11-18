@@ -18,6 +18,8 @@
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace mqt::scpd::milp {
 namespace {
