@@ -29,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -227,13 +228,31 @@ bool onBorder(const fbg::PolygonT& polygon, const fbg::Point& point) {
   return false;
 }
 
-/// Whether a point lies on chip artwork.
+/// A polygon of chip artwork and its bounds.
+struct Obstacle {
+  const fbg::PolygonT* polygon;
+  geometry::BoundingBox bounds;
+};
+
+/// Whether a segment's bounds meet an obstacle, including its border.
+bool meetsBounds(const geometry::BoundingBox& box, const fbg::Point& from,
+                 const fbg::Point& to) {
+  return std::max(from.x(), to.x()) >= box.minX - COORDINATE_EPSILON &&
+         std::min(from.x(), to.x()) <= box.maxX + COORDINATE_EPSILON &&
+         std::max(from.y(), to.y()) >= box.minY - COORDINATE_EPSILON &&
+         std::min(from.y(), to.y()) <= box.maxY + COORDINATE_EPSILON;
+}
+
+/// Whether a point lies on or inside chip artwork.
 ///
 /// Every polygon of the chip is artwork, the first one included: the chip
 /// input carries no outline, as the obstacle raster also assumes.
-bool onArtwork(const ChipT& chip, const fbg::Point& point) {
-  return std::ranges::any_of(chip.obstacles, [&](const auto& polygon) {
-    return insidePolygon(*polygon, point);
+bool onArtwork(const std::vector<Obstacle>& obstacles,
+               const fbg::Point& point) {
+  return std::ranges::any_of(obstacles, [&](const auto& obstacle) {
+    return meetsBounds(obstacle.bounds, point, point) &&
+           (insidePolygon(*obstacle.polygon, point) ||
+            onBorder(*obstacle.polygon, point));
   });
 }
 
@@ -252,22 +271,15 @@ bool onArtwork(const ChipT& chip, const fbg::Point& point) {
 ///
 /// Every other piece on artwork blocks the edge. @p fromPort and @p toPort
 /// are the ports at the two ends, or null at a node without a port.
-bool throughArtwork(const ChipT& chip, const fbg::Point& from,
-                    const fbg::Point& to, const fbd::PortT* fromPort,
-                    const fbd::PortT* toPort) {
+bool throughArtwork(const std::vector<Obstacle>& obstacles,
+                    const fbg::Point& from, const fbg::Point& to,
+                    const fbd::PortT* fromPort, const fbd::PortT* toPort) {
   const auto direction = geometry::subtract(to, from);
-  for (const auto& polygon : chip.obstacles) {
+  for (const auto& [polygon, box] : obstacles) {
+    if (!meetsBounds(box, from, to)) {
+      continue;
+    }
     const auto& vertices = polygon->vertices;
-    if (vertices.size() < 3) {
-      continue;
-    }
-    const auto box = geometry::boundingBox(*polygon);
-    if (std::max(from.x(), to.x()) < box.minX ||
-        std::min(from.x(), to.x()) > box.maxX ||
-        std::max(from.y(), to.y()) < box.minY ||
-        std::min(from.y(), to.y()) > box.maxY) {
-      continue;
-    }
     // The edge parameters where the edge crosses the border, 0 at from and 1
     // at to.
     std::vector<double> cuts{0.0, 1.0};
@@ -295,9 +307,10 @@ bool throughArtwork(const ChipT& chip, const fbg::Point& from,
     std::vector<bool> covered(pieces);
     for (std::size_t piece = 0; piece < pieces; ++piece) {
       const auto middle = (cuts[piece] + cuts[piece + 1]) / 2.0;
+      const fbg::Point point{from.x() + (middle * direction.x()),
+                             from.y() + (middle * direction.y())};
       covered[piece] =
-          insidePolygon(*polygon, {from.x() + (middle * direction.x()),
-                                   from.y() + (middle * direction.y())});
+          insidePolygon(*polygon, point) || onBorder(*polygon, point);
     }
     // A port end leaves the artwork only if its anchor lies strictly inside
     // the polygon of its own component, the edge runs the way the port
@@ -363,7 +376,8 @@ std::vector<double> linesThrough(const std::set<double>& values) {
 /// that meets the lattice there too.
 Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
                      const double reach,
-                     const std::unordered_set<std::uint32_t>& carrying) {
+                     const std::unordered_set<std::uint32_t>& carrying,
+                     const std::vector<Obstacle>& obstacles) {
   Lattice lattice;
   if (ports.empty()) {
     return lattice;
@@ -449,7 +463,7 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
   std::vector<bool> removed(lattice.nodes.size(), false);
   for (std::size_t node = 0; node < lattice.nodes.size(); ++node) {
     if (!lattice.nodes[node].port.has_value() &&
-        onArtwork(chip, lattice.nodes[node].position)) {
+        onArtwork(obstacles, lattice.nodes[node].position)) {
       removed[node] = true;
     }
   }
@@ -472,7 +486,7 @@ Lattice buildLattice(const ChipT& chip, const std::vector<std::uint32_t>& ports,
     for (const auto other : lattice.nodes[node].neighbors) {
       const auto& from = lattice.nodes[node];
       const auto& to = lattice.nodes[other];
-      if (node < other && throughArtwork(chip, from.position, to.position,
+      if (node < other && throughArtwork(obstacles, from.position, to.position,
                                          portAt(from), portAt(to))) {
         blocked.emplace(node, other);
       }
@@ -514,9 +528,6 @@ struct Circuit {
   std::unordered_set<std::uint32_t> sources;
   /// The length of each connection, in the order of the connections.
   std::vector<double> lengths;
-  /// The length of the selected edges that the artifact leaves out: the wires
-  /// that reach no target and the closed loops over crossings.
-  double dropped = 0.0;
 };
 
 /// The global router of the first release.
@@ -576,19 +587,15 @@ public:
     // the circuit of the first. Every variable of the model is bounded, so a
     // backend that finds no solution reports the model infeasible and never
     // only "infeasible or unbounded".
-    std::vector<milp::Var> unreached;
     std::vector<Shortfall> crowded;
-    double penalty = 0.0;
     std::vector<Arc> arcs;
     milp::Solution solution;
     for (const bool shortfalls : {false, true}) {
       report.progress("building the model", "", 0, 0);
       milp::Model model("inner-circuit");
-      unreached.clear();
       crowded.clear();
       arcs = build(model, capacity, lattices, circuit,
-                   internalBridgesAllowed(config), shortfalls, unreached,
-                   crowded, penalty);
+                   internalBridgesAllowed(config), shortfalls, crowded);
       solution = solveWith(model, config, report, "solving the inner circuit");
       if (solution.status != milp::SolveStatus::Infeasible) {
         break;
@@ -600,27 +607,19 @@ public:
                       milp::statusName(solution.status),
                       solution.message.empty() ? "" : ", " + solution.message));
     }
-    // The objective is the length of the circuit. The connections already
-    // say which target the lattice could not serve, and the shortfalls which
-    // ring port a chain had no room for, so the penalty of each comes back
-    // out of the cost.
-    auto missed = std::ranges::count_if(unreached, [&](const milp::Var marker) {
-      return solution.isSet(marker);
-    });
     std::set<std::uint32_t> withoutRoom(cutOff.begin(), cutOff.end());
     for (const auto& [marker, port] : crowded) {
       if (solution.isSet(marker)) {
-        ++missed;
         withoutRoom.insert(port);
       }
     }
     const auto solved = readBack(routing, lattices, arcs, solution, circuit);
-    // The wires that reach no target and the closed loops over crossings
-    // are not in the artifact, so their length comes out of the objective
-    // too.
-    routing.objective = solution.objective -
-                        (penalty * static_cast<double>(missed)) -
-                        solved.dropped;
+    routing.objective =
+        std::accumulate(solved.lengths.begin(), solved.lengths.end(), 0.0);
+    if (solution.status == milp::SolveStatus::Feasible) {
+      report.line(Detail::Summary,
+                  "the solver stopped with a feasible solution");
+    }
     fillRing(routing, chip, config, circuit, solved.sources);
     finish(routing, chip, circuit, solved.lengths, report,
            {withoutRoom.begin(), withoutRoom.end()});
@@ -720,6 +719,13 @@ private:
       }
     }
     const auto carrying = carryingPorts(circuit, internal);
+    std::vector<Obstacle> obstacles;
+    obstacles.reserve(chip.obstacles.size());
+    for (const auto& polygon : chip.obstacles) {
+      if (polygon->vertices.size() >= 3) {
+        obstacles.push_back({polygon.get(), geometry::boundingBox(*polygon)});
+      }
+    }
     std::vector<Lattice> lattices;
     for (std::size_t chain = 0; chain < capacity.chains.size(); ++chain) {
       report.progress("building the lattices", "", chain,
@@ -738,7 +744,7 @@ private:
           })) {
         continue;
       }
-      auto lattice = buildLattice(chip, ports, reach, carrying);
+      auto lattice = buildLattice(chip, ports, reach, carrying, obstacles);
       // A single node has no edge, so it is not a lattice. Everything else
       // stays, a chain whose ports are all targets included: that is a demand
       // without supply, and the artifact shows it as a lattice on which
@@ -810,19 +816,14 @@ private:
 
   /// The flow model over every lattice.
   ///
-  /// `unreached` collects the marker of every target that the model may leave
-  /// unserved, `crowded` the marker of every ring port that a chain may find
-  /// no room for when @p shortfalls allows that, and `penalty` the cost of one
-  /// marker. The caller takes the markers back out of the objective: the
-  /// penalty makes an unserved target a last resort, and left in, it would
-  /// make the cost of a run that misses a target incomparable with the cost
-  /// of one that reaches them all.
+  /// @p crowded collects the markers of the ring ports that may go without
+  /// room when @p shortfalls allows it. The objective prioritizes these
+  /// ports, then the inner targets, then the length of the wires.
   [[nodiscard]] static std::vector<Arc>
   build(milp::Model& model, const CapacityPlanT& capacity,
         const std::vector<Lattice>& lattices, const InnerCircuit& circuit,
         const bool internal, const bool shortfalls,
-        std::vector<milp::Var>& unreached, std::vector<Shortfall>& crowded,
-        double& penalty) {
+        std::vector<Shortfall>& crowded) {
     const std::unordered_set<std::uint32_t> targets(circuit.targets.begin(),
                                                     circuit.targets.end());
     std::vector<Arc> arcs;
@@ -847,7 +848,6 @@ private:
       }
     }
     const auto unreachedPenalty = totalWeight + 1.0;
-    penalty = unreachedPenalty;
 
     const auto flow = [&](const std::size_t index, const std::size_t node,
                           const bool out) {
@@ -963,7 +963,6 @@ private:
       }
       const auto missed = model.addBinary(std::format("unreached_{}", target),
                                           unreachedPenalty);
-      unreached.push_back(missed);
       model.addEqual(std::format("target_in_{}", target),
                      portFlow(target, false) + missed, 1.0);
       model.addEqual(std::format("target_out_{}", target),
@@ -1020,9 +1019,11 @@ private:
     // circuit surfaces where the wire is shortest, typically at the coupler
     // it already stands on, and not where the chip can carry it out to a
     // launcher.
+    const auto shortfallPenalty =
+        unreachedPenalty * (static_cast<double>(targets.size()) + 1.0);
     addChainCapacity(
         model, capacity, circuit, portFlow,
-        shortfalls ? std::optional{unreachedPenalty} : std::nullopt, crowded);
+        shortfalls ? std::optional{shortfallPenalty} : std::nullopt, crowded);
 
     model.setSense(milp::Sense::Minimize);
     return arcs;
@@ -1412,8 +1413,6 @@ private:
       std::vector<std::uint32_t> edges;
     };
     std::vector<Wire> wires;
-    // The length of the closed loops over crossings.
-    double loops = 0.0;
     for (std::size_t index = 0; index < lattices.size(); ++index) {
       std::vector<bool> seen(lattices[index].nodes.size(), false);
       for (std::size_t start = 0; start < lattices[index].nodes.size();
@@ -1452,7 +1451,6 @@ private:
         // touches no port. A solve that stops early can keep one; it connects
         // nothing, so the artifact leaves it out.
         if (ends.size() != 2) {
-          loops += wire.length;
           continue;
         }
         // The target end is where the wire ends; the other end is its source.
@@ -1510,10 +1508,8 @@ private:
     }
 
     Circuit solved;
-    solved.dropped = loops;
     for (auto& wire : wires) {
       if (!reaching.contains(find(wire.source))) {
-        solved.dropped += wire.length;
         continue;
       }
       // The source is where a wire of the inner circuit leaves, which is

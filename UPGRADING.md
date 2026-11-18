@@ -27,6 +27,10 @@ ring counts and solver settings.
 
 The Linux x86-64 wheels require a processor with the POPCNT instruction.
 
+Capacity artifacts written with the `SCP2` identifier still work. Earlier `SCP2`
+Global and Assignment placeholder artifacts lack the stage data this version
+requires. Regenerate them from the original configuration and chip.
+
 GDS/OASIS planning exports preserve holes in the port approach layer. Run
 `mqt-scpd render` again to update exported files.
 

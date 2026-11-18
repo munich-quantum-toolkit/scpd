@@ -70,8 +70,21 @@ void requireMpsName(const std::string& name, const std::string_view what) {
 
 std::string toMps(const Model& model) {
   requireMpsName(model.name(), "model name");
+  // The HiGHS free-format reader accepts arguments after these headers, so
+  // the following fields do not disambiguate a column with one of these names.
+  constexpr std::string_view sectionNames[] = {"NAME", "OBJSENSE", "QCMATRIX",
+                                               "QSECTION", "CSECTION"};
   for (const auto& variable : model.variables()) {
     requireMpsName(variable.name, "variable name");
+    if (std::ranges::any_of(sectionNames, [&](const std::string_view section) {
+          return std::ranges::equal(variable.name, section,
+                                    [](const unsigned char a, const char b) {
+                                      return std::toupper(a) == b;
+                                    });
+        })) {
+      throw std::invalid_argument(std::format(
+          "the variable name '{}' is an MPS section name", variable.name));
+    }
   }
   for (const auto& constraint : model.constraints()) {
     requireMpsName(constraint.name, "row name");
@@ -79,6 +92,10 @@ std::string toMps(const Model& model) {
       throw std::invalid_argument(std::format(
           "the row name '{}' cannot be written as MPS: it names the objective",
           OBJECTIVE_ROW));
+    }
+    if (constraint.name == "'MARKER'") {
+      throw std::invalid_argument(
+          "the row name 'MARKER' is reserved for MPS integrality markers");
     }
   }
 

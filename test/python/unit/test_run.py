@@ -164,6 +164,32 @@ def test_reading_a_run_snapshot_blocks_competing_writes(tmp_path: Path, monkeypa
     assert snapshot.chip_text.encode("utf-8") == directory.chip.read_bytes()
 
 
+@pytest.mark.parametrize("name", ["committed.json", "pending.json"])
+def test_a_writer_waits_for_journal_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """A run keeps its files until the recovery journal can be removed."""
+    directory = RunDirectory(tmp_path / "run")
+    directory.prepare(CONFIG)
+    journal = directory.path / ".mqt-scpd-recovery"
+    journal.mkdir()
+    marker = journal / name
+    marker.write_text("[]", encoding="utf-8")
+    unlink = Path.unlink
+
+    def refuse_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+        if path == marker:
+            raise PermissionError
+        unlink(path, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", refuse_cleanup)
+        with pytest.raises(RunError, match="cannot remove the recovery journal"):
+            directory.prepare(CONFIG)
+
+    assert directory.config.read_bytes() == CONFIG.read_bytes()
+    directory.prepare(CONFIG)
+    assert not journal.exists()
+
+
 def test_a_run_started_from_its_own_configuration_keeps_its_chip_copy(tmp_path: Path) -> None:
     """A run started from its own config.toml without a chip input takes its chip copy.
 

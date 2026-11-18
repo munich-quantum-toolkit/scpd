@@ -202,7 +202,7 @@ Var Model::addVariable(const std::string_view name, const double lower,
                           .upper = std::min(high, INFINITE_BOUND),
                           .type = type,
                           .objective = withoutNoise(objective)});
-  takenNames.emplace(name);
+  takenNames.emplace(variableList.back().name);
   return Var{variableList.size() - 1};
 }
 
@@ -230,8 +230,8 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
         "the name '{}' is already taken in model '{}'", name, modelName));
   }
 
-  // The terms are checked before they are combined, so that a variable of
-  // another model is refused also when its coefficient is zero.
+  // Check indices before combining terms so that a zero coefficient does not
+  // hide an invalid index.
   for (const auto& [index, _] : expression.terms()) {
     if (index >= variableList.size()) {
       throw std::invalid_argument(std::format(
@@ -274,7 +274,7 @@ void Model::addRow(const std::string_view name, const LinearExpr& expression,
                             .coefficients = std::move(coefficients),
                             .lower = std::max(low, -INFINITE_BOUND),
                             .upper = std::min(high, INFINITE_BOUND)});
-  takenNames.emplace(name);
+  takenNames.emplace(constraintList.back().name);
 }
 
 void Model::addLessOrEqual(const std::string_view name,

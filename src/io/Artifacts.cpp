@@ -235,10 +235,10 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
   // one chain that reaches a node over two paths would count the subtree
   // behind it twice.
   std::unordered_map<std::uint32_t, std::size_t> chainOfTarget;
+  std::vector<std::size_t> reached(count, plan.chains.size());
   for (std::size_t chain = 0; chain < plan.chains.size(); ++chain) {
-    std::vector<bool> reached(count, false);
     std::vector<std::size_t> pending{plan.chains[chain]};
-    reached[plan.chains[chain]] = true;
+    reached[plan.chains[chain]] = chain;
     while (!pending.empty()) {
       const auto index = pending.back();
       pending.pop_back();
@@ -256,12 +256,12 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
         }
       }
       for (const auto next : node.next) {
-        if (reached[next]) {
+        if (reached[next] == chain) {
           problems.push_back(std::format(
               "capacity chain {} reaches node {} twice", chain, next));
           return;
         }
-        reached[next] = true;
+        reached[next] = chain;
         pending.push_back(next);
       }
     }

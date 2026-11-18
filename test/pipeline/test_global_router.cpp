@@ -650,6 +650,13 @@ TEST(GlobalRouter, RunsNoWireBetweenPortsOnOppositeSidesOfTheArtwork) {
                           Point(100.0, 10.0)));
 }
 
+TEST(GlobalRouter, RunsNoWireAlongEitherSideOfTheArtwork) {
+  EXPECT_FALSE(runsAcross(Point(0.0, 0.0), Point(100.0, 0.0),
+                          Point(40.0, -10.0), Point(60.0, 0.0)));
+  EXPECT_FALSE(runsAcross(Point(0.0, 0.0), Point(100.0, 0.0), Point(40.0, 0.0),
+                          Point(60.0, 10.0)));
+}
+
 TEST(GlobalRouter, RunsNoWireThatStaysInsideTheArtwork) {
   // S and T both lie inside the rectangle, and the edge never leaves it.
   EXPECT_FALSE(runsAcross(Point(1.0, 0.0), Point(101.0, 0.0),
@@ -1272,6 +1279,53 @@ TEST(GlobalRouter, CountsEveryPassOfAChainThroughAGateItPassesTwice) {
   }
 }
 
+TEST(GlobalRouter, GivesPlainRingPortsGateRoomFirstEvenOnFallback) {
+  auto patterns = handPatterns();
+  patterns.bridge_pair = R"(^[SU]\.port[01]$)";
+  patterns.conventional = R"(^[ABCTV]\.port0$)";
+  const auto chip =
+      handChip({ringEnd(),
+                {.label = "S.port0", .center = Point(0.0, 0.0)},
+                {.label = "T.port0", .center = Point(100.0, 0.0)},
+                {.label = "U.port0", .center = Point(0.0, 100.0)},
+                {.label = "U.port1", .center = Point(-1000.0, 100.0)},
+                {.label = "V.port0", .center = Point(100.0, 100.0)},
+                {.label = "A.port0", .center = Point(-1000.0, 0.0)},
+                {.label = "B.port0", .center = Point(-1000.0, 200.0)},
+                {.label = "C.port0", .center = Point(-1000.0, 300.0)}},
+               patterns);
+  auto config =
+      handConfig({"S.port1", "U.port1", "A.port0", "B.port0", "C.port0"});
+  addBridgeRule(config, "U", "port0", "port1");
+  auto plan = planOf(
+      {{.targets = indicesOf(chip, {"S.port0", "T.port0"}), .gate = {}},
+       {.targets = indicesOf(chip, {"U.port0", "V.port0"}), .gate = {}},
+       {.targets = indicesOf(chip, {"S.port1"}), .gate = 1U, .bottleneck = 1U},
+       {.targets = indicesOf(chip, {"U.port1"}), .gate = 1U, .bottleneck = 2U},
+       {.targets = indicesOf(chip, {"B.port0", "C.port0"}),
+        .gate = 1U,
+        .bottleneck = 3U},
+       {.targets = indicesOf(chip, {"A.port0"}),
+        .gate = 1U,
+        .bottleneck = 1U}});
+  // A needs both gates, while each bridge needs just one. The independent
+  // gate of B and C forces fallback.
+  const auto firstGate = plan.chains.back() + 1;
+  auto secondGate = std::make_unique<CapacityNodeT>(*plan.nodes[firstGate]);
+  secondGate->id = 2U;
+  plan.nodes[firstGate]->next = {static_cast<std::uint32_t>(plan.nodes.size())};
+  plan.nodes.push_back(std::move(secondGate));
+  Recorder recorder;
+  const auto routing = makeHananMilpRouter()->run(
+      chip, plan, config, recorder.report(Detail::Items));
+
+  EXPECT_TRUE(routing.connections.empty());
+  EXPECT_DOUBLE_EQ(routing.objective, 0.0);
+  EXPECT_FALSE(recorder.said(Detail::Items, "A.port0 has no room"));
+  ASSERT_EQ(recorder.fails.size(), 1U);
+  EXPECT_EQ(recorder.fails[0], 3U);
+}
+
 TEST(GlobalRouter, CountsAResonatorAsAFailWithoutARingBridge) {
   // Both ends of the bridge lie off the ring, so no wire can surface on the
   // ring. Shut, the bridge carries no flow; open, it leads only to the other
@@ -1497,6 +1551,7 @@ public:
     longest.setSense(model.sense());
     auto solution = milp::makeHighsBackend()->solve(longest, options);
     if (solution.hasValues()) {
+      solution.status = milp::SolveStatus::Feasible;
       solution.objective = model.objectiveOffset();
       for (std::size_t index = 0; index < solution.values.size(); ++index) {
         solution.objective +=
@@ -1535,6 +1590,8 @@ TEST(GlobalRouter, NamesEveryReachedTargetInAFeasibleSolution) {
   EXPECT_EQ(routing.connections[0]->source->index(),
             indexOf(chip, "C12.port1"));
   EXPECT_EQ(routing.connections[0]->target.index(), indexOf(chip, "Q2.port0"));
+  EXPECT_TRUE(recorder.said(Detail::Summary,
+                            "the solver stopped with a feasible solution"));
 }
 
 TEST(GlobalRouter, LeavesOutAWireBetweenTwoRingBridgesInAFeasibleSolution) {

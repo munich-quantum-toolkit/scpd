@@ -66,14 +66,13 @@ assignmentInputs(const ChipT& chip, const CapacityPlanT& capacity,
  *
  * The assignment walks the launchers in the order of the chip input, so they
  * have to go once around the chip in the opposite direction to the port ring.
- * The check reads only the chip and the configuration: the centers of the
- * launchers that get a slot, and of the configured ring. The Assignment stage
- * runs this check and refuses what it reports, and planProblems() runs it
- * before any stage. The order is checked only when there are at least three
- * launchers, not all on one line, and the ring encloses an area.
+ * planProblems() checks the configured ring and the launcher slots that the
+ * Capacity stage would place. The Assignment stage checks the ring and slots
+ * it reads from the Global and Capacity artifacts. Order matters when at
+ * least three launchers span an area and the ring encloses an area.
  *
  * @param chip The classified chip.
- * @param config The configuration, which carries the ring.
+ * @param config The configuration, which carries the ring and grid.
  * @return What is wrong with the order, or nothing when it is right or has
  * no direction to check.
  */

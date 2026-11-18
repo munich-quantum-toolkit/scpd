@@ -346,6 +346,13 @@ std::vector<geometry::Point> slottedLaunchers(const ChipT& chip) {
   return launchers;
 }
 
+/// Whether the configured dimensions permit the Capacity stage to place slots.
+bool hasSlotGrid(const ConfigT& config) {
+  return config.grid == nullptr || (config.grid->capacity_cells_x >= 2 &&
+                                    config.grid->capacity_cells_y != 1 &&
+                                    config.grid->detail_factor != 0);
+}
+
 /// The label of a port, or "termination" for a chain end without one.
 std::string endName(const ChipT& chip,
                     const std::unique_ptr<fbd::PortRef>& port) {
@@ -361,13 +368,19 @@ public:
                                 const ConfigT& config,
                                 const Report& report) const override {
     report.progress("working out the inputs", "", 0, 0);
-    if (const auto problem = launcherOrderProblem(chip, config)) {
+    const auto inputs = assignmentInputs(chip, capacity, global);
+    std::vector<geometry::Point> ringPoints;
+    ringPoints.reserve(inputs.ring.size());
+    for (const auto port : inputs.ring) {
+      ringPoints.push_back(chip.ports[port]->center);
+    }
+    if (const auto problem =
+            orderProblem(ringPoints, inputs.launcherPosition)) {
       throw std::invalid_argument(*problem);
     }
     if (config.rules == nullptr) {
       throw std::invalid_argument("the configuration carries no design rules");
     }
-    const auto inputs = assignmentInputs(chip, capacity, global);
     if (std::ranges::find(inputs.isResonator, true) !=
         inputs.isResonator.end()) {
       if (const auto problem = placesProblem(inputs.launcherPosition)) {
@@ -538,11 +551,10 @@ private:
     // an end. An end is a launcher or a permitted termination.
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       milp::LinearExpr degree;
-      for (std::size_t edge = 0; edge < ring.edges.size(); ++edge) {
-        if (ring.edges[edge].first == index ||
-            ring.edges[edge].second == index) {
-          degree.add(variables.edge[edge], 1.0);
-        }
+      if (!ring.leaving.empty()) {
+        const auto previous = index == 0 ? ring.anchors.size() - 1 : index - 1;
+        degree.add(variables.edge[ring.leaving[previous]], 1.0);
+        degree.add(variables.edge[ring.leaving[index]], 1.0);
       }
       degree.add(variables.launcher[index], 1.0);
       degree.add(variables.termination[index], 1.0);
@@ -790,8 +802,7 @@ private:
                        const milp::Solution& solution, const double spacing,
                        const fba::GridExtentT* detail) {
     const auto launchers = inputs.launchers.size();
-    const auto offset = static_cast<std::int64_t>(
-        std::llround(solution.valueOf(variables.offset)));
+    const auto offset = std::llround(solution.valueOf(variables.offset));
 
     // The launcher the walk gave each ring node. The potential is a place on
     // the launcher ring, so the launcher is that place modulo the launcher
@@ -804,8 +815,7 @@ private:
     std::vector<bool> closing(inputs.ring.size(), false);
     assignment.launchers.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
-      const auto placed = static_cast<std::int64_t>(
-          std::llround(solution.valueOf(variables.flow[index])));
+      const auto placed = std::llround(solution.valueOf(variables.flow[index]));
       const auto count = static_cast<std::int64_t>(launchers);
       closing[index] = placed == count;
       slotOf[index] = static_cast<std::size_t>(
@@ -1148,8 +1158,6 @@ std::optional<std::string> launcherOrderProblem(const ChipT& chip,
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     byLabel.emplace(chip.ports[index]->label, index);
   }
-  // The stage checks the slots, which are these launchers in this order.
-  const auto launchers = slottedLaunchers(chip);
   std::vector<geometry::Point> ring;
   if (config.ports != nullptr && config.ports->sequences != nullptr) {
     for (const auto& label : config.ports->sequences->all_outer) {
@@ -1158,7 +1166,10 @@ std::optional<std::string> launcherOrderProblem(const ChipT& chip,
       }
     }
   }
-  return orderProblem(ring, launchers);
+  if (!hasSlotGrid(config) || detailGridProblem(chip, config).has_value()) {
+    return std::nullopt;
+  }
+  return orderProblem(ring, launcherSlotPositions(chip, config));
 }
 
 std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
@@ -1168,13 +1179,7 @@ std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
       })) {
     return std::nullopt;
   }
-  if (config.grid != nullptr && config.grid->detail_factor == 0) {
-    // A grid without cells places no slot. The configuration check reports
-    // it.
-    return std::nullopt;
-  }
-  if (detailGridProblem(chip, config).has_value()) {
-    // planProblems() reports invalid grids before checking launcher positions.
+  if (!hasSlotGrid(config) || detailGridProblem(chip, config).has_value()) {
     return std::nullopt;
   }
   return placesProblem(launcherSlotPositions(chip, config));

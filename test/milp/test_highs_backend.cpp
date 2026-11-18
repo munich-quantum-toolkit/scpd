@@ -23,10 +23,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -425,6 +427,65 @@ TEST(HighsBackend, SolvesWithAnotherThreadCountEachTime) {
     EXPECT_EQ(solution.status, SolveStatus::Optimal)
         << "threads " << threads << ": " << solution.message;
   }
+}
+
+TEST(HighsBackend, RefusesReentryFromAnObserver) {
+  const auto model = hardKnapsack();
+  const auto backend = makeHighsBackend();
+  SolveOptions outer;
+  outer.threads = 1;
+  SolveOptions inner;
+  inner.threads = 1;
+  bool called = false;
+  outer.observer.progress = [&](const SolveProgress&) {
+    if (!called) {
+      called = true;
+      const auto nested = backend->solve(model, inner);
+      EXPECT_EQ(nested.status, SolveStatus::Error);
+    }
+  };
+
+  EXPECT_EQ(backend->solve(model, outer).status, SolveStatus::Optimal);
+  EXPECT_TRUE(called);
+  EXPECT_EQ(backend->solve(model, inner).status, SolveStatus::Optimal);
+}
+
+TEST(HighsBackend, RefusesAResetWhileAnotherThreadSolves) {
+  const auto model = hardKnapsack();
+  const auto backend = makeHighsBackend();
+  SolveOptions options;
+  options.threads = 1;
+  ASSERT_EQ(backend->solve(model, options).status, SolveStatus::Optimal);
+
+  std::promise<void> started;
+  std::promise<void> release;
+  auto active = started.get_future();
+  auto done = release.get_future();
+  SolveStatus workerStatus = SolveStatus::Error;
+  std::jthread worker([&] {
+    SolveOptions concurrent;
+    concurrent.threads = 1;
+    bool signaled = false;
+    concurrent.observer.log = [&](const std::string_view) {
+      if (!signaled) {
+        signaled = true;
+        started.set_value();
+        static_cast<void>(done.wait_for(std::chrono::seconds(10)));
+      }
+    };
+    workerStatus = backend->solve(model, concurrent).status;
+  });
+
+  const auto running = active.wait_for(std::chrono::seconds(10));
+  EXPECT_EQ(running, std::future_status::ready);
+  options.threads = 2;
+  if (running == std::future_status::ready) {
+    EXPECT_EQ(backend->solve(model, options).status, SolveStatus::Error);
+  }
+  release.set_value();
+  worker.join();
+  EXPECT_EQ(workerStatus, SolveStatus::Optimal);
+  EXPECT_EQ(backend->solve(model, options).status, SolveStatus::Optimal);
 }
 
 TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {

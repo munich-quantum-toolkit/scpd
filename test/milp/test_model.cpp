@@ -268,7 +268,7 @@ TEST(MilpModel, RefusesACoefficientFromTheInfiniteBoundOn) {
   EXPECT_DOUBLE_EQ(model.objectiveOffset(), 0.6 * INFINITE_BOUND);
 }
 
-TEST(MilpModel, RefusesAVariableOfAnotherModel) {
+TEST(MilpModel, RefusesAVariableIndexOutsideTheModel) {
   Model first("first");
   Model second("second");
   static_cast<void>(first.addBinary("a"));
@@ -279,11 +279,32 @@ TEST(MilpModel, RefusesAVariableOfAnotherModel) {
   EXPECT_THROW(second.addLessOrEqual("row", 1.0 * foreign, 1.0),
                std::invalid_argument);
   EXPECT_THROW(second.addObjective(1.0 * foreign), std::invalid_argument);
-  // A zero coefficient drops out of the combined terms, but the variable is
-  // still foreign.
+  // A zero coefficient drops out of the combined terms, but its index is
+  // still outside this model.
   EXPECT_THROW(second.addLessOrEqual("zero", 0.0 * foreign, 1.0),
                std::invalid_argument);
   EXPECT_THROW(second.addObjective(0.0 * foreign), std::invalid_argument);
+}
+
+TEST(MilpModel, AcceptsNamesTakenFromItsOwnRecords) {
+  Model model("names");
+  const auto first = model.addBinary("long_variable");
+  model.addEqual("long_row", 1.0 * first, 1.0);
+  while (model.variableCount() < model.variables().capacity()) {
+    static_cast<void>(model.addBinary(std::to_string(model.variableCount())));
+  }
+  while (model.constraintCount() < model.constraints().capacity()) {
+    model.addEqual("row_" + std::to_string(model.constraintCount()),
+                   1.0 * first, 1.0);
+  }
+  const auto variable =
+      std::string_view(model.variables().front().name).substr(5);
+  static_cast<void>(model.addBinary(variable));
+  EXPECT_THROW(static_cast<void>(model.addBinary("variable")),
+               std::invalid_argument);
+  const auto row = std::string_view(model.constraints().front().name).substr(5);
+  model.addEqual(row, 1.0 * first, 1.0);
+  EXPECT_THROW(model.addEqual("row", 1.0 * first, 1.0), std::invalid_argument);
 }
 
 TEST(MilpModel, ClampsABinaryToZeroAndOne) {

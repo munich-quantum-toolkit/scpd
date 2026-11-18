@@ -105,8 +105,8 @@ releases may include breaking changes.
   ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#166])
   ([**@FeldmeierMichael**], [**@marcelwa**])
-- 🐛 Preserve holes in the port approach layer of GDS/OASIS exports ([#167])
-  ([**@FeldmeierMichael**], [**@marcelwa**])
+- 🐛 Check launcher slot order and keep plain ring ports first at capacity gates
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 
 <!-- Version links -->
 

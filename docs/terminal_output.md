@@ -179,7 +179,9 @@ The run has these parts:
 
 `plan` checks the configuration and the chip before its first stage. A problem
 prints one error line on stderr and no header, and the run directory stays as it
-was. A stage failure also leaves a previously completed run intact.
+was. A full `plan` publishes only after every requested stage succeeds. A stage
+failure or interruption before publication leaves the previous run intact. If
+publication was interrupted, the next planning command recovers the run.
 
 ### Levels
 

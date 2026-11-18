@@ -209,18 +209,25 @@ can reach another objective.
 
 A solve that stops at `time_limit` keeps the best solution it has found by then.
 That solution depends on the speed of the machine, so the same inputs can give
-different artifacts. Leave `time_limit` at `0.0` where a run has to repeat. Such
-a solution of the Global stage can hold wires that reach no target: a wire
-between the inner ends of two ring bridges, a closed loop through internal
-bridges, or a closed loop over crossings. The Global artifact and its objective
-leave these wires out.
+different artifacts. Leave `time_limit` at `0.0` where a run has to repeat. The
+Global stage may solve twice if it needs a second model for port shortfalls. The
+limit applies to each model. A feasible solution of the Global stage can hold
+wires that reach no target: a wire between the inner ends of two ring bridges, a
+closed loop through internal bridges, or a closed loop over crossings. The
+Global artifact and its objective leave these wires out. The Global stage
+reports when it used a feasible solution after the solver stopped early. The
+Global solver applies the gap to the model objective, which includes penalties
+for missing ports. The reported length includes the retained wires.
 
 With `threads` at `0`, HiGHS uses half the hardware threads of the machine, and
 Gurobi chooses the count itself (its parameter `Threads`). The count changes the
 order of the search, so the time of a solve, its node count and, between optimal
 solutions of equal objective, its answer can differ from one machine to the
 next. A fixed `threads` makes runs on different machines comparable. The limit
-of `1024` is the largest value that Gurobi accepts.
+of `1024` is the largest value that Gurobi accepts. HiGHS can solve on several
+calling threads at once. A solve cannot start from one of its own callbacks.
+Changing the thread count on an existing calling thread requires other MQT SCPD
+solves to finish first.
 
 ## `[run]`
 

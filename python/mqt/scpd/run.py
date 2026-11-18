@@ -494,6 +494,9 @@ class RunDirectory:
         """
         targets = [self.path / source.name for source in sources]
         with self._write_lock():
+            if self._recovery.exists():
+                msg = f"cannot write {self.path}: cannot remove the recovery journal"
+                raise RunError(msg)
             if digests is not None:
                 config = self.load()
                 if input_digests(config, self.classified_chip(config)) != digests:
@@ -594,8 +597,12 @@ class RunDirectory:
         if failed:
             msg = f"cannot restore all files of {self.path}; any remaining backups are in {previous}"
             raise RunError(msg) from failed[0]
-        journal.unlink()
-        previous.rmdir()
+        try:
+            journal.unlink()
+            previous.rmdir()
+        except OSError as error:
+            msg = f"cannot remove the recovery journal for {self.path}"
+            raise RunError(msg) from error
 
     def load(self) -> ConfigT:
         """Read the configuration of an existing run.

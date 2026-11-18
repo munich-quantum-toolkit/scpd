@@ -47,7 +47,7 @@ using design::Problems;
 validate(const flatbuffers::artifacts::ArtifactT& artifact);
 
 /**
- * @brief Checks that a stage artifact fits a chip.
+ * @brief Checks port indices in a Capacity, Global, or Assignment artifact.
  *
  * An artifact names ports by their index into the chip. An artifact that was
  * made from another chip can name a port this chip does not have, and a
@@ -55,6 +55,7 @@ validate(const flatbuffers::artifacts::ArtifactT& artifact);
  *
  * @param artifact The artifact to check.
  * @param chip The chip a stage reads the artifact with.
+ * @pre The artifact passed validate() without a chip.
  * @return A problem for every port the artifact names that @p chip does not
  * have, empty when the artifact fits.
  */
