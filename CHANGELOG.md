@@ -73,6 +73,7 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])
 - 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
   ([**@FeldmeierMichael**])
 - 🎨 Change the output and the exit codes of the commands to the format of
@@ -113,6 +114,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#178]: https://github.com/munich-quantum-toolkit/scpd/pull/178
 [#167]: https://github.com/munich-quantum-toolkit/scpd/pull/167
 [#166]: https://github.com/munich-quantum-toolkit/scpd/pull/166
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
