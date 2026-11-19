@@ -73,6 +73,8 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])
 - 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
   ([**@FeldmeierMichael**])

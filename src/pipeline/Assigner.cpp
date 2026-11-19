@@ -470,9 +470,6 @@ private:
     std::vector<milp::Var> termination;
     /// Whether each ring edge is used.
     std::vector<milp::Var> edge;
-    /// How many resonators the feedline chain of each anchor feeds from that
-    /// anchor to its end.
-    std::vector<milp::Var> utilization;
     /// The rotation of the whole flow assignment.
     milp::Var offset;
   };
@@ -484,8 +481,6 @@ private:
                                        const std::uint32_t target) {
     const auto launchers = static_cast<double>(inputs.launchers.size());
     const auto& rules = *config.rules;
-    const auto utilizationCap =
-        static_cast<double>(rules.max_feedline_utilization);
     const auto terminations = static_cast<double>(rules.feedline_terminations);
 
     Variables variables;
@@ -538,8 +533,6 @@ private:
           model.addBinary(std::format("launcher_{}", index)));
       variables.termination.push_back(
           model.addBinary(std::format("termination_{}", index)));
-      variables.utilization.push_back(model.addInteger(
-          std::format("utilization_{}", index), 0.0, utilizationCap));
     }
     for (std::size_t index = 0; index < ring.edges.size(); ++index) {
       variables.edge.push_back(
@@ -628,57 +621,21 @@ private:
                            0.0);
     }
 
-    // The utilization at an anchor counts the resonators from it to the end
-    // of its feedline chain: one at the last anchor, where the chain ends and
-    // the chord that leaves it is unused, and one more than at the next anchor
-    // everywhere else. Its upper bound limits how many resonators one chain
-    // feeds. A big-M pair per anchor switches between the two.
-    const auto bigM = static_cast<double>(ring.anchors.size()) + 2.0;
-    for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
-      const auto next =
-          variables.utilization[(index + 1) % ring.anchors.size()];
-      // A single resonator has no chord to leave it.
-      const auto leaving =
-          ring.leaving.empty()
-              ? milp::LinearExpr()
-              : milp::LinearExpr(variables.edge[ring.leaving[index]]);
-      const auto starts = model.addBinary(std::format("starts_{}", index));
-
-      // `starts` is one exactly where the anchor ends a chain and the chord
-      // that leaves it is unused, which is where a new chain begins. An
-      // anchor ends a chain where it takes a launcher, a termination, or
-      // both, and it takes both where it is a chain of its own. The first
-      // row keeps `starts` at zero at an anchor without an end, and the
-      // second where the leaving chord is used. The last two rows set it
-      // where either end is there and the leaving chord is unused.
-      model.addLessOrEqual(std::format("starts_a_{}", index),
-                           milp::LinearExpr(starts) -
-                               variables.launcher[index] -
-                               variables.termination[index],
-                           0.0);
-      model.addLessOrEqual(std::format("starts_b_{}", index),
-                           milp::LinearExpr(starts) + leaving, 1.0);
-      model.addGreaterOrEqual(
-          std::format("starts_launcher_{}", index),
-          milp::LinearExpr(starts) - variables.launcher[index] + leaving, 0.0);
-      model.addGreaterOrEqual(std::format("starts_termination_{}", index),
-                              milp::LinearExpr(starts) -
-                                  variables.termination[index] + leaving,
-                              0.0);
-
-      const auto here = milp::LinearExpr(variables.utilization[index]);
-      model.addLessOrEqual(std::format("util_reset_up_{}", index),
-                           here + (bigM * milp::LinearExpr(starts)),
-                           1.0 + bigM);
-      model.addGreaterOrEqual(std::format("util_reset_low_{}", index),
-                              here - (bigM * milp::LinearExpr(starts)),
-                              1.0 - bigM);
-      model.addLessOrEqual(std::format("util_step_up_{}", index),
-                           here - next - (bigM * milp::LinearExpr(starts)),
-                           1.0);
-      model.addGreaterOrEqual(std::format("util_step_low_{}", index),
-                              here - next + (bigM * milp::LinearExpr(starts)),
-                              1.0);
+    // A chain of B + 1 resonators uses B consecutive chords. Leave a chord
+    // unused in each cyclic window of B chords. One row rules out a full cycle.
+    const auto edgeCount = variables.edge.size();
+    if (edgeCount != 0) {
+      const auto width =
+          std::min<std::size_t>(rules.max_feedline_utilization, edgeCount);
+      const auto windows = width < edgeCount ? edgeCount : 1;
+      for (std::size_t first = 0; first < windows; ++first) {
+        milp::LinearExpr window;
+        for (std::size_t step = 0; step < width; ++step) {
+          window.add(variables.edge[(first + step) % edgeCount], 1.0);
+        }
+        model.addLessOrEqual(std::format("chain_limit_{}", first), window,
+                             static_cast<double>(width) - 1.0);
+      }
     }
 
     milp::LinearExpr activeLaunchers;

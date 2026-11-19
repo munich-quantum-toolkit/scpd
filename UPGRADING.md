@@ -31,6 +31,10 @@ Capacity artifacts written with the `SCP2` identifier still work. Earlier `SCP2`
 Global and Assignment placeholder artifacts lack the stage data this version
 requires. Regenerate them from the original configuration and chip.
 
+Assignment uses a new solver model for the feedline utilization limit. Rerunning
+Assignment can select a different layout when several layouts have the same
+objective value.
+
 GDS/OASIS planning exports preserve holes in the port approach layer. Run
 `mqt-scpd render` again to update exported files.
 

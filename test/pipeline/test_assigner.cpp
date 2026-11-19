@@ -826,7 +826,8 @@ ChipT octagonChip() {
 
 /// The configuration of octagonChip with a ring that opens at @p first.
 ConfigT octagonConfig(const std::size_t first, const std::uint32_t target,
-                      const std::uint32_t terminations) {
+                      const std::uint32_t terminations,
+                      const std::uint32_t utilization = 8) {
   ConfigT config;
   config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
   config.ports->sequences =
@@ -836,7 +837,7 @@ ConfigT octagonConfig(const std::size_t first, const std::uint32_t target,
         "r" + std::to_string((first + step) % 8));
   }
   config.rules = std::make_unique<fbd::DesignRulesT>();
-  config.rules->max_feedline_utilization = 8;
+  config.rules->max_feedline_utilization = utilization;
   config.rules->feedline_terminations = terminations;
   config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
   config.stages->assignment =
@@ -851,7 +852,7 @@ AssignmentT assignOctagon(const std::size_t first,
                           const std::vector<std::uint32_t>& resonators,
                           const std::uint32_t target,
                           const std::uint32_t terminations,
-                          const Report& report = {}) {
+                          const std::uint32_t utilization = 8) {
   const auto chip = octagonChip();
   std::vector<std::uint32_t> ring;
   ring.reserve(8);
@@ -860,7 +861,7 @@ AssignmentT assignOctagon(const std::size_t first,
   }
   return makeOrderedMilpAssigner()->run(
       chip, planWithLaunchersOf(chip), routingWithRing(ring, resonators),
-      octagonConfig(first, target, terminations), report);
+      octagonConfig(first, target, terminations, utilization), {});
 }
 
 /// The side of the line through @p from and @p to that @p point lies on: 1 to
@@ -959,6 +960,17 @@ TEST(Assigner, FindsTheSameOptimumWhereverTheRingOpens) {
                   objective, 1.0e-6)
           << "the ring opens at r" << first << " with " << terminations
           << " terminations";
+    }
+  }
+}
+
+TEST(Assigner, LimitsChainUtilizationWhereverTheRingOpens) {
+  for (std::size_t first = 0; first < 8; ++first) {
+    SCOPED_TRACE(first);
+    const auto assignment = assignOctagon(first, {0, 1, 6, 7}, 2, 2, 2);
+    ASSERT_EQ(assignment.chains.size(), 2U);
+    for (const auto& chain : assignment.chains) {
+      EXPECT_EQ(chain->nodes.size(), 2U);
     }
   }
 }
