@@ -31,9 +31,9 @@ Capacity artifacts written with the `SCP2` identifier still work. Earlier `SCP2`
 Global and Assignment placeholder artifacts lack the stage data this version
 requires. Regenerate them from the original configuration and chip.
 
-Assignment uses a new solver model for the feedline utilization limit. Rerunning
-Assignment can select a different layout when several layouts have the same
-objective value.
+Assignment uses a sliding window to enforce the feedline utilization limit. The
+bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning
+Assignment can select a different layout when objective values tie.
 
 GDS/OASIS planning exports preserve holes in the port approach layer. Run
 `mqt-scpd render` again to update exported files.

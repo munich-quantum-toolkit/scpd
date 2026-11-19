@@ -264,11 +264,14 @@ public:
     }
 
     Highs highs;
-    // Send solver logs only to the observer.
     const auto& observer = options.observer;
     const bool logs = static_cast<bool>(observer.log);
+    // Before HiGHS 1.14, callbacks needed console logging enabled.
+    const bool logToConsole =
+        logs && highs.versionMajor() == 1 && highs.versionMinor() < 14;
     if (highs.setOptionValue("output_flag", logs) != HighsStatus::kOk ||
-        highs.setOptionValue("log_to_console", logs) != HighsStatus::kOk) {
+        highs.setOptionValue("log_to_console", logToConsole) !=
+            HighsStatus::kOk) {
       solution.message = "HiGHS refused its own output option";
       return solution;
     }

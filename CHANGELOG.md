@@ -32,8 +32,8 @@ releases may include breaking changes.
 - ✨ Add Global routing on Hanan lattices and Assignment of ring ports to
   launchers and feedline chains ([#167]) ([**@FeldmeierMichael**],
   [**@marcelwa**])
-- ➕ Add HiGHS, optional Gurobi support, and the solver configuration ([#167])
-  ([**@FeldmeierMichael**], [**@marcelwa**])
+- ➕ Add HiGHS 1.16.0, optional Gurobi support, and the solver configuration
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🎨 Draw Global and Assignment artifacts with the stored Capacity raster
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins

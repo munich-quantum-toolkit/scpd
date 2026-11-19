@@ -257,6 +257,7 @@ TEST(HighsBackend, RefusesThreadsThatHighsCannotCount) {
 TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {
   const auto model = hardKnapsack();
   testing::internal::CaptureStdout();
+  testing::internal::CaptureStderr();
   const auto quiet = makeHighsBackend()->solve(model, {});
   std::vector<std::string> lines;
   SolveOptions options;
@@ -265,6 +266,7 @@ TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {
   };
   const auto talkative = makeHighsBackend()->solve(model, options);
   const auto printed = testing::internal::GetCapturedStdout();
+  const auto errors = testing::internal::GetCapturedStderr();
 
   ASSERT_EQ(quiet.status, SolveStatus::Optimal);
   ASSERT_EQ(talkative.status, SolveStatus::Optimal);
@@ -275,6 +277,7 @@ TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {
   }
   // The core never writes to the process output, whether or not it logs.
   EXPECT_EQ(printed, "");
+  EXPECT_EQ(errors, "");
 }
 
 TEST(HighsBackend, ReportsTheProgressOfASearch) {

@@ -56,7 +56,7 @@ list(APPEND FETCH_PACKAGES nlohmann_json)
 
 # HiGHS versions can choose different layouts with the same objective.
 set(HIGHS_VERSION
-    1.11.0
+    1.16.0
     CACHE STRING "HiGHS version")
 set(HIGHS_URL https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERSION}.tar.gz)
 FetchContent_Declare(highs URL ${HIGHS_URL} EXCLUDE_FROM_ALL)

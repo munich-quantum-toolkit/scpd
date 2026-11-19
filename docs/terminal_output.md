@@ -151,7 +151,7 @@ Without `-v`, a run on the 17-qubit benchmark chip prints this:
 
 ```text
 $ mqt-scpd plan -c inputs/17q/config.toml -o runs/17q
-mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0
+mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.16.0
 
 🧩 capacity
    356 partitions · 55 bottlenecks · 72 chains                     2.58s

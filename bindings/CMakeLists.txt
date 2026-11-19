@@ -43,11 +43,13 @@ if(SKBUILD)
     DESTINATION ${SKBUILD_METADATA_DIR}/licenses
     RENAME HiGHS-LICENSE.txt
     COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
-  install(
-    FILES ${highs_SOURCE_DIR}/extern/filereaderlp/LICENSE
-    DESTINATION ${SKBUILD_METADATA_DIR}/licenses
-    RENAME HiGHS-filereaderlp-LICENSE.txt
-    COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
+  if(EXISTS "${highs_SOURCE_DIR}/extern/filereaderlp/LICENSE")
+    install(
+      FILES ${highs_SOURCE_DIR}/extern/filereaderlp/LICENSE
+      DESTINATION ${SKBUILD_METADATA_DIR}/licenses
+      RENAME HiGHS-filereaderlp-LICENSE.txt
+      COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
+  endif()
   install(
     FILES ${flatbuffers_SOURCE_DIR}/LICENSE
     DESTINATION ${SKBUILD_METADATA_DIR}/licenses
