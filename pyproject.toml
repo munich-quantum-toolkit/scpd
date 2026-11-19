@@ -20,8 +20,7 @@ name = "mqt-scpd"
 description = "Physical Design for Superconducting Quantum Chips"
 readme = "README.md"
 keywords = [ "design-automation", "MQT", "quantum-computing" ]
-# The wheels link in HiGHS and nlohmann/json (MIT), FlatBuffers (Apache-2.0), Boost.Polygon
-# (BSL-1.0) and pdqsort, which HiGHS compiles in (Zlib); the sdist carries MIT code only.
+# The wheel links HiGHS with its Zlib-licensed pdqsort dependency.
 license = "MIT AND Apache-2.0 AND BSL-1.0 AND Zlib"
 license-files = [ "LICENSE" ]
 requires-python = ">=3.11.5"

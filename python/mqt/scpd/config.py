@@ -196,9 +196,6 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         config.patterns.launcher = patterns.take("launcher", str, required=True, default="")
         config.patterns.resonator = patterns.take("resonator", str, required=True, default="")
         config.patterns.conventional = patterns.take("conventional", str, required=True, default="")
-        # Both are optional. A bridge port is one where a wire crosses a component rather than ends,
-        # and [[ports.bridge_pairs]] says which two of them pair. The component pattern declares
-        # which part of a label names the component, so no algorithm reads a label itself.
         config.patterns.bridgePair = patterns.take("bridge_pair", str, default="")
         config.patterns.component = patterns.take("component", str, default="")
         patterns.finish()

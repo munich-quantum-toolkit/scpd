@@ -146,17 +146,11 @@ private:
 /// feasibility tolerance of HiGHS.
 constexpr double FEASIBILITY_TOLERANCE = 1.0e-7;
 
-/// The least wall-clock time between two calls of SolveObserver::check. A
-/// call into Python costs next to nothing at this rate. A pending interrupt
-/// waits this long and then until HiGHS next calls back, which it does after
-/// every iteration.
+/// Minimum time between observer checks in HiGHS callbacks.
 constexpr std::chrono::milliseconds CHECK_INTERVAL{100};
 
-/// The answer to a model without variables. HiGHS calls such a model empty
-/// and solves nothing. A row of it has no terms, because the constant of its
-/// expression moved into its bounds, so the value of the row is zero. The
-/// model is feasible exactly when every row admits zero, and its objective is
-/// the offset.
+/// HiGHS treats a model without variables as empty. Check its row bounds
+/// against zero.
 Solution solveWithoutVariables(const Model& model) {
   Solution solution;
   solution.backend = "highs";
@@ -237,11 +231,7 @@ public:
           constraint.upper >= INFINITE_BOUND ? kHighsInf : constraint.upper);
     }
 
-    // The model holds its coefficients by row; HiGHS is handed them by
-    // column. Its own row-wise path assumes a column-wise start vector in
-    // places and reads such a matrix as empty, which is a constraint that
-    // silently does not bind rather than an error. Transposing once here is
-    // one pass over the nonzeros and leaves nothing to assume.
+    // Transpose the model to the column format HiGHS expects.
     lp.a_matrix_.start_.assign(model.variableCount() + 1, 0);
     std::size_t nonZeros = 0;
     for (const auto& constraint : model.constraints()) {
@@ -274,9 +264,7 @@ public:
     }
 
     Highs highs;
-    // The core never writes to the process output. HiGHS logs only when an
-    // observer asks for the log, and then only into the callback: with a
-    // logging callback active it writes nothing to the console.
+    // Send solver logs only to the observer.
     const auto& observer = options.observer;
     const bool logs = static_cast<bool>(observer.log);
     if (highs.setOptionValue("output_flag", logs) != HighsStatus::kOk ||
@@ -284,13 +272,8 @@ public:
       solution.message = "HiGHS refused its own output option";
       return solution;
     }
-    // HiGHS counts a bound as infinite from its own option on, drops a
-    // coefficient up to its smallest matrix value, and refuses one from its
-    // largest. The options follow the model, so HiGHS reads the model that
-    // the MPS text carries to every other backend: by default, it would
-    // refuse coefficients from 1e15. The smallest matrix value stays at the
-    // default of HiGHS: a smaller one changes the assignments of the benchmark
-    // chips.
+    // Match the model's bounds and coefficient range. Keep the HiGHS lower
+    // coefficient threshold because lowering it changes benchmark assignments.
     for (const auto& [option, value] :
          {std::pair{"infinite_bound", INFINITE_BOUND},
           std::pair{"small_matrix_value", COEFFICIENT_EPSILON},
@@ -358,9 +341,6 @@ public:
       static_cast<void>(highs.startCallback(kCallbackIpmInterrupt));
       static_cast<void>(highs.startCallback(kCallbackMipInterrupt));
     }
-    // HiGHS refuses a value outside the range of an option, and a solve
-    // without the limit, the gap or the threads it was asked for is not the
-    // solve that was asked for.
     if (options.timeLimit > 0.0 &&
         highs.setOptionValue("time_limit", options.timeLimit) !=
             HighsStatus::kOk) {
@@ -392,10 +372,7 @@ public:
       return solution;
     }
 
-    // HiGHS warns about a model it accepts, for example about the range of
-    // its coefficients, and then solves it. Only an error is a refusal. The
-    // model holds no value that HiGHS 1.11 refuses with the options above, so
-    // this guards against a later version that checks more.
+    // HiGHS may warn about a model it accepts.
     if (highs.passModel(std::move(highsModel)) == HighsStatus::kError) {
       // HiGHS logs why it rejects the model, and the observer of that log
       // may have thrown.
