@@ -89,6 +89,19 @@ void logLines(const SolveObserver& observer, const std::string& message) {
 /// thread, but its API forbids resetting it while any instance is solving.
 class SchedulerUse {
 public:
+  /// Keep the reentry check active when a worker calls the observer.
+  class ObserverCall {
+  public:
+    ObserverCall() : previous(std::exchange(threadState().inUse, true)) {}
+    ~ObserverCall() { threadState().inUse = previous; }
+
+    ObserverCall(const ObserverCall&) = delete;
+    ObserverCall& operator=(const ObserverCall&) = delete;
+
+  private:
+    bool previous;
+  };
+
   explicit SchedulerUse(const std::uint32_t threads) {
     auto& local = threadState();
     if (local.inUse) {
@@ -231,7 +244,7 @@ public:
           constraint.upper >= INFINITE_BOUND ? kHighsInf : constraint.upper);
     }
 
-    // Transpose the model to the column format HiGHS expects.
+    // Use columns because the HiGHS row-wise path can silently drop rows.
     lp.a_matrix_.start_.assign(model.variableCount() + 1, 0);
     std::size_t nonZeros = 0;
     for (const auto& constraint : model.constraints()) {
@@ -290,22 +303,26 @@ public:
     // An exception from an observer must not unwind through HiGHS. It is kept,
     // the solve is asked to stop, and the exception leaves after run().
     std::exception_ptr failure;
+    // HiGHS MIP workers can send warnings to the same log callback.
+    std::mutex observerMutex;
     // The simplex and interior point solvers call back on every iteration,
     // so the check runs at most once per CHECK_INTERVAL. HiGHS reports no
     // running time to these callbacks, so the backend reads its own clock.
     std::optional<std::chrono::steady_clock::time_point> checked;
     if (logs || observer.progress || observer.check) {
       static_cast<void>(
-          highs.setCallback([&observer, &failure, &checked](
+          highs.setCallback([&observer, &failure, &checked, &observerMutex](
                                 const int type, const std::string& message,
                                 const HighsCallbackOutput* out,
                                 HighsCallbackInput* in, void* /*data*/) {
+            const std::scoped_lock lock(observerMutex);
             if (failure != nullptr) {
               if (in != nullptr) {
                 in->user_interrupt = true;
               }
               return;
             }
+            const SchedulerUse::ObserverCall call;
             try {
               if (type == kCallbackLogging && observer.log) {
                 logLines(observer, message);

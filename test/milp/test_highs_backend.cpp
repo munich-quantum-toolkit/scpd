@@ -436,20 +436,26 @@ TEST(HighsBackend, RefusesReentryFromAnObserver) {
   const auto model = hardKnapsack();
   const auto backend = makeHighsBackend();
   SolveOptions outer;
-  outer.threads = 1;
+  outer.threads = 2;
   SolveOptions inner;
-  inner.threads = 1;
-  bool called = false;
-  outer.observer.progress = [&](const SolveProgress&) {
+  inner.threads = 2;
+  bool logged = false;
+  bool reported = false;
+  const auto checkReentry = [&](bool& called) {
     if (!called) {
       called = true;
       const auto nested = backend->solve(model, inner);
       EXPECT_EQ(nested.status, SolveStatus::Error);
     }
   };
+  outer.observer.log = [&](std::string_view) { checkReentry(logged); };
+  outer.observer.progress = [&](const SolveProgress&) {
+    checkReentry(reported);
+  };
 
   EXPECT_EQ(backend->solve(model, outer).status, SolveStatus::Optimal);
-  EXPECT_TRUE(called);
+  EXPECT_TRUE(logged);
+  EXPECT_TRUE(reported);
   EXPECT_EQ(backend->solve(model, inner).status, SolveStatus::Optimal);
 }
 
