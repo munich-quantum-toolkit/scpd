@@ -162,7 +162,8 @@ distinct feeds round to the same cell.
 | `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
 
 Install the Gurobi backend with `uv pip install "mqt-scpd[gurobi]"`. Gurobi has
-no Windows ARM64 wheel. The package includes a size-limited license. Run
+no Windows ARM64 wheel. The bundled license allows up to 2,000 variables and
+2,000 constraints per linear model. Larger models need a full license. Run
 `mqt-scpd doctor` with the configuration to check the backend before planning.
 
 `optimal` means the gap between the best solution and the best bound is within

@@ -73,8 +73,8 @@ releases may include breaking changes.
 
 ### Changed
 
-- ⬆️ Require KLayout 0.30.13 or later in the 0.30 series and enable export tests
-  on Python 3.15 on Linux and macOS ([#167]) ([**@marcelwa**])
+- ⬆️ Require KLayout 0.30.13 or later in the 0.30 series for Python 3.15 wheels
+  on Linux and macOS ([#167]) ([**@marcelwa**])
 - ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])

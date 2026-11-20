@@ -32,9 +32,10 @@ Assignment can select a different layout when objective values tie.
 Install the optional Gurobi backend with `uv pip install "mqt-scpd[gurobi]"`.
 
 GDS/OASIS planning exports preserve holes in the port approach layer. Run
-`mqt-scpd render` again to update exported files. KLayout 0.30.13 adds Python
-3.15 wheels on Linux and macOS. Its Windows x86-64 wheels cover Python through
-3.14.
+`mqt-scpd render` again to update exported files.
+
+KLayout 0.30.13 has Python 3.15 wheels on Linux and macOS. On Windows x86-64,
+its wheels cover Python through 3.14. KLayout has no Windows ARM64 wheel.
 
 <!-- Version links -->
 
