@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
+from mqt.scpd import pyscpd
 from mqt.scpd.artifacts import read_artifact
 from mqt.scpd.chip import decode_chip, role_name
 from mqt.scpd.export import HAS_KLAYOUT
@@ -29,18 +30,24 @@ from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
 from mqt.scpd.planning import PLANNING_STAGES, planning_geometry
 from mqt.scpd.plot import layout_svg
 from mqt.scpd.run import BlockReporter, RunDirectory
+from mqt.scpd.solvers import register
 from mqt.scpd.steps import STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Generator, Iterable, Sequence
 
     from mqt.scpd.console import Figure
     from mqt.scpd.flatbuffers.design.Chip import ChipT
 
 DATA = Path(os.environ["MQT_SCPD_BENCHMARKS"]) if "MQT_SCPD_BENCHMARKS" in os.environ else None
+GUROBI = os.environ.get("MQT_SCPD_BENCHMARK_GUROBI") == "1"
+# Both models of each chip fit within Gurobi's bundled limit of 2,000 variables and constraints.
+GUROBI_CHIPS = ("4q", "9q", "17q", "21q", "33q", "45q")
 CHIPS = sorted(path.parent.name for path in DATA.glob("inputs/*/config.toml")) if DATA else []
 
-pytestmark = pytest.mark.skipif(DATA is None, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data")
+pytestmark = pytest.mark.skipif(
+    DATA is None and not GUROBI, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data"
+)
 
 #: The objective of the assignment on the chips that are small enough to know it by heart.
 OBJECTIVES = {"4q": 5.02, "9q": 15.27}
@@ -137,7 +144,20 @@ def check_the_assignment(chip: ChipT, assignment: AssignmentT, launcher_target: 
     assert ends == {"launcher": launcher_target, "termination": terminations}
 
 
-@pytest.mark.parametrize("chip", CHIPS)
+@pytest.fixture
+def benchmark_solver(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Register the real Gurobi backend for the benchmark run that uses it."""
+    if not GUROBI:
+        yield
+        return
+    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
+    register()
+    yield
+    pyscpd.set_solver(None)
+
+
+@pytest.mark.usefixtures("benchmark_solver")
+@pytest.mark.parametrize("chip", GUROBI_CHIPS if GUROBI else CHIPS)
 def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_path: Path) -> None:
     """Every step runs without a fail, and the plan keeps the rules the later stages rely on."""
     assert DATA is not None

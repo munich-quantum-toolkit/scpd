@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -119,6 +120,35 @@ def _run_tests(
 def tests(session: nox.Session) -> None:
     """Run the test suite."""
     _run_tests(session)
+    if os.environ.get("GITHUB_ACTIONS") != "true" or session.python != "3.14":
+        return
+
+    workflow = Path(".github/workflows/benchmarks.yml").read_text(encoding="utf-8")
+    pin = re.search(r"(?m)^ +repository: cda-tum/planar-superconducting-pd\n +ref: ([0-9a-f]{40})$", workflow)
+    if pin is None:
+        session.error("Expected a pinned benchmark checkout in benchmarks.yml")
+
+    session.install("gurobipy==14.0.0")
+    with tempfile.TemporaryDirectory(prefix="mqt-scpd-benchmarks-") as data:
+        session.run("git", "-C", data, "init", external=True)
+        session.run(
+            "git",
+            "-C",
+            data,
+            "fetch",
+            "--depth=1",
+            "https://github.com/cda-tum/planar-superconducting-pd.git",
+            pin[1],
+            external=True,
+        )
+        session.run("git", "-C", data, "checkout", "--detach", "FETCH_HEAD", external=True)
+        session.run(
+            "pytest",
+            "test/python/benchmarks/test_planned_chips.py",
+            *session.posargs,
+            "--cov-config=pyproject.toml",
+            env={"MQT_SCPD_BENCHMARKS": data, "MQT_SCPD_BENCHMARK_GUROBI": "1"},
+        )
 
 
 @nox.session(python="3.14", reuse_venv=True)
