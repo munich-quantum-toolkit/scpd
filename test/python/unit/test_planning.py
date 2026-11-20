@@ -418,9 +418,17 @@ def test_the_corridor_picture_draws_the_feedlines_of_its_assignment(run: RunDire
 
     assert assigned.feedlines
     assert routed.feedlines == assigned.feedlines
+    assert [route[0] for route in routed.corridors] == [feed for _, feed in assigned.assignments]
     assert not planning_geometry(corridor, chip, "corridor").feedlines
     with pytest.raises(PlanningError, match="not an assignment"):
         planning_geometry(corridor, chip, "corridor", assignment=run.artifact("capacity").read_bytes())
+
+
+def test_a_corridor_picture_rejects_an_assignment_with_a_different_connection_count(run: RunDirectory) -> None:
+    """A corridor picture requires one row of the assignment for each corridor."""
+    assignment = assignment_of([4], [PointT(250.0, 1600.0)], FeedlineChainT(nodes=[0], start=PortRefT(1)))
+    with pytest.raises(PlanningError, match="different numbers of connections"):
+        planning_geometry(run.artifact("corridor").read_bytes(), chip_of(run), "corridor", assignment=assignment)
 
 
 def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDirectory) -> None:

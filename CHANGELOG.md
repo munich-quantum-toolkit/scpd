@@ -12,8 +12,9 @@ releases may include breaking changes.
 
 ### Added
 
-- ✨ Add the Corridor stage to route connections through partition borders. It
-  writes `04-corridor.fb`, which `plot` and `render` can draw ([#168])
+- ✨ Add Corridor as the default final stage. It routes connections through
+  partition borders and writes `04-corridor.fb`, which `plot` and `render` can
+  draw. The plan reports a failure if any connection has no route ([#168])
   ([**@FeldmeierMichael**], [**@marcelwa**])
 - 📝 Add a reference of every `config.toml` key ([#166])
   ([**@FeldmeierMichael**])

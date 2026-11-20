@@ -345,6 +345,16 @@ INCOMPLETE_ARTIFACTS = [
         id="lattice-points",
     ),
     pytest.param(
+        wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[None], slots=[])),
+        r"corridors\[0\]: entry is missing",
+        id="missing-corridor",
+    ),
+    pytest.param(
+        wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[], slots=[None])),
+        r"slots\[0\]: entry is missing",
+        id="missing-border-slots",
+    ),
+    pytest.param(
         wrap(StageOutput.CorridorRouting, CorridorRoutingT(corridors=[CorridorT(partitions=[])], slots=[])),
         r"corridors\[0\]: crossings is missing",
         id="corridor-crossings",

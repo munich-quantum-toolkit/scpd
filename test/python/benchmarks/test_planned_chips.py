@@ -253,36 +253,44 @@ def check_the_pitch(routing: CorridorRoutingT, pitch: float) -> None:
                         )
 
 
-def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT, pitch: float) -> None:
+def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT, assignment: AssignmentT, pitch: float) -> None:
     """Every connection has a corridor, a slot carries one wire, and no two wires meet in a partition.
 
     Two wires also cross at least one crossing pitch apart.
     """
     corridors = entries(routing.corridors)
+    assert len(corridors) == len(entries(assignment.connections))
     assert all(indices(corridor.partitions) for corridor in corridors), "a connection has no corridor"
 
     taken = [(crossing.x, crossing.y) for corridor in corridors for crossing in entries(corridor.crossings)]
     assert len(set(taken)) == len(taken), "two wires cross at one slot"
 
-    borders = {tuple(sorted((border.first, border.second))) for border in entries(plan.borders)}
+    borders = entries(plan.borders)
+    offered = [0] * len(borders)
+    positions: dict[tuple[int, int], set[Point]] = {}
+    for slots in entries(routing.slots):
+        assert 0 <= slots.border < len(borders)
+        border = borders[slots.border]
+        points = entries(slots.positions)
+        offered[slots.border] += len(points)
+        pair = (min(border.first, border.second), max(border.first, border.second))
+        positions.setdefault(pair, set()).update((point.x, point.y) for point in points)
+    assert offered == [border.budget for border in borders], "a budget differs from the slots of its border"
+
     for corridor in corridors:
         partitions = indices(corridor.partitions)
         crossings = entries(corridor.crossings)
         assert len(crossings) + 1 == len(partitions)
-        for index in range(len(crossings)):
-            assert tuple(sorted(partitions[index : index + 2])) in borders, "a wire leaves into no neighbor"
+        for index, crossing in enumerate(crossings):
+            first, second = partitions[index : index + 2]
+            pair = (min(first, second), max(first, second))
+            assert (crossing.x, crossing.y) in positions.get(pair, ()), "a wire crosses outside a slot of its border"
 
     launchers = [(slot.position.x, slot.position.y) for slot in entries(plan.launchers)]
     low_x, high_x = min(x for x, _ in launchers), max(x for x, _ in launchers)
     low_y, high_y = min(y for _, y in launchers), max(y for _, y in launchers)
     assert all(low_x < x < high_x and low_y < y < high_y for x, y in taken), "a wire crosses outside the ring"
 
-    offered = [0] * len(entries(plan.borders))
-    for slots in entries(routing.slots):
-        offered[slots.border] += len(entries(slots.positions))
-    assert offered == [border.budget for border in entries(plan.borders)], (
-        "a budget differs from the slots of its border"
-    )
     check_the_pitch(routing, pitch)
 
     # A chord that runs over the end of another one, or shares an end with it, meets it although the two
@@ -349,7 +357,7 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
     assert config.rules is not None
     assert config.stages.capacity is not None
     check_the_assignment(model, assignment, config.stages.assignment.launcherTarget, config.rules.feedlineTerminations)
-    check_the_corridors(routing, plan, config.stages.capacity.crossingPitch)
+    check_the_corridors(routing, plan, assignment, config.stages.capacity.crossingPitch)
     if chip in OBJECTIVES:
         assert assignment.objective == pytest.approx(OBJECTIVES[chip], abs=1e-9)
 

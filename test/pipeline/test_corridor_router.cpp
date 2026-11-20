@@ -29,6 +29,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -43,6 +44,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -61,8 +63,7 @@ struct Planned {
   AssignmentT assignment;
 };
 
-Planned planMini() {
-  const auto config = test::miniConfig();
+Planned planMini(const ConfigT& config = test::miniConfig()) {
   Planned planned{
       .chip = test::miniChip(config), .capacity = {}, .assignment = {}};
   planned.capacity = makeWatershedPlanner()->run(planned.chip, config, {});
@@ -773,6 +774,21 @@ TEST(CorridorRouter, OffersEveryBorderAsManySlotsAsItsBudget) {
   }
 }
 
+TEST(CorridorRouter, OffersSlotsWithAPitchSmallerThanACell) {
+  auto config = test::miniConfig();
+  config.stages->capacity->crossing_pitch = 1.0e-20;
+  const auto planned = planMini(config);
+
+  const auto routing = routeMini(planned, {}, config);
+
+  ASSERT_FALSE(routing.slots.empty());
+  for (const auto& slots : routing.slots) {
+    EXPECT_EQ(slots->positions.size(),
+              planned.capacity.borders.at(slots->border)->budget);
+  }
+  expectOneWirePerSlot(routing);
+}
+
 TEST(CorridorRouter, RoutesNoWireWithoutAFeedPoint) {
   auto planned = planMini();
   planned.assignment.feeds.clear();
@@ -908,6 +924,57 @@ TEST(CorridorRouter, RefusesAnAssignmentThatNamesAPortTheChipDoesNotCarry) {
                         ports, ports));
 }
 
+TEST(CorridorRouter, RefusesABorderSampleWithANonfiniteCoordinate) {
+  auto planned = planMini();
+  ASSERT_FALSE(planned.capacity.borders.empty());
+  auto& samples = planned.capacity.borders.front()->samples;
+  ASSERT_FALSE(samples.empty());
+  samples.front() =
+      Point(std::numeric_limits<double>::quiet_NaN(), samples.front().y());
+
+  EXPECT_NE(refusalOf(planned).find("border sample"), std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesAnOutlineOutsideTheDetailGrid) {
+  auto planned = planMini();
+  ASSERT_FALSE(planned.capacity.partitions.empty());
+  auto& outlines = planned.capacity.partitions.front()->outlines;
+  ASSERT_FALSE(outlines.empty());
+  auto& vertices = outlines.front()->vertices;
+  ASSERT_FALSE(vertices.empty());
+  vertices.front() =
+      Point(std::numeric_limits<double>::max(), vertices.front().y());
+
+  EXPECT_NE(refusalOf(planned).find("partition outline"), std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesLabelsOutsideTheSupportedRange) {
+  auto planned = planMini();
+  const auto offset =
+      static_cast<std::uint32_t>(std::numeric_limits<std::uint16_t>::max()) +
+      1U;
+  ASSERT_FALSE(planned.capacity.partitions.empty());
+  auto& label = planned.capacity.partitions.front()->label;
+  const auto original = label;
+  for (const auto invalid : {0U, 1U, offset - 1U, original + offset}) {
+    label = invalid;
+    EXPECT_NE(refusalOf(planned).find("partition label"), std::string::npos)
+        << "label " << invalid;
+  }
+
+  label = original;
+  ASSERT_FALSE(planned.capacity.borders.empty());
+  planned.capacity.borders.front()->first += offset;
+  EXPECT_NE(refusalOf(planned).find("partition label"), std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesZeroRounds) {
+  const auto planned = planMini();
+
+  EXPECT_NE(refusalOf(planned, sweepConfig(0, 4)).find("rounds"),
+            std::string::npos);
+}
+
 TEST(CorridorRouter, RefusesAPartitionThatFallsApartIntoPieces) {
   // The search treats a partition as one region. Two pieces under one label
   // would let a wire enter one piece and leave from the other, over a gap
@@ -961,6 +1028,43 @@ TEST(CorridorRouter, CompletesTheProgressOfEveryRoundAndTheFreeSlots) {
     EXPECT_GT(found->second.second, 0U) << task;
     EXPECT_EQ(found->second.first, found->second.second) << task;
   }
+}
+
+TEST(CorridorRouter, ReportsProgressDuringASearch) {
+  auto planned = planMini();
+  const auto routed = routeMini(planned);
+  const auto crossing =
+      std::ranges::find_if(routed.corridors, [](const auto& corridor) {
+        return !corridor->crossings.empty() &&
+               corridor->partitions.front() != corridor->partitions.back();
+      });
+  ASSERT_NE(crossing, routed.corridors.end());
+  const auto index =
+      static_cast<std::size_t>(crossing - routed.corridors.begin());
+  auto connection = std::move(planned.assignment.connections[index]);
+  const auto feed = planned.assignment.feeds[index];
+  planned.assignment.connections.clear();
+  planned.assignment.connections.push_back(std::move(connection));
+  planned.assignment.feeds = {feed};
+
+  bool started = false;
+  Report::Sinks sinks;
+  sinks.progress = [&](const std::string_view task, std::string_view,
+                       const std::uint64_t done, std::uint64_t) {
+    if (task != "round 1 forward" || done != 0) {
+      return;
+    }
+    if (started) {
+      throw std::runtime_error("stop search");
+    }
+    started = true;
+    // Wait until the report will deliver the next update for this task.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  };
+
+  EXPECT_THROW(
+      static_cast<void>(routeMini(planned, Report{Detail::Summary, sinks})),
+      std::runtime_error);
 }
 
 TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {

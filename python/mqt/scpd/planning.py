@@ -618,15 +618,34 @@ def _corridor(
     """Fill the layers a corridor routing carries.
 
     The routing holds one corridor per connection of the assignment, in its order, so the
-    assignment names the port each corridor approaches.
+    assignment supplies the exact feed and the target port for each corridor.
+
+    Raises:
+        PlanningError: If the routing and assignment have different numbers of connections.
     """
+    routes = routing.corridors or []
+    connections: list[Any] = assignment.connections or [] if assignment is not None else []
+    if assignment is not None and len(connections) != len(routes):
+        msg = "the corridor routing and assignment have different numbers of connections"
+        raise PlanningError(msg)
+
     for border in _entries(routing.slots):
         geometry.slots.extend(_point(position) for position in _entries(border.positions))
-    connections: list[Any] = list(assignment.connections or []) if assignment is not None else []
-    for index, corridor in enumerate(routing.corridors or []):
-        if corridor is None or not _indices(corridor.partitions) or corridor.source is None or corridor.target is None:
+    feeds = assignment.feeds or [] if assignment is not None else []
+    for index, corridor in enumerate(routes):
+        if (
+            corridor is None
+            or corridor.partitions is None
+            or len(corridor.partitions) == 0
+            or corridor.source is None
+            or corridor.target is None
+        ):
             continue
-        route = [_point(corridor.source)]
+        source = _point(corridor.source)
+        feed = feeds[index] if index < len(feeds) else None
+        route = [source]
+        if feed is not None and (position := _point(feed)) != source:
+            route.insert(0, position)
         route.extend(_point(crossing) for crossing in _entries(corridor.crossings))
         route.append(_point(corridor.target))
         geometry.corridors.append(route)
@@ -697,7 +716,8 @@ def planning_geometry(
         The geometry, in layout units.
 
     Raises:
-        PlanningError: If the stage is not a planning stage, or the artifact is not its output.
+        PlanningError: If the stage or its artifact is invalid, or the Corridor artifact and
+            the assignment have different numbers of connections.
     """
     if stage not in PLANNING_STAGES:
         msg = f"'{stage}' is not a planning stage; the planning stages are {', '.join(PLANNING_STAGES)}"

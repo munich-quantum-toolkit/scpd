@@ -269,7 +269,10 @@ def _check_list(items: list | None, name: str, check, problems: list[str]) -> No
         problems.append(f"{name} is missing")
         return
     for index, item in enumerate(items):
-        problems.extend(f"{name}[{index}]: {problem}" for problem in check(item))
+        if item is None:
+            problems.append(f"{name}[{index}]: entry is missing")
+        else:
+            problems.extend(f"{name}[{index}]: {problem}" for problem in check(item))
 
 
 def _connection_problems(connection: ConnectionT) -> list[str]:

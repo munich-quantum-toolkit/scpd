@@ -91,12 +91,13 @@ mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 Capacity shows partition borders. Global shows the Hanan lattices and selected
 inner wires. Assignment adds the feed points and feedline chains. Dashed lines
 connect ring ports to their feeds. A square marks a chain termination. All views
-use the blocked cells saved by Capacity. Corridor also shows the routes, their
-illustrative approaches to the ports, and the crossing slots. In a browser, use
-the SVG's **Layers** panel to show or hide individual layers.
+use the blocked cells saved by Capacity. Corridor shows routes from the exact
+feed points to the target cells, with an illustrative approach to each port. It
+also shows the available crossing slots. In a browser, use the SVG's **Layers**
+panel to show or hide individual layers.
 
-SVGs omit gates. The Capacity and Assignment views also omit the borders of
-fully enclosed partitions.
+SVGs omit gates. The Capacity, Assignment, and Corridor views also omit the
+borders of fully enclosed partitions.
 
 See {doc}`terminal_output` for destinations, failure recovery, and verbosity.
 

@@ -35,6 +35,7 @@
 #include <ranges>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -96,6 +97,16 @@ struct Chord {
   std::size_t owner = 0;
 };
 
+/// The current sweep step, repeated during a long search to check for stops.
+struct SearchProgress {
+  const Report& report;
+  std::string_view task;
+  std::size_t done;
+  std::size_t total;
+
+  void update() const { report.progress(task, "", done, total); }
+};
+
 /// A cell coordinate back on the grid it came from.
 ///
 /// The plan carries its border samples in layout units, and the way back
@@ -107,6 +118,32 @@ struct Chord {
 /// seeing it.
 [[nodiscard]] double onGrid(const double value) {
   return std::round(value * 2.0) / 2.0;
+}
+
+/// Checks a capacity label before the router uses it.
+[[nodiscard]] PartitionLabel checkedLabel(const std::uint32_t label) {
+  if (label < grid::FIRST_PARTITION_LABEL ||
+      label >= std::numeric_limits<PartitionLabel>::max()) {
+    throw std::invalid_argument(
+        std::format("partition label {} of the capacity plan is outside the "
+                    "supported range",
+                    label));
+  }
+  return static_cast<PartitionLabel>(label);
+}
+
+/// Converts a point from a capacity artifact before it can reach a grid index.
+[[nodiscard]] grid::Point checkedCorner(const grid::GridMetrics& grid,
+                                        const fbg::Point& point,
+                                        const std::string_view kind) {
+  const auto corner = grid::layoutToCorner(grid, point);
+  // Leave room for round-off at the grid edges.
+  if (!(corner.x() > -0.5 && corner.x() < grid.width + 0.5 &&
+        corner.y() > -0.5 && corner.y() < grid.height + 0.5)) {
+    throw std::invalid_argument(std::format(
+        "the capacity plan has a {} outside the detail grid", kind));
+  }
+  return corner;
 }
 
 /// Which side of the line through `a` and `b` the point `c` lies on.
@@ -214,13 +251,12 @@ public:
     const auto& detail = scene.detail;
     for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
       const auto& border = *plan.borders[index];
-      grid::PartitionBorder geometry{
-          .first = static_cast<PartitionLabel>(border.first),
-          .second = static_cast<PartitionLabel>(border.second),
-          .samples = {}};
+      grid::PartitionBorder geometry{.first = checkedLabel(border.first),
+                                     .second = checkedLabel(border.second),
+                                     .samples = {}};
       geometry.samples.reserve(border.samples.size());
       for (const auto& sample : border.samples) {
-        const auto corner = grid::layoutToCorner(detail, sample);
+        const auto corner = checkedCorner(detail, sample, "border sample");
         geometry.samples.emplace_back(onGrid(corner.x()), onGrid(corner.y()));
       }
       const auto slots = crossingSlots(geometry, scene, pitch);
@@ -273,10 +309,24 @@ public:
   /// often finds a second-best way, but not always: a slot that every way of
   /// the wire needs is set aside too.
   [[nodiscard]] std::optional<Route>
-  route(const Request& request, const double displacement = 0.0) const {
+  route(const Request& request, const SearchProgress& progress,
+        const double displacement = 0.0) const {
+    if (request.feedPartition == LABEL_NONE ||
+        request.targetPartition == LABEL_NONE) {
+      return std::nullopt;
+    }
+    // A clear direct route has no slot cost and is already the shortest.
+    if (request.feedPartition == request.targetPartition &&
+        clear(Chord{.from = request.feed,
+                    .to = request.target,
+                    .owner = request.connection},
+              request.feedPartition)) {
+      return Route{.slots = {}, .partitions = {request.feedPartition}};
+    }
+
     std::vector<bool> aside(slotList.size(), false);
     for (std::uint32_t attempt = 0; attempt <= UNSOUND_RETRIES; ++attempt) {
-      auto found = search(request, displacement, aside);
+      auto found = search(request, displacement, aside, progress);
       if (!found.has_value()) {
         return std::nullopt;
       }
@@ -398,29 +448,30 @@ private:
   /// does when it passes the corner from one partition into the next.
   void findNearby(const double pitch) {
     nearbySlots.assign(slotList.size(), {});
-    // The slots, in layout units, binned into squares one pitch wide, so that
-    // a slot is compared only with the slots of its own square and the eight
-    // around it.
-    const auto squareOf = [pitch](const double coordinate) {
-      return static_cast<std::int64_t>(std::floor(coordinate / pitch));
+    // Keep the bucket indices bounded even when the pitch is tiny.
+    const auto width = std::max(pitch, detailGrid.cellWidth);
+    const auto height = std::max(pitch, detailGrid.cellHeight);
+    const auto bucketOf = [&](const fbg::Point& position) {
+      return std::pair{static_cast<std::int64_t>(std::floor(
+                           (position.x() - detailGrid.origin.x()) / width)),
+                       static_cast<std::int64_t>(std::floor(
+                           (position.y() - detailGrid.origin.y()) / height))};
     };
     std::vector<fbg::Point> layout;
     layout.reserve(slotList.size());
     std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::size_t>>
-        squares;
+        buckets;
     for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
       layout.push_back(layoutOf(slot));
-      squares[{squareOf(layout.back().x()), squareOf(layout.back().y())}]
-          .push_back(slot);
+      buckets[bucketOf(layout.back())].push_back(slot);
     }
     for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
       const auto& here = layout[slot];
-      const auto column = squareOf(here.x());
-      const auto row = squareOf(here.y());
+      const auto [column, row] = bucketOf(here);
       for (std::int64_t dy = -1; dy <= 1; ++dy) {
         for (std::int64_t dx = -1; dx <= 1; ++dx) {
-          const auto found = squares.find({column + dx, row + dy});
-          if (found == squares.end()) {
+          const auto found = buckets.find({column + dx, row + dy});
+          if (found == buckets.end()) {
             continue;
           }
           for (const auto other : found->second) {
@@ -464,12 +515,7 @@ private:
 
   [[nodiscard]] std::optional<Route>
   search(const Request& request, const double displacement,
-         const std::vector<bool>& aside) const {
-    if (request.feedPartition == LABEL_NONE ||
-        request.targetPartition == LABEL_NONE) {
-      return std::nullopt;
-    }
-
+         const std::vector<bool>& aside, const SearchProgress& progress) const {
     // A state is a slot together with the partition the wire carries on
     // into, because a slot joins two partitions and the one a wire came from
     // decides where it may go next.
@@ -480,6 +526,13 @@ private:
     using Entry = std::pair<double, std::size_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> queue;
 
+    std::size_t work = 0;
+    const auto checkpoint = [&] {
+      constexpr std::size_t interval = 1024;
+      if (work++ % interval == 0) {
+        progress.update();
+      }
+    };
     const auto expand = [&](const Place& place, const PartitionLabel partition,
                             const double cost, const std::size_t parent) {
       // The partition the wire just left. Turning straight back into it lets
@@ -490,6 +543,7 @@ private:
                               ? LABEL_NONE
                               : slotList[parent / 2].beyond(partition);
       for (const auto slot : slotsOf(partition)) {
+        checkpoint();
         const auto next = slotList[slot].beyond(partition);
         if (aside[slot] || next == behind) {
           continue;
@@ -517,23 +571,16 @@ private:
       }
     };
 
-    // Reaching the target inside the partition the wire is fed in is a whole
-    // route, and it needs no slot.
-    auto shortest = UNREACHED;
+    // A blocked direct route still competes when displacement is allowed.
+    auto shortest =
+        request.feedPartition == request.targetPartition && displacement > 0.0
+            ? distance(request.feed, request.target) + displacement
+            : UNREACHED;
     auto arrival = NO_STATE;
-    if (request.feedPartition == request.targetPartition) {
-      const auto direct = clear(Chord{.from = request.feed,
-                                      .to = request.target,
-                                      .owner = request.connection},
-                                request.feedPartition);
-      if (direct || displacement > 0.0) {
-        shortest = distance(request.feed, request.target) +
-                   (direct ? 0.0 : displacement);
-      }
-    }
 
     expand(request.feed, request.feedPartition, 0.0, NO_STATE);
     while (!queue.empty()) {
+      checkpoint();
       const auto [estimate, state] = queue.top();
       queue.pop();
       if (estimate >= shortest) {
@@ -703,6 +750,9 @@ struct Sweeps {
     sweeps.rounds = params.rounds;
     sweeps.askedRelaxation = params.max_relaxation;
   }
+  if (sweeps.rounds == 0) {
+    throw std::invalid_argument("corridor rounds must be at least 1");
+  }
   const auto limit =
       connections < 2 ? 0 : std::max<std::size_t>(1, (connections - 1) / 2);
   sweeps.maxRelaxation = static_cast<std::uint32_t>(
@@ -767,11 +817,12 @@ void requireSameGrid(const CapacityPlanT& plan,
   std::vector<grid::PartitionOutline> outlines;
   for (const auto& partition : plan.partitions) {
     for (const auto& ring : partition->outlines) {
-      grid::PartitionOutline outline{
-          .label = static_cast<PartitionLabel>(partition->label), .ring = {}};
+      grid::PartitionOutline outline{.label = checkedLabel(partition->label),
+                                     .ring = {}};
       outline.ring.reserve(ring->vertices.size());
       for (const auto& vertex : ring->vertices) {
-        outline.ring.push_back(grid::layoutToCorner(detail, vertex));
+        outline.ring.push_back(
+            checkedCorner(detail, vertex, "partition outline"));
       }
       outlines.push_back(std::move(outline));
     }
@@ -863,6 +914,7 @@ public:
                                      const AssignmentT& assignment,
                                      const ConfigT& config,
                                      const Report& report) const override {
+    const auto sweeps = sweepsOf(config, assignment.connections.size());
     report.progress("rasterizing the chip", "", 0, 0);
     const auto scene = buildScene(chip, config);
     report.progress("rasterizing the partitions", "", 0, 0);
@@ -879,7 +931,6 @@ public:
 
     Corridors corridors(capacity, scene, crossingPitch(config));
 
-    const auto sweeps = sweepsOf(config, requests.size());
     if (report.wants(Detail::Steps)) {
       report.line(
           Detail::Steps,
@@ -913,9 +964,10 @@ public:
       const auto name = std::format("round {} {}", round + 1,
                                     forward ? "forward" : "backward");
       for (std::size_t step = 0; step < requests.size(); ++step) {
-        report.progress(name, "", step, requests.size());
+        const SearchProgress progress{report, name, step, requests.size()};
+        progress.update();
         const auto index = forward ? step : requests.size() - 1 - step;
-        reroute(corridors, requests, routes, index, forward, sweeps);
+        reroute(corridors, requests, routes, index, forward, sweeps, progress);
       }
       report.progress(name, "", requests.size(), requests.size());
       ++rounds;
@@ -950,11 +1002,14 @@ public:
     // can only lower the fails.
     std::size_t placed = 0;
     for (std::size_t index = 0; index < requests.size(); ++index) {
-      report.progress("free slots", "", index, requests.size());
+      const SearchProgress progress{report, "free slots", index,
+                                    requests.size()};
+      progress.update();
       if (routes[index].has_value()) {
         continue;
       }
-      if (auto found = corridors.route(requests[index]); found.has_value()) {
+      if (auto found = corridors.route(requests[index], progress);
+          found.has_value()) {
         corridors.commit(requests[index], *found);
         routes[index] = std::move(found);
         ++placed;
@@ -1061,7 +1116,7 @@ private:
                       const std::vector<Request>& requests,
                       std::vector<std::optional<Route>>& routes,
                       const std::size_t index, const bool forward,
-                      const Sweeps& sweeps) {
+                      const Sweeps& sweeps, const SearchProgress& progress) {
     const auto& request = requests[index];
     if (request.feedPartition == LABEL_NONE ||
         request.targetPartition == LABEL_NONE) {
@@ -1072,7 +1127,7 @@ private:
       corridors.withdraw(request, *routes[index]);
       routes[index].reset();
     }
-    if (auto found = corridors.route(request); found.has_value()) {
+    if (auto found = corridors.route(request, progress); found.has_value()) {
       corridors.commit(request, *found);
       routes[index] = std::move(found);
       return;
@@ -1092,12 +1147,13 @@ private:
       const auto neighbor = static_cast<std::size_t>(
           (((static_cast<std::int64_t>(index) + offset) % total) + total) %
           total);
-      if (routes[neighbor].has_value()) {
-        corridors.withdraw(requests[neighbor], *routes[neighbor]);
-        ripped.emplace_back(neighbor, *routes[neighbor]);
-        routes[neighbor].reset();
+      if (!routes[neighbor].has_value()) {
+        continue;
       }
-      if (auto found = corridors.route(request); found.has_value()) {
+      corridors.withdraw(requests[neighbor], *routes[neighbor]);
+      ripped.emplace_back(neighbor, std::move(*routes[neighbor]));
+      routes[neighbor].reset();
+      if (auto found = corridors.route(request, progress); found.has_value()) {
         corridors.commit(request, *found);
         routes[index] = std::move(found);
         return;
@@ -1120,7 +1176,8 @@ private:
     for (std::uint32_t attempt = 0; attempt < sweeps.maxRelaxation; ++attempt) {
       // The way is asked again after every wire that comes out, because what
       // stands in the way changes as they go.
-      wanted = corridors.route(request, corridors.displacementPrice());
+      wanted =
+          corridors.route(request, progress, corridors.displacementPrice());
       if (!wanted.has_value()) {
         break;
       }
@@ -1141,7 +1198,7 @@ private:
       corridors.withdraw(requests[*blocker], *routes[*blocker]);
       displaced.emplace_back(*blocker, *routes[*blocker]);
       routes[*blocker].reset();
-      if (auto found = corridors.route(request); found.has_value()) {
+      if (auto found = corridors.route(request, progress); found.has_value()) {
         corridors.commit(request, *found);
         routes[index] = std::move(found);
         return;
