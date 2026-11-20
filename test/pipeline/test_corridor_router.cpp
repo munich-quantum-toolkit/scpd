@@ -870,6 +870,14 @@ TEST(CorridorRouter, RefusesAPlanMadeOnAnotherDetailGrid) {
   EXPECT_NE(refusalOf(planned, config).find("detail grid"), std::string::npos);
 }
 
+TEST(CorridorRouter, RefusesABlockedMaskThatDoesNotMatchTheChip) {
+  auto planned = planMini();
+  ASSERT_FALSE(planned.capacity.blocked_words.empty());
+  planned.capacity.blocked_words.front() ^= 1U;
+
+  EXPECT_NE(refusalOf(planned).find("blocked cells"), std::string::npos);
+}
+
 TEST(CorridorRouter, RefusesAPlanMadeWithAnotherCrossingPitch) {
   // A border then offers another number of slots than its budget, and the
   // corridors would no longer keep to what the plan promised.

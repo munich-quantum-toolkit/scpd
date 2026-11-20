@@ -65,20 +65,24 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
     chip = decode_chip(load_chip(load_config(config_path), config_path))
     geometry = PlanningGeometry(
         partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
+        inner=[((0.0, 0.0), (50.0, 50.0))],
+        launchers=[(50.0, 50.0)],
         corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
         slots=[(50.0, 50.0)],
     )
 
     summary = write_layout(chip, tmp_path / "plan.gds", planning=geometry)
 
-    assert summary.planning == 3
+    assert summary.planning == 5
     assert min(number for number, _, _ in PLANNING_LAYERS.values()) >= 20
     layout = kdb.Layout()
     layout.read(str(summary.path))
     top = layout.top_cell()
-    for name in ("partitions", "corridors", "slots"):
+    for name in ("partitions", "inner", "launchers"):
         number, datatype, _ = PLANNING_LAYERS[name]
         assert top.shapes(layout.layer(number, datatype)).size() == 1, name
+    assert top.shapes(layout.layer(30, 0)).size() == 1
+    assert top.shapes(layout.layer(31, 0)).size() == 1
     assert top.shapes(layout.layer(*OBSTACLE_LAYER)).size() == 4
 
 

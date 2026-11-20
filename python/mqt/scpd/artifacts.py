@@ -256,7 +256,7 @@ def _corridor_problems(corridor: CorridorT) -> list[str]:
     # names neither.
     if partitions != crossings + 1 and (partitions, crossings) != (0, 0):
         return [f"names {_counted(partitions, 'partition')} and {_counted(crossings, 'crossing')}"]
-    return []
+    return _missing(corridor, (("source", "source"), ("target", "target"))) if partitions else []
 
 
 def _border_slots_problems(slots: BorderSlotsT) -> list[str]:

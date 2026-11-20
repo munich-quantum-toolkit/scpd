@@ -213,7 +213,8 @@ with a minimum cap of one. Set `max_relaxation = 0` to disable route removal and
 slot cost increases.
 
 Corridor checks wire intersections with straight segments inside each partition.
-This check is exact for convex partitions.
+This check is exact for convex partitions. Routing can leave a connection
+unrouted even if a feasible route exists.
 
 ## `[run]`
 

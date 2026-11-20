@@ -483,19 +483,25 @@ def test_plan_stops_after_the_step_it_is_told(tmp_path: Path, capsys: pytest.Cap
     assert untimed(capsys.readouterr().out, run)[-1] == "✓ 2 stages · stopped after global · fails 0"
 
 
-def test_plan_that_ends_with_fails_exits_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(("stage", "count"), [("global", 2), ("corridor", 4)])
+def test_plan_that_ends_with_fails_exits_with_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stage: str, count: int
+) -> None:
     """A run whose stages all finish but leave fails ends with a cross and exit code 1."""
-    config = stopping_after(tmp_path, "corridor")
-    config.write_text(
-        config.read_text(encoding="utf-8") + "\n[stages.capacity]\ncrossing_pitch = 1500.0\n", encoding="utf-8"
-    )
+    config = stopping_after(tmp_path, stage)
+    text = config.read_text(encoding="utf-8")
+    if stage == "global":
+        text = text.replace("min_wire_spacing = 185.0", "min_wire_spacing = 800.0")
+    else:
+        text += "\n[stages.capacity]\ncrossing_pitch = 1500.0\n"
+    config.write_text(text, encoding="utf-8")
     run = tmp_path / "run"
 
     assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
 
-    assert (run / "04-corridor.fb").is_file()
+    assert RunDirectory(run).artifact(stage).is_file()
     assert re.fullmatch(
-        r"✗ 4 stages · stopped after corridor · fails [1-9]\d*", untimed(capsys.readouterr().out, run)[-1]
+        rf"✗ {count} stages · stopped after {stage} · fails [1-9]\d*", untimed(capsys.readouterr().out, run)[-1]
     )
 
 
@@ -867,9 +873,9 @@ def test_publication_keeps_moves_on_the_run_filesystem(
     assert (run / "01-capacity.fb").is_file()
 
 
-@pytest.mark.parametrize("resume", [True, False], ids=["resumed-stage", "fresh-plan"])
+@pytest.mark.parametrize("stage", ["assign", "corridor", None], ids=["assign", "corridor", "fresh-plan"])
 def test_planning_recovers_interrupted_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, resume: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str | None
 ) -> None:
     """A process interruption after a rename leaves the prior run available to the next writer."""
     run = tmp_path / "run"
@@ -889,8 +895,10 @@ def test_planning_recovers_interrupted_publication(
             plan(run)
         assert info.value.code == 23
 
-    arguments = ["--stage", "assign"] if resume else ["-c", str(run / "config.toml")]
+    arguments = ["--stage", stage] if stage is not None else ["-c", str(run / "config.toml")]
     assert main(["plan", "-o", str(run), "--no-progress", *arguments]) == 0
+    if stage == "assign":
+        del before["04-corridor.fb"], before["04-corridor.inputs.json"]
     assert {path.name: path.read_bytes() for path in run.iterdir()} == before
 
 
@@ -1276,6 +1284,8 @@ def test_a_resumed_step_needs_a_reachable_solver_only_where_it_solves(
     capsys.readouterr()
     assignment = run / "03-assign.fb"
     previous = assignment.read_bytes()
+    global_artifact = run / "02-global.fb"
+    routing = global_artifact.read_bytes()
     monkeypatch.setenv("SCPD_SOLVER", "gurobi")
     monkeypatch.setitem(sys.modules, "gurobipy", None)
     problem = "SCPD_SOLVER asks for gurobi, but gurobipy is not installed"
@@ -1283,6 +1293,7 @@ def test_a_resumed_step_needs_a_reachable_solver_only_where_it_solves(
     assert main(["plan", "-o", str(run), "--stage", step, "--no-progress"]) == code
 
     assert (problem in capsys.readouterr().err) == (code == 1)
+    assert global_artifact.read_bytes() == routing
     if step == "global":
         assert not assignment.exists()
     else:

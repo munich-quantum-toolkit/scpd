@@ -342,9 +342,12 @@ def test_stage_problems_are_named(text: str, message: str) -> None:
 def test_shipped_stage_sections_carry_only_what_differs_from_the_defaults() -> None:
     """Strict loading rejects a stage or run key written out at its default, and empty sections."""
     parse_config(WITH_STAGES, strict=True)
-    assert shipped_config_problems({"stages": {"corridor": {"rounds": 12}, "capacity": {}}}) == [
+    assert shipped_config_problems({
+        "stages": {"corridor": {"rounds": 12}, "capacity": {}, "solver": {"threads": 0}}
+    }) == [
         "[stages.capacity] is empty; remove it",
         "[stages.corridor] rounds is set to its default 12; remove it",
+        "[stages.solver] threads is set to its default 0; remove it",
     ]
     assert shipped_config_problems({"stages": {"global": {"internal_bridges": False}}}) == [
         "[stages.global] internal_bridges is set to its default false; remove it",

@@ -434,16 +434,24 @@ def test_a_step_refuses_an_earlier_artifact_made_from_another_chip(tmp_path: Pat
         run_through(directory, ["global"])
 
 
-def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("step", "replacement"),
+    [
+        ("assign", '[stages.assignment]\nassigner = "ordered-milp"'),
+        ("corridor", "[stages.corridor]\nrounds = 2\n\n[stages.assignment]"),
+    ],
+)
+def test_a_step_reruns_after_its_own_section_changed(tmp_path: Path, step: str, replacement: str) -> None:
     """A change to a section that only the resumed step reads is the reason to run that step again."""
     directory = RunDirectory(tmp_path / "run")
     directory.prepare(CONFIG)
     run_through(directory, list(STEPS))
-    edit_config(directory, "[stages.assignment]", "[stages.corridor]\nrounds = 2\n\n[stages.assignment]")
+    edit_config(directory, "[stages.assignment]", replacement)
 
-    run_through(directory, ["corridor"])
+    run_through(directory, [step])
 
-    assert directory.artifact("corridor").is_file()
+    assert directory.artifact(step).is_file()
+    assert directory.artifact("corridor").is_file() == (step == "corridor")
 
 
 def test_a_step_resumes_under_another_solver_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

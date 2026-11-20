@@ -34,7 +34,7 @@ class BorderSlots(object):
         return cls.GetRootAs(buf, offset)
     @classmethod
     def BorderSlotsBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
-        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x31", size_prefixed=size_prefixed)
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x32", size_prefixed=size_prefixed)
 
     # BorderSlots
     def Init(self, buf: bytes, pos: int):

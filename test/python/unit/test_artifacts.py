@@ -352,6 +352,26 @@ INCOMPLETE_ARTIFACTS = [
     pytest.param(
         wrap(
             StageOutput.CorridorRouting,
+            CorridorRoutingT(
+                corridors=[CorridorT(partitions=[2], crossings=[], target=PointT(x=1.0, y=2.0))], slots=[]
+            ),
+        ),
+        r"corridors\[0\]: source is missing",
+        id="corridor-source",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.CorridorRouting,
+            CorridorRoutingT(
+                corridors=[CorridorT(partitions=[2], crossings=[], source=PointT(x=1.0, y=2.0))], slots=[]
+            ),
+        ),
+        r"corridors\[0\]: target is missing",
+        id="corridor-target",
+    ),
+    pytest.param(
+        wrap(
+            StageOutput.CorridorRouting,
             CorridorRoutingT(corridors=[CorridorT(partitions=[2, 3], crossings=[])], slots=[]),
         ),
         r"corridors\[0\]: names 2 partitions and 0 crossings",

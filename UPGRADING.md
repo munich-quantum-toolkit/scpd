@@ -26,7 +26,8 @@ Keep existing `SCP2` Capacity artifacts. Regenerate earlier `SCP2` Global and
 Assignment placeholders from the original configuration and chip. To add
 Corridor to an existing run with current artifacts, run
 `mqt-scpd plan -o <run-dir> --stage corridor`. Set `[run] stop_after = "assign"`
-to keep Assignment as the last stage of a full run.
+to keep Assignment as the last stage of a full run. `plan` exits with code 1 if
+Corridor leaves any connection unrouted.
 
 Assignment uses a sliding window to enforce the feedline utilization limit. The
 bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning

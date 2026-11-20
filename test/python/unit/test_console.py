@@ -131,10 +131,12 @@ def test_the_closing_line_names_a_failed_stage() -> None:
 def test_the_closing_line_counts_the_fails_of_every_stage() -> None:
     """The fails of the stages that report them add up."""
     console, out, _ = make()
+    with console.stage("global") as stage:
+        stage.result([], fails=1)
     with console.stage("corridor") as stage:
         stage.result([], fails=2)
     console.closing(stopped_after="corridor")
-    assert out.getvalue().splitlines()[-1] == "✗ 1 stage · 0.00s · stopped after corridor · fails 2"
+    assert out.getvalue().splitlines()[-1] == "✗ 2 stages · 0.00s · stopped after corridor · fails 3"
 
 
 def test_a_long_line_keeps_its_time_after_two_spaces() -> None:
@@ -310,7 +312,7 @@ def test_color_marks_a_verdict_and_dims_a_step() -> None:
     with console.stage("corridor") as stage:
         stage.entry(0, "round 1 forward", [Figure("fails 2", "bad")])
         stage.entry(0, "round 2 backward", [Figure("fails 0", "good")])
-        stage.line(1, "rounds 2 · max relaxation 30")
+        stage.line(1, "rounds 2 · max relaxation 1 of 4")
     text = out.getvalue()
     assert "\x1b[31mfails 2" in text
     assert "\x1b[32mfails 0" in text

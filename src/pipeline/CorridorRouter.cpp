@@ -490,7 +490,12 @@ private:
                               ? LABEL_NONE
                               : slotList[parent / 2].beyond(partition);
       for (const auto slot : slotsOf(partition)) {
-        if (aside[slot] || slotList[slot].beyond(partition) == behind) {
+        const auto next = slotList[slot].beyond(partition);
+        if (aside[slot] || next == behind) {
+          continue;
+        }
+        const auto state = stateOf(slot, next);
+        if (closed[state]) {
           continue;
         }
         const auto blocked = heldByAnother(slot, request.connection) ||
@@ -501,7 +506,6 @@ private:
         if (blocked && displacement <= 0.0) {
           continue;
         }
-        const auto state = stateOf(slot, slotList[slot].beyond(partition));
         const auto step = cost + distance(place, slotList[slot].place) +
                           slotHistory[slot] + (blocked ? displacement : 0.0);
         if (step < best[state]) {
@@ -532,7 +536,10 @@ private:
     while (!queue.empty()) {
       const auto [estimate, state] = queue.top();
       queue.pop();
-      if (closed[state] || estimate >= shortest) {
+      if (estimate >= shortest) {
+        break;
+      }
+      if (closed[state]) {
         continue;
       }
       closed[state] = true;
@@ -860,6 +867,11 @@ public:
     const auto scene = buildScene(chip, config);
     report.progress("rasterizing the partitions", "", 0, 0);
     requireSameGrid(capacity, scene.detail);
+    if (capacity.blocked_words != scene.blocked.words()) {
+      throw std::invalid_argument(
+          "the blocked cells of the capacity plan do not match the chip and "
+          "configuration; run the capacity step again");
+    }
     requirePortsOfChip(assignment, chip);
     const auto labels = labelsOf(capacity, scene);
 
@@ -1051,6 +1063,10 @@ private:
                       const std::size_t index, const bool forward,
                       const Sweeps& sweeps) {
     const auto& request = requests[index];
+    if (request.feedPartition == LABEL_NONE ||
+        request.targetPartition == LABEL_NONE) {
+      return;
+    }
     const auto before = routes[index];
     if (routes[index].has_value()) {
       corridors.withdraw(request, *routes[index]);

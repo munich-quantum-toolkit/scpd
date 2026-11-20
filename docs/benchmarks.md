@@ -92,8 +92,8 @@ Capacity shows partition borders. Global shows the Hanan lattices and selected
 inner wires. Assignment adds the feed points and feedline chains. Dashed lines
 connect ring ports to their feeds. A square marks a chain termination. All views
 use the blocked cells saved by Capacity. Corridor also shows the routes, their
-approaches to the ports, and the crossing slots. In a browser, use the SVG's
-**Layers** panel to show or hide individual layers.
+illustrative approaches to the ports, and the crossing slots. In a browser, use
+the SVG's **Layers** panel to show or hide individual layers.
 
 SVGs omit gates. The Capacity and Assignment views also omit the borders of
 fully enclosed partitions.
