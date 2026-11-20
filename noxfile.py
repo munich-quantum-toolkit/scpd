@@ -119,8 +119,8 @@ def _run_tests(
 @nox.session(python=PYTHON_ALL_VERSIONS, reuse_venv=True, default=True)
 def tests(session: nox.Session) -> None:
     """Run the test suite."""
-    _run_tests(session)
     if os.environ.get("GITHUB_ACTIONS") != "true" or session.python != "3.14":
+        _run_tests(session)
         return
 
     workflow = Path(".github/workflows/benchmarks.yml").read_text(encoding="utf-8")
@@ -128,7 +128,6 @@ def tests(session: nox.Session) -> None:
     if pin is None:
         session.error("Expected a pinned benchmark checkout in benchmarks.yml")
 
-    session.install("gurobipy==14.0.0")
     with tempfile.TemporaryDirectory(prefix="mqt-scpd-benchmarks-") as data:
         session.run("git", "-C", data, "init", external=True)
         session.run(
@@ -142,13 +141,8 @@ def tests(session: nox.Session) -> None:
             external=True,
         )
         session.run("git", "-C", data, "checkout", "--detach", "FETCH_HEAD", external=True)
-        session.run(
-            "pytest",
-            "test/python/benchmarks/test_planned_chips.py",
-            *session.posargs,
-            "--cov-config=pyproject.toml",
-            env={"MQT_SCPD_BENCHMARKS": data, "MQT_SCPD_BENCHMARK_GUROBI": "1"},
-        )
+        session.env["MQT_SCPD_BENCHMARKS"] = data
+        _run_tests(session)
 
 
 @nox.session(python="3.14", reuse_venv=True)

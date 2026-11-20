@@ -16,6 +16,8 @@ launcher. The tests run when ``MQT_SCPD_BENCHMARKS`` names a clone of the data r
 from __future__ import annotations
 
 import os
+import platform
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
@@ -40,14 +42,11 @@ if TYPE_CHECKING:
     from mqt.scpd.flatbuffers.design.Chip import ChipT
 
 DATA = Path(os.environ["MQT_SCPD_BENCHMARKS"]) if "MQT_SCPD_BENCHMARKS" in os.environ else None
-GUROBI = os.environ.get("MQT_SCPD_BENCHMARK_GUROBI") == "1"
 # Both models of each chip fit within Gurobi's bundled limit of 2,000 variables and constraints.
 GUROBI_CHIPS = ("4q", "9q", "17q", "21q", "33q", "45q")
 CHIPS = sorted(path.parent.name for path in DATA.glob("inputs/*/config.toml")) if DATA else []
 
-pytestmark = pytest.mark.skipif(
-    DATA is None and not GUROBI, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data"
-)
+pytestmark = pytest.mark.skipif(DATA is None, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data")
 
 #: The objective of the assignment on the chips that are small enough to know it by heart.
 OBJECTIVES = {"4q": 5.02, "9q": 15.27}
@@ -145,19 +144,25 @@ def check_the_assignment(chip: ChipT, assignment: AssignmentT, launcher_target: 
 
 
 @pytest.fixture
-def benchmark_solver(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
-    """Register the real Gurobi backend for the benchmark run that uses it."""
-    if not GUROBI:
-        yield
-        return
-    monkeypatch.setenv("SCPD_SOLVER", "gurobi")
-    register()
+def benchmark_solver(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Select the solver for this benchmark case."""
+    backend = request.param
+    if backend == "gurobi":
+        if sys.version_info >= (3, 16) or (sys.platform == "win32" and platform.machine() == "ARM64"):
+            pytest.skip("Gurobi 14.0 has no wheel for this test environment")
+        register()
+    monkeypatch.setenv("SCPD_SOLVER", backend)
     yield
-    pyscpd.set_solver(None)
+    if backend == "gurobi":
+        pyscpd.set_solver(None)
 
 
 @pytest.mark.usefixtures("benchmark_solver")
-@pytest.mark.parametrize("chip", GUROBI_CHIPS if GUROBI else CHIPS)
+@pytest.mark.parametrize(
+    ("chip", "benchmark_solver"),
+    [(chip, "highs") for chip in CHIPS] + [(chip, "gurobi") for chip in CHIPS if chip in GUROBI_CHIPS],
+    indirect=["benchmark_solver"],
+)
 def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_path: Path) -> None:
     """Every step runs without a fail, and the plan keeps the rules the later stages rely on."""
     assert DATA is not None

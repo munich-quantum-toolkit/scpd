@@ -82,6 +82,8 @@ dev = [
   "nox>=2025.11.12",
 ]
 test = [
+  # Gurobi 14 has no Windows ARM64 wheel and supports CPython through 3.15.
+  "gurobipy==14; python_version<'3.16' and (sys_platform!='win32' or platform_machine!='ARM64')",
   # KLayout ships no wheels for Windows on ARM or for CPython 3.15; the export tests skip without it.
   "klayout~=0.30.6; python_version<'3.15' and (sys_platform!='win32' or platform_machine!='ARM64')",
   # The generated FlatBuffers code reads a vector of numbers into a NumPy array when NumPy is
@@ -316,6 +318,10 @@ exclude = [
 [tool.ty.terminal]
 # Error if ty emits any warning-level diagnostics.
 error-on-warning = true
+
+[tool.ty.analysis]
+# Gurobi is optional outside the test environments that have a wheel for it.
+allowed-unresolved-imports = [ "gurobipy" ]
 
 
 [tool.pytest]
