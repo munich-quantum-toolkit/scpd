@@ -54,8 +54,16 @@ PLAN_OUTPUT = (
     r"📌 assign",
     r"   \d+ ports? · \d+ launcher ends? · objective \d+\.\d\d · optimal",
     r"   ✓ 03-assign\.fb  SIZE · fails 0",
+    r"🧭 corridor",
+    # Any number of rounds, and the last one routes every connection.
+    (
+        r"(?:   round \d+ (?:forward|backward) +routed \d+/\d+ · fails \d+\n)*"
+        r"   round \d+ (?:forward|backward) +routed (\d+)/\1 · fails 0"
+    ),
+    r"   routed (\d+)/\2 · \d+ rounds?",
+    r"   ✓ 04-corridor\.fb  SIZE · fails 0",
     r"",
-    r"✓ 3 stages · stopped after assign · fails 0",
+    r"✓ 4 stages · stopped after corridor · fails 0",
 )
 
 # Every test runs with the solver linked into the core.
@@ -402,7 +410,7 @@ def untimed(text: str, run: Path) -> list[str]:
 
 
 def test_plan_runs_every_step_into_the_run_directory(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Without -v a run shows one block per stage with its result and its artifact."""
+    """Without -v a run shows one block per stage with its result, its rounds and its artifact."""
     run = tmp_path / "run"
 
     assert plan(run) == 0
@@ -416,6 +424,8 @@ def test_plan_runs_every_step_into_the_run_directory(tmp_path: Path, capsys: pyt
         "02-global.inputs.json",
         "03-assign.fb",
         "03-assign.inputs.json",
+        "04-corridor.fb",
+        "04-corridor.inputs.json",
         "config.toml",
     ]
     output = "\n".join(untimed(capsys.readouterr().out, run))
@@ -433,12 +443,12 @@ def test_every_line_of_a_run_follows_the_format(tmp_path: Path, capfd: pytest.Ca
     forms = [
         r"mqt-scpd plan \S+ → \S+  ·  .+",
         r"",
-        r"(🧩|🔳|📌) (capacity|global|assign)",
+        r"(🧩|🔳|📌|🧭) (capacity|global|assign|corridor)",
         rf"   \S.* {{2,}}{time}",
         rf"     \S.* {{2,}}{time}",
         r"     .+",
         r"   ✓ \d\d-[a-z]+\.fb  \d+(\.\d)? (B|kB|MB)( · fails \d+)?",
-        rf"✓ 3 stages · {time} · stopped after assign · fails 0",
+        rf"✓ 4 stages · {time} · stopped after corridor · fails 0",
     ]
     for line in out.splitlines():
         assert any(re.fullmatch(form, line) for form in forms), line
@@ -473,21 +483,25 @@ def test_plan_stops_after_the_step_it_is_told(tmp_path: Path, capsys: pytest.Cap
     assert untimed(capsys.readouterr().out, run)[-1] == "✓ 2 stages · stopped after global · fails 0"
 
 
-def test_plan_that_ends_with_fails_exits_with_one(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(("stage", "count"), [("global", 2), ("corridor", 4)])
+def test_plan_that_ends_with_fails_exits_with_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], stage: str, count: int
+) -> None:
     """A run whose stages all finish but leave fails ends with a cross and exit code 1."""
-    # At this wire spacing the ring ports have no room to a launcher, and the global step counts each as a fail.
-    config = stopping_after(tmp_path, "global")
-    config.write_text(
-        config.read_text(encoding="utf-8").replace("min_wire_spacing = 185.0", "min_wire_spacing = 800.0"),
-        encoding="utf-8",
-    )
+    config = stopping_after(tmp_path, stage)
+    text = config.read_text(encoding="utf-8")
+    if stage == "global":
+        text = text.replace("min_wire_spacing = 185.0", "min_wire_spacing = 800.0")
+    else:
+        text += "\n[stages.capacity]\ncrossing_pitch = 1500.0\n"
+    config.write_text(text, encoding="utf-8")
     run = tmp_path / "run"
 
     assert main(["plan", "-c", str(config), "-o", str(run), "--no-progress"]) == 1
 
-    assert (run / "02-global.fb").is_file()
+    assert RunDirectory(run).artifact(stage).is_file()
     assert re.fullmatch(
-        r"✗ 2 stages · stopped after global · fails [1-9]\d*", untimed(capsys.readouterr().out, run)[-1]
+        rf"✗ {count} stages · stopped after {stage} · fails [1-9]\d*", untimed(capsys.readouterr().out, run)[-1]
     )
 
 
@@ -551,14 +565,14 @@ def test_a_run_directory_named_from_inside_it_still_names_the_chip(
     assert '">run</text>' in output.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("stage", ["global", "assign"])
+@pytest.mark.parametrize("stage", ["global", "assign", "corridor"])
 def test_a_step_refuses_a_run_whose_design_rules_changed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], stage: str
 ) -> None:
     """A design rule edited in the run's config.toml stops every later step until the capacity step runs again."""
     run = tmp_path / "run"
     assert plan(run) == 0
-    before = {path.name: path.read_bytes() for path in run.glob("0[1-3]-*")}
+    before = {path.name: path.read_bytes() for path in run.glob("0[1-4]-*")}
     config = run / "config.toml"
     config.write_text(
         config.read_text(encoding="utf-8").replace("min_straight_length = 100.0", "min_straight_length = 300.0"),
@@ -573,10 +587,10 @@ def test_a_step_refuses_a_run_whose_design_rules_changed(
         "   ✗ [design_rules] in config.toml changed after the capacity step wrote 01-capacity.fb; "
         "run the capacity step again"
     )
-    assert {path.name: path.read_bytes() for path in run.glob("0[1-3]-*")} == before
+    assert {path.name: path.read_bytes() for path in run.glob("0[1-4]-*")} == before
 
     assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
-    for step in ("global", "assign"):
+    for step in ("global", "assign", "corridor"):
         assert main(["plan", "-o", str(run), "--stage", step, "--no-progress"]) == 0
 
 
@@ -859,9 +873,9 @@ def test_publication_keeps_moves_on_the_run_filesystem(
     assert (run / "01-capacity.fb").is_file()
 
 
-@pytest.mark.parametrize("resume", [True, False], ids=["resumed-stage", "fresh-plan"])
+@pytest.mark.parametrize("stage", ["assign", "corridor", None], ids=["assign", "corridor", "fresh-plan"])
 def test_planning_recovers_interrupted_publication(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, resume: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str | None
 ) -> None:
     """A process interruption after a rename leaves the prior run available to the next writer."""
     run = tmp_path / "run"
@@ -881,8 +895,10 @@ def test_planning_recovers_interrupted_publication(
             plan(run)
         assert info.value.code == 23
 
-    arguments = ["--stage", "assign"] if resume else ["-c", str(run / "config.toml")]
+    arguments = ["--stage", stage] if stage is not None else ["-c", str(run / "config.toml")]
     assert main(["plan", "-o", str(run), "--no-progress", *arguments]) == 0
+    if stage == "assign":
+        del before["04-corridor.fb"], before["04-corridor.inputs.json"]
     assert {path.name: path.read_bytes() for path in run.iterdir()} == before
 
 
@@ -1019,6 +1035,7 @@ def test_list_algorithms_names_one_line_per_stage(capsys: pytest.CaptureFixture[
         "capacity-planner   watershed",
         "global-router      hanan-milp",
         "assigner           ordered-milp",
+        "corridor-router    partition-astar",
     ]
 
 
@@ -1026,32 +1043,35 @@ def test_list_algorithms_names_one_line_per_stage(capsys: pytest.CaptureFixture[
 def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A planning stage is drawn from the run directory, over the chip the run carries.
 
-    The assign picture shows the feedline chains of the run.
+    The assign and corridor pictures show the feedline chains of the run.
     """
     run = tmp_path / "run"
     assert plan(run) == 0
     capsys.readouterr()
-    output = tmp_path / "assign.svg"
+    output = tmp_path / "corridor.svg"
 
-    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
+    assert main(["plot", "--run-dir", str(run), "--stage", "corridor", "-o", str(output)]) == 0
 
     svg = output.read_text(encoding="utf-8")
-    assert '<g class="l-assignment">' in svg
+    assert '<g class="l-corridor">' in svg
     assert '<g class="l-border">' in svg
     assert '<g class="l-feedline">' in svg
     assert capsys.readouterr().out.startswith(f"✓ {output}  ")
 
+    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(output)]) == 0
+    assert '<g class="l-feedline">' in output.read_text(encoding="utf-8")
 
-@pytest.mark.parametrize(("stage", "drawn"), [("global", None), ("assign", "global")])
+
+@pytest.mark.parametrize("stage", ["global", "assign", "corridor"])
 def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, stage: str, drawn: str | None
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
-    """The global picture lies over the blocked cells; the assign picture shows the inner circuit."""
+    """Plot draws its overlays from the same bytes that passed verification."""
     run = tmp_path / "run"
     assert plan(run) == 0
     capsys.readouterr()
-    handed: list[bytes | None] = []
-    overlays = {run / "01-capacity.fb", run / "02-global.fb"}
+    handed: list[tuple[bytes | None, bytes | None, bytes | None]] = []
+    overlays = {run / name for name in ("01-capacity.fb", "02-global.fb", "03-assign.fb", "04-corridor.fb")}
     reads: set[Path] = set()
     read_bytes = Path.read_bytes
 
@@ -1067,9 +1087,11 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
         stage: str,
         capacity: bytes | None = None,
         global_routing: bytes | None = None,
+        *,
+        assignment: bytes | None = None,
     ) -> PlanningGeometry:
-        handed.append(global_routing)
-        return drawing(data, chip, stage, capacity, global_routing)
+        handed.append((capacity, global_routing, assignment))
+        return drawing(data, chip, stage, capacity, global_routing, assignment=assignment)
 
     monkeypatch.setattr(cli, "planning_geometry", planning_geometry)
     monkeypatch.setattr(Path, "read_bytes", read_overlay)
@@ -1077,8 +1099,13 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
 
     assert main(["plot", "--run-dir", str(run), "--stage", stage, "-o", str(output)]) == 0
 
-    expected = None if drawn is None else read_bytes(run / "02-global.fb")
-    assert handed == [expected]
+    assert handed == [
+        (
+            read_bytes(run / "01-capacity.fb"),
+            read_bytes(run / "02-global.fb") if stage in {"assign", "corridor"} else None,
+            read_bytes(run / "03-assign.fb") if stage == "corridor" else None,
+        )
+    ]
     if stage == "global":
         assert '<g class="l-raster">' in output.read_text(encoding="utf-8")
 
@@ -1086,14 +1113,14 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
 def test_a_planning_stage_needs_a_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A planning stage without a run directory, or one whose step has not run, is refused."""
     with pytest.raises(SystemExit) as info:
-        main(["plot", "-c", CONFIG, "--stage", "assign", "-o", str(tmp_path / "x.svg")])
+        main(["plot", "-c", CONFIG, "--stage", "corridor", "-o", str(tmp_path / "x.svg")])
     assert info.value.code == 2
 
     run = tmp_path / "run"
     assert plan(run, "--stop-after", "capacity") == 0
     capsys.readouterr()
-    assert main(["plot", "--run-dir", str(run), "--stage", "assign", "-o", str(tmp_path / "x.svg")]) == 1
-    assert "03-assign.fb is missing" in capsys.readouterr().err
+    assert main(["plot", "--run-dir", str(run), "--stage", "corridor", "-o", str(tmp_path / "x.svg")]) == 1
+    assert "04-corridor.fb is missing" in capsys.readouterr().err
 
 
 def test_a_picture_refuses_an_artifact_the_run_inputs_no_longer_make(
@@ -1243,19 +1270,22 @@ def test_doctor_and_plan_need_a_reachable_solver_only_for_a_run_that_solves(
     assert written == ([] if code == 1 else ["01-capacity.fb", "02-global.fb"])
 
 
-@pytest.mark.parametrize(("step", "code"), [("global", 0), ("assign", 1)])
+@pytest.mark.parametrize(("step", "code"), [("global", 0), ("assign", 1), ("corridor", 0)])
 def test_a_resumed_step_needs_a_reachable_solver_only_where_it_solves(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, step: str, code: int
 ) -> None:
-    """Gurobi without gurobipy stops a resumed assignment, and a resumed global step without an inner circuit runs.
+    """A resumed step can run without gurobipy if it does not need to solve.
 
-    The run directory keeps the artifacts of a refused step as they were. The global step that runs writes
-    its artifact again and deletes the assignment made from the one before.
+    A refused step keeps the earlier artifacts. A successful Global rerun
+    removes the Assignment artifact that depended on it.
     """
     run = tmp_path / "run"
     assert plan(run, "--stop-after", "assign") == 0
     capsys.readouterr()
-    routing = (run / "02-global.fb").read_bytes()
+    assignment = run / "03-assign.fb"
+    previous = assignment.read_bytes()
+    global_artifact = run / "02-global.fb"
+    routing = global_artifact.read_bytes()
     monkeypatch.setenv("SCPD_SOLVER", "gurobi")
     monkeypatch.setitem(sys.modules, "gurobipy", None)
     problem = "SCPD_SOLVER asks for gurobi, but gurobipy is not installed"
@@ -1263,8 +1293,12 @@ def test_a_resumed_step_needs_a_reachable_solver_only_where_it_solves(
     assert main(["plan", "-o", str(run), "--stage", step, "--no-progress"]) == code
 
     assert (problem in capsys.readouterr().err) == (code == 1)
-    assert (run / "02-global.fb").read_bytes() == routing
-    assert (run / "03-assign.fb").is_file() == (code == 1)
+    assert global_artifact.read_bytes() == routing
+    if step == "global":
+        assert not assignment.exists()
+    else:
+        assert assignment.read_bytes() == previous
+    assert (run / "04-corridor.fb").is_file() == (step == "corridor")
 
 
 def test_any_error_of_a_stage_ends_the_run_in_its_block(

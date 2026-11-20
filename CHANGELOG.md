@@ -12,6 +12,10 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add Corridor as the default final stage. It routes connections through
+  partition borders and writes `04-corridor.fb`, which `plot` and `render` can
+  draw. The plan reports a failure if any connection has no route ([#168])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
 - 📝 Add a reference of every `config.toml` key ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory and
@@ -119,6 +123,7 @@ releases may include breaking changes.
 <!-- PR links -->
 
 [#178]: https://github.com/munich-quantum-toolkit/scpd/pull/178
+[#168]: https://github.com/munich-quantum-toolkit/scpd/pull/168
 [#167]: https://github.com/munich-quantum-toolkit/scpd/pull/167
 [#166]: https://github.com/munich-quantum-toolkit/scpd/pull/166
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134

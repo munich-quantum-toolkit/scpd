@@ -146,8 +146,13 @@ mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.16.0
 📌 assign
    58 ports · 7 launcher ends · objective 27.84 · optimal          0.53s
    ✓ 03-assign.fb  2.8 kB · fails 0
+🧭 corridor
+   round 1 forward    routed 53/58 · fails 5                       0.09s
+   round 2 backward   routed 58/58 · fails 0                       0.09s
+   routed 58/58 · 2 rounds                                         0.09s
+   ✓ 04-corridor.fb  58.7 kB · fails 0
 
-✓ 3 stages · 3.38s · stopped after assign · fails 0
+✓ 4 stages · 3.47s · stopped after corridor · fails 0
 ```
 
 With `--stage`, the header shows the run directory in place of the chip name.
@@ -166,7 +171,7 @@ Each `-v` adds lines to the ones below it.
 
 | Option | What the run shows in addition                                                              |
 | ------ | ------------------------------------------------------------------------------------------- |
-| none   | The header, the result of each stage, the artifact line and the closing line                |
+| none   | The header, the result and the rounds of each stage, the artifact line and the closing line |
 | `-v`   | The parameters of a stage, its steps, the size of each model and how each solve ended       |
 | `-vv`  | One line per item, such as a wire, a feedline chain or a connection                         |
 | `-vvv` | The log of HiGHS; the Gurobi backend solves without a log                                   |
@@ -199,8 +204,9 @@ mqt-scpd plan 17q → runs/17q
   The time ends at column 72 in a file. On a terminal it ends at the width of
   the terminal, but not after column 100. A line too long for the column carries
   its time after two spaces. A solver log line carries no time.
-- An entry, such as a feedline chain at `-vv`, has a label and figures. The
-  label fills a column of 18 characters, and the figures start after it.
+- An entry, such as a round, has a label and figures. The label fills a column
+  of 18 characters, and the figures start after it. Corridor reports ratios such
+  as `routed 56/58` and limits such as `max relaxation 1 of 4`.
 - The artifact line is `✓ <file>  <size>`, followed by `· fails <n>` for a stage
   that reports fails. The assign stage reports them too, and its count is always
   zero.
@@ -217,7 +223,8 @@ adds those counts. Any fails give the run exit code 1.
 Global counts unreachable inner ports, ring ports without gate capacity, and
 non-bridge ring ports cut off from a launcher. The {doc}`configuration`
 reference explains the gate checks. Assignment either assigns every ring port
-and shows `fails 0`, or stops with an error.
+and shows `fails 0`, or stops with an error. Corridor counts connections it
+could not route through the partitions.
 
 ### Stage Marks
 
@@ -228,6 +235,7 @@ Each step has a mark, a plain form and a color.
 | capacity | 🧩   | `[#]`      | cyan    |
 | global   | 🔳   | `[+]`      | blue    |
 | assign   | 📌   | `[>]`      | magenta |
+| corridor | 🧭   | `[~]`      | yellow  |
 
 A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and
 without a variation selector, so that every terminal draws it two cells wide. A
@@ -309,16 +317,20 @@ A stage reports through the `Report` it is given and never prints.
 
 1. Report the result exactly once, through `Report::result`. A stage that can
    fail on part of its work passes the number of fails as well.
-2. Build each figure with `counted`, `verdict` or one of the forms above, and
+2. Report each round of a stage that works in rounds through `Report::entry`,
+   with the label `round <n> forward` or `round <n> backward`, counted from 1. A
+   pass after the rounds that changes the result gets an entry of its own, such
+   as `back to round <n>` and `free slots` in the Corridor stage.
+3. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
-3. Report the steps, the parameters and the solves at `Detail::Steps`, and one
+4. Report the steps, the parameters and the solves at `Detail::Steps`, and one
    line per item at `Detail::Items`. Ask `Report::wants` before building a line
    that takes time to build.
-4. Report progress through `Report::progress` in every loop that can run for
+5. Report progress through `Report::progress` in every loop that can run for
    longer than a second, so that the live line moves and Ctrl-C stops the stage.
    Outside a solve, a progress report is the only place where a stage notices
    Ctrl-C.
-5. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
+6. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
    add its artifact to `STAGE_FILES`, the configuration sections it reads to
    `STEP_INPUTS`, the artifacts it reads to `ARTIFACT_INPUTS`, and its core call
@@ -327,5 +339,5 @@ A stage reports through the `Report` it is given and never prints.
    in `planning_geometry` in `python/mqt/scpd/planning.py` and in `_drawn` in
    `python/mqt/scpd/cli.py`, and add its GDS layers to `PLANNING_LAYERS` in
    `python/mqt/scpd/export/klayout.py`.
-6. Extend the expected run in `test/python/unit/test_cli.py`, and add the mark
+7. Extend the expected run in `test/python/unit/test_cli.py`, and add the mark
    to the table of this page.

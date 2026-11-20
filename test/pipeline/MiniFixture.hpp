@@ -59,6 +59,7 @@ inline flatbuffers::config::ConfigT miniConfig() {
   config.stages->assignment = std::make_unique<AssignmentParamsT>();
   config.stages->assignment->launcher_target = 1;
   config.stages->solver = std::make_unique<SolverParamsT>();
+  config.stages->corridor = std::make_unique<CorridorParamsT>();
   return config;
 }
 

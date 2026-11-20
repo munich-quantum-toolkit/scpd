@@ -114,7 +114,8 @@ findBottlenecks(const BitGrid& blocked, const MedialAxis& axis,
  * holds. Where an end sits on a cell reserved for a port, the count rounds
  * down. The count is the capacity of the gate that the Global stage checks,
  * so a gate rounded up can pass one ring port more than fits. The crossing
- * slots of a partition border, not this count, decide its budget.
+ * slots of the Corridor stage, not this count, decide how many wires cross a
+ * partition border.
  *
  * @param bottleneck The bottleneck.
  * @param grid The metrics of the grid it was found on.

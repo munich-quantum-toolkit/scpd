@@ -76,6 +76,7 @@ STAGE_FILES: dict[str, str] = {
     "capacity": "01-capacity.fb",
     "global": "02-global.fb",
     "assign": "03-assign.fb",
+    "corridor": "04-corridor.fb",
 }
 
 
@@ -85,6 +86,7 @@ STEP_INPUTS: dict[str, tuple[str, ...]] = {
     "capacity": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", RUN_CHIP),
     "global": ("[ports]", "[design_rules]", "[grid]", "[stages.global]", "[stages.solver]", RUN_CHIP),
     "assign": ("[ports]", "[design_rules]", "[grid]", "[stages.assignment]", "[stages.solver]", RUN_CHIP),
+    "corridor": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", "[stages.corridor]", RUN_CHIP),
 }
 
 
@@ -93,6 +95,7 @@ ARTIFACT_INPUTS: dict[str, tuple[str, ...]] = {
     "capacity": (),
     "global": ("capacity",),
     "assign": ("capacity", "global"),
+    "corridor": ("capacity", "assign"),
 }
 
 
@@ -136,6 +139,7 @@ def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
         "[stages.global]": stages.global_ if stages is not None else None,
         "[stages.assignment]": stages.assignment if stages is not None else None,
         "[stages.solver]": stages.solver if stages is not None else None,
+        "[stages.corridor]": stages.corridor if stages is not None else None,
     }
     digests = {
         name: hashlib.sha256(json.dumps(_plain(section), sort_keys=True).encode("utf-8")).hexdigest()
@@ -172,7 +176,7 @@ class StageBlockLike(Protocol):
         """Take a line of free text."""
 
     def entry(self, level: int, label: str, figures: Sequence[Figure]) -> None:
-        """Take an entry, such as one feedline chain."""
+        """Take an entry, such as one round."""
 
     def result(self, figures: Sequence[Figure], fails: int | None = None) -> None:
         """Take the result of the stage."""
@@ -676,6 +680,7 @@ class RunDirectory:
             "capacity": lambda: pyscpd.plan_capacity(chip, packed, producer, reporter, level),
             "global": lambda: pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level),
             "assign": lambda: pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level),
+            "corridor": lambda: pyscpd.route_corridor(chip, inputs[0], inputs[1], packed, producer, reporter, level),
         }
         if stage not in calls:
             msg = f"no core call runs the {stage} step"

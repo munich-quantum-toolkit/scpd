@@ -20,6 +20,7 @@ namespace mqt::scpd::pipeline {
 
 using flatbuffers::artifacts::AssignmentT;
 using flatbuffers::artifacts::CapacityPlanT;
+using flatbuffers::artifacts::CorridorRoutingT;
 using flatbuffers::artifacts::GlobalRoutingT;
 using flatbuffers::config::ConfigT;
 using flatbuffers::design::ChipT;
@@ -155,6 +156,56 @@ public:
                                         const GlobalRoutingT& global,
                                         const ConfigT& config,
                                         const Report& report) const = 0;
+};
+
+/**
+ * @brief Routes every assigned connection through the partitions, coarsely.
+ *
+ * A wire is told which partitions it runs through and where it crosses from
+ * one into the next. A border is crossed at one of a fixed set of slots, no
+ * two wires take the same one, and the crossings of two wires lie at least
+ * one crossing pitch apart. Inside a partition two wires may not cross
+ * or meet either, judged by the straight chords between where they enter and
+ * leave it. Only the connections of the assignment are routed here;
+ * the inner circuit paid for the free space it crosses when it was solved.
+ */
+class MQT_SCPD_PIPELINE_EXPORT ICorridorRouter {
+public:
+  /**
+   * @brief Creates a router.
+   */
+  ICorridorRouter() = default;
+  ICorridorRouter(const ICorridorRouter&) = delete;
+  ICorridorRouter& operator=(const ICorridorRouter&) = delete;
+  ICorridorRouter(ICorridorRouter&&) = delete;
+  ICorridorRouter& operator=(ICorridorRouter&&) = delete;
+  virtual ~ICorridorRouter() = default;
+
+  /**
+   * @brief Routes the connections of an assignment through the partitions.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param assignment The assignment of the run.
+   * @param config The run configuration.
+   * @param report Where the stage reports what it does.
+   * @return One corridor per connection.
+   * @throws std::invalid_argument When the capacity plan does not fit the
+   * configuration in a way the router can see: it was made on another detail
+   * grid, a border offers another number of slots than its budget, or a
+   * partition falls apart into pieces that do not touch; or when a connection
+   * of the assignment names a port the chip does not carry.
+   *
+   * The router takes the targets from the configuration and the partitions
+   * from the plan, and the plan does not record the design rules or the port
+   * rules it was made with. The caller passes the configuration the plan was
+   * made from; `mqt-scpd plan` refuses a step when a section that an earlier
+   * step read has changed since.
+   */
+  [[nodiscard]] virtual CorridorRoutingT run(const ChipT& chip,
+                                             const CapacityPlanT& capacity,
+                                             const AssignmentT& assignment,
+                                             const ConfigT& config,
+                                             const Report& report) const = 0;
 };
 
 } // namespace mqt::scpd::pipeline

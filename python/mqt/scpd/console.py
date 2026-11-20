@@ -53,6 +53,7 @@ STAGE_STYLES: dict[str, StageStyle] = {
     "capacity": StageStyle("🧩", "[#]", "cyan"),
     "global": StageStyle("🔳", "[+]", "blue"),
     "assign": StageStyle("📌", "[>]", "magenta"),
+    "corridor": StageStyle("🧭", "[~]", "yellow"),
 }
 
 #: Symbols with a plain form for an output that cannot encode them.
@@ -221,7 +222,7 @@ class StageBlock:
         self._write(self.console.timed(Text(" " * indent + self.console.plain(text)), self.elapsed, dim=level > 0))
 
     def entry(self, level: int, label: str, figures: Sequence[Figure]) -> None:
-        """Write an entry, such as one feedline chain, with its label in a column of its own."""
+        """Write an entry, such as one round, with its label in a column of its own."""
         if level > self.console.verbosity:
             return
         indent = _INDENT if level == 0 else _DEEP_INDENT
