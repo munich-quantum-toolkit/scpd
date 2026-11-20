@@ -112,10 +112,10 @@ ring end. It can cross other bridges when `internal_bridges` is enabled. Global
 reports unreachable inner ports as fails. An unreachable inner resonator gets no
 feed.
 
-Global places a lattice point `min_straight_length` in front of each port. Two
-ports that can carry inner wires on the same capacity chain must have distinct
-points. A port without an inner wire may share a point. Global checks this when
-it runs.
+For each port in a lattice, Global uses a point `min_straight_length` in front
+of the port. Two ports that can carry inner wires on the same capacity chain
+must have distinct points. A port without an inner wire may share a point. The
+`doctor` preflight leaves this check to Global.
 
 A gate's budget is shared by all chains that cross it. Ring ports and inner
 wires that surface on the ring both use that budget. When the budget falls
@@ -140,7 +140,8 @@ the ends of its feedline chains. Apply these rules.
 - The total is even. The number of chains equals half the total.
 - Conventional ring ports and launcher ends together fit on the chip's
   launchers.
-- Each type of chain end counts at most one per resonator.
+- `launcher_target` and `feedline_terminations` are each at most the number of
+  resonators on the ring.
 - Terminations cannot outnumber launcher ends. Each chain needs a launcher.
 - The number of resonators must fit within the number of chains times
   `max_feedline_utilization`.
