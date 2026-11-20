@@ -72,7 +72,9 @@ struct SolveOptions {
   /// HiGHS is half the hardware threads. HiGHS keeps one pool of worker
   /// threads per calling thread and restarts that pool when a solve asks for
   /// another count than the solve before on the same calling thread. The
-  /// planning stages take the count from `[stages.solver] threads`. The MPS
+  /// backend returns an error if that restart would overlap an active solve
+  /// or an observer starts a nested solve on the same thread. The planning
+  /// stages take the count from `[stages.solver] threads`. The MPS
   /// backend that the Python package registers for Gurobi passes it on as the
   /// Gurobi parameter Threads.
   std::uint32_t threads = 0;

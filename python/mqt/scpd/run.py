@@ -9,14 +9,13 @@
 """The run directory: what a step reads, what it writes, and how a run is resumed.
 
 Every step reads the artifacts of the steps before it and writes one artifact, so a run can be
-continued from any completed step. Running a step deletes the artifacts of every later step, so
-the directory never holds a later artifact beside an earlier one it did not come from. An artifact
-is written to a file of its own first and then renamed, so no half-written artifact is left behind.
+continued from any completed step. A successful rerun removes the artifacts of every later step.
+Publication installs the staged files by rename. If the planning process is interrupted during
+publication, the next writer recovers the run before starting.
 
-Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip
-and of every configuration section the step reads. A step refuses to run on an earlier artifact
-whose inputs have changed since, so a resumed step never reads an artifact that the current
-configuration would not make.
+Beside each artifact a step records digests of the classified chip, the configuration sections and
+artifacts it reads, and the artifact it writes. A step refuses to run on an earlier artifact whose
+bytes or inputs do not match its record.
 
 Python does the file work. The core never opens a file: it takes bytes and returns bytes.
 """
@@ -25,22 +24,31 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
+import os
+import stat
+import tempfile
+from contextlib import contextmanager, nullcontext, suppress
 from dataclasses import dataclass
 from itertools import starmap
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from . import pyscpd
 from ._version import version as __version__
-from .chip import RUN_CHIP, ChipError, chip_input_path, load_chip
-from .config import load_config, write_config
+from .chip import RUN_CHIP, chip_input_path, load_chip, read_chip_text
+from .config import load_config, parse_config, read_config_text, write_config
 from .console import Figure
 from .flatbuffers.config.GridParams import GridParamsT
 from .steps import STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-    from pathlib import Path
+    from collections.abc import Callable, Generator, Sequence
+    from typing import BinaryIO
 
     from .flatbuffers.config.Config import ConfigT
 
@@ -51,6 +59,7 @@ __all__ = [
     "BlockReporter",
     "RunDirectory",
     "RunError",
+    "RunInputs",
     "StageResult",
     "input_digests",
     "steps_until",
@@ -217,6 +226,20 @@ class StageResult:
     size: int
 
 
+@dataclass(frozen=True)
+class RunInputs:
+    """The exact inputs of a fresh run."""
+
+    config: ConfigT
+    config_text: str
+    chip_path: Path
+    chip_text: str
+
+
+_RUN_MARKER = b"MQT SCPD run directory\n"
+_ARTIFACT_DIGEST = "artifact_sha256"
+
+
 class RunDirectory:
     """The directory of one run, and the steps that fill it."""
 
@@ -267,62 +290,323 @@ class RunDirectory:
         """The copy of the chip input that the run uses."""
         return self.path / RUN_CHIP
 
-    def inputs(self, config_path: Path, chip_path: Path | None = None) -> tuple[ConfigT, Path]:
-        """Read the configuration of a new run and find its chip input, without changing the directory.
+    @property
+    def marker(self) -> Path:
+        """The file that identifies a directory created by MQT SCPD."""
+        return self.path / ".mqt-scpd-run"
 
-        Args:
-            config_path: The configuration to run.
-            chip_path: A chip input that replaces the configured one, as ``--chip`` gives it.
-                Without one, the configuration of another run takes that run's chip copy, as
-                :func:`~mqt.scpd.chip.chip_input_path` finds it.
+    @property
+    def _recovery(self) -> Path:
+        """The journal directory of a publication that may need recovery."""
+        return self.path / ".mqt-scpd-recovery"
 
-        Returns:
-            The configuration and the chip input.
+    def _check_destination(self) -> None:
+        """Refuse to write into a directory that does not belong to a run.
 
         Raises:
-            RunError: If the path is a file, or if the directory holds a config.toml of its own and
-                no chip copy, so that it is not a run directory.
-            ChipError: If the chip input is not a file.
+            RunError: If the destination is a file, link, or unrecognized non-empty directory.
         """
-        config = load_config(config_path)
-        chip = chip_input_path(config, config_path, chip_path)
-        if self.path.exists() and not self.path.is_dir():
+        try:
+            entry = self.path.lstat()
+        except FileNotFoundError:
+            return
+        junction = os.name == "nt" and entry.st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+        if stat.S_ISLNK(entry.st_mode) or junction:
+            msg = f"{self.path} is not a run directory: it is a directory link"
+            raise RunError(msg)
+        if not stat.S_ISDIR(entry.st_mode):
             msg = f"{self.path} is not a run directory: it is a file"
             raise RunError(msg)
-        if self.config.exists() and not self.chip.exists():
-            msg = f"{self.path} is not a run directory: it holds a config.toml of its own and no 00-chip.json"
+        if any(self.path.iterdir()) and not self._owned() and not self._partial_claim():
+            msg = f"{self.path} is not a run directory: it holds files without a valid {self.marker.name} marker"
             raise RunError(msg)
-        if not chip.is_file():
-            msg = f"cannot read the chip input {chip}: there is no such file"
-            raise ChipError(msg)
-        return config, chip
 
-    def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
-        """Create the directory, or start it afresh, and copy the inputs into it.
+    def _marker_content(self) -> bytes | None:
+        """Return the marker contents only for a regular file."""
+        try:
+            if self.marker.is_symlink() or not self.marker.is_file():
+                return None
+            with self.marker.open("rb", buffering=0) as marker:
+                size = os.fstat(marker.fileno()).st_size
+                return marker.read(size) if size <= len(_RUN_MARKER) else None
+        except OSError:
+            return None
 
-        Every artifact of an earlier run in the directory is deleted first, so no artifact stays
-        beside inputs it was not made from.
+    def _owned(self) -> bool:
+        """Return whether this directory has a valid run marker."""
+        return self._marker_content() == _RUN_MARKER
+
+    def _partial_claim(self) -> bool:
+        """Return whether the only file is a partially written run marker."""
+        content = self._marker_content()
+        return (
+            content is not None
+            and _RUN_MARKER.startswith(content)
+            and all(entry == self.marker for entry in self.path.iterdir())
+        )
+
+    def inputs(self, config_path: Path, chip_path: Path | None = None) -> RunInputs:
+        """Read the exact inputs for a fresh run without changing its destination.
 
         Args:
             config_path: The configuration to run.
-            chip_path: A chip input that replaces the configured one, as for :meth:`inputs`.
+            chip_path: An optional replacement for the configured chip input.
 
         Returns:
-            The configuration.
+            The parsed configuration and the source texts to classify and publish.
         """
-        config, chip = self.inputs(config_path, chip_path)
-        self.path.mkdir(parents=True, exist_ok=True)
+        self._check_destination()
+        with self._write_lock() if self._owned() else nullcontext():
+            config_text = read_config_text(config_path)
+            config = parse_config(config_text, source=str(config_path))
+            chip = chip_input_path(config, config_path, chip_path)
+            return RunInputs(config, config_text, chip, read_chip_text(chip))
+
+    def prepare(self, config_path: Path, chip_path: Path | None = None) -> ConfigT:
+        """Start a run directory from input files.
+
+        Returns:
+            The parsed configuration.
+        """
+        self.recover()
+        snapshot = self.inputs(config_path, chip_path)
+        with self.staging(snapshot) as pending:
+            self.publish(pending)
+        return snapshot.config
+
+    @contextmanager
+    def staging(self, snapshot: RunInputs) -> Generator[RunDirectory, None, None]:
+        """Create a temporary run from the input snapshot.
+
+        Yields:
+            A run directory on the same volume as the destination.
+        """
+        self._check_destination()
+        parent = self.path.absolute().parent
+        if self.path.is_dir():
+            self._claim()
+            parent = self.path
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".mqt-scpd-stage-", dir=parent) as staging:
+            pending = RunDirectory(Path(staging) / "run")
+            pending.path.mkdir()
+            pending.chip.write_bytes(snapshot.chip_text.encode("utf-8"))
+            pending.config.write_bytes(snapshot.config_text.encode("utf-8"))
+            pending.marker.write_bytes(_RUN_MARKER)
+            yield pending
+
+    def _claim(self) -> None:
+        """Claim an existing empty directory by creating its marker exclusively.
+
+        Raises:
+            RunError: If the destination was claimed or filled by another writer.
+        """
+        if self._owned():
+            return
+        try:
+            marker = self.marker.open("x+b")
+        except FileExistsError as error:
+            if self._owned():
+                return
+            if not self._partial_claim():
+                msg = f"cannot write {self.path}: the directory is no longer empty"
+                raise RunError(msg) from error
+            marker = self.marker.open("r+b")
+        with marker, self._marker_lock(marker):
+            if self._owned():
+                return
+            if not self._partial_claim():
+                msg = f"cannot write {self.path}: the directory is no longer empty"
+                raise RunError(msg)
+            marker.seek(0)
+            marker.write(_RUN_MARKER)
+            marker.flush()
+
+    def recover(self) -> None:
+        """Restore an interrupted publication before reading inputs for a write."""
+        if not self._recovery.exists() and not self._recovery.is_symlink():
+            return
+        with self._write_lock():
+            pass
+
+    @contextmanager
+    def _write_lock(self) -> Generator[None, None, None]:
+        """Serialize writers to an existing run.
+
+        Yields:
+            Once the run's write lock is held.
+        """
+        self._check_destination()
+        with self.marker.open("r+b") as marker, self._marker_lock(marker):
+            self._recover_locked()
+            yield
+
+    @contextmanager
+    def _marker_lock(self, marker: BinaryIO) -> Generator[None, None, None]:
+        """Hold the same lock while creating or using a run marker.
+
+        Yields:
+            Once the run's write lock is held.
+
+        Raises:
+            RunError: If another writer holds the lock.
+        """
+        try:
+            if os.name == "nt":
+                # Lock beyond the contents so readers can check the marker.
+                marker.seek(len(_RUN_MARKER))
+                msvcrt.locking(marker.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(marker.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            msg = f"cannot write {self.path}: the run is in use"
+            raise RunError(msg) from error
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                with suppress(OSError):
+                    marker.seek(len(_RUN_MARKER))
+                    msvcrt.locking(marker.fileno(), msvcrt.LK_UNLCK, 1)
+
+    def publish(self, pending: RunDirectory) -> None:
+        """Publish a completed run while preserving unrelated files."""
+        self._check_destination()
+        if not self.path.exists():
+            pending.path.rename(self.path)
+            return
+        self._claim()
+        sources = [pending.chip, pending.config]
+        for stage in STAGE_FILES:
+            for source in (pending.artifact(stage), pending.record(stage)):
+                sources.extend((source, source.with_suffix(source.suffix + ".tmp")))
+        self._publish_files(sources)
+
+    def _publish_files(
+        self,
+        sources: Sequence[Path],
+        *,
+        digests: dict[str, str] | None = None,
+        prerequisites: dict[str, bytes] | None = None,
+    ) -> None:
+        """Replace a set of managed files after checking the inputs under the write lock.
+
+        Raises:
+            RunError: If a destination is occupied, inputs changed, or rollback is incomplete.
+            OSError: If the files cannot be published.
+            KeyboardInterrupt: If publication is interrupted.
+        """
+        targets = [self.path / source.name for source in sources]
+        with self._write_lock():
+            if self._recovery.exists():
+                msg = f"cannot write {self.path}: cannot remove the recovery journal"
+                raise RunError(msg)
+            if digests is not None:
+                config = self.load()
+                if input_digests(config, self.classified_chip(config)) != digests:
+                    msg = f"the inputs of {self.path} changed during planning; run the step again"
+                    raise RunError(msg)
+                if prerequisites and self._check_records(list(prerequisites), digests, {}) != prerequisites:
+                    msg = f"an earlier artifact of {self.path} changed during planning; run the step again"
+                    raise RunError(msg)
+            for target in targets:
+                if target.exists() and not target.is_file():
+                    msg = f"cannot replace {target}: it is not a file"
+                    raise RunError(msg)
+            originals = [target for target in targets if target.is_file() or target.is_symlink()]
+            replacements = [
+                (source, target) for source, target in zip(sources, targets, strict=True) if source.is_file()
+            ]
+            previous = sources[0].parent / "recovery"
+            previous.mkdir()
+            with (previous / "pending.json").open("w", encoding="utf-8") as journal:
+                json.dump([target.name for _, target in replacements if target not in originals], journal)
+                journal.flush()
+                os.fsync(journal.fileno())
+            previous.rename(self._recovery)
+            try:
+                for target in originals:
+                    target.replace(self._recovery / target.name)
+                for source, target in replacements:
+                    source.replace(target)
+                (self._recovery / "pending.json").rename(self._recovery / "committed.json")
+            except (OSError, KeyboardInterrupt):
+                self._recover_locked()
+                raise
+            self._recover_locked()
+
+    def _recover_locked(self) -> None:
+        """Restore an interrupted publication and remove completed journals.
+
+        Raises:
+            RunError: If the journal is unrecognized or recovery failed.
+        """
+        previous = self._recovery
+        try:
+            status = previous.lstat()
+        except FileNotFoundError:
+            return
+        junction = os.name == "nt" and status.st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+        invalid = f"cannot use unrecognized recovery journal at {previous}"
+        if not stat.S_ISDIR(status.st_mode) or junction:
+            raise RunError(invalid)
+        entries = set(previous.iterdir())
+        if not entries:
+            previous.rmdir()
+            return
+        pending = previous / "pending.json"
+        committed = previous / "committed.json"
+        markers = entries.intersection({pending, committed})
+        if len(markers) != 1:
+            raise RunError(invalid)
+        journal = markers.pop()
+        if journal.is_symlink() or not journal.is_file():
+            raise RunError(invalid)
+        managed = {self.config.name, self.chip.name}
         for stage in STAGE_FILES:
             for path in (self.artifact(stage), self.record(stage)):
-                path.unlink(missing_ok=True)
-                path.with_name(f"{path.name}.tmp").unlink(missing_ok=True)
-        # The chip comes first: a directory that holds a chip copy and no configuration is never
-        # taken for a directory of somebody else's configuration. An input that already is the copy
-        # of the run, as when a run is started again from its own files, stays where it is.
-        for source, copy in ((chip, self.chip), (config_path, self.config)):
-            if not (copy.exists() and copy.samefile(source)):
-                shutil.copyfile(source, copy)
-        return config
+                managed.update((path.name, path.name + ".tmp"))
+        backups = entries - {journal}
+        if any(path.name not in managed or not (path.is_file() or path.is_symlink()) for path in backups):
+            raise RunError(invalid)
+
+        if journal == committed:
+            with suppress(OSError):
+                for backup in backups:
+                    backup.unlink()
+                journal.unlink()
+                previous.rmdir()
+            return
+
+        try:
+            absent = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise RunError(invalid) from error
+        if not isinstance(absent, list) or any(not isinstance(name, str) or name not in managed for name in absent):
+            raise RunError(invalid)
+        if any(backup.name in absent for backup in backups):
+            raise RunError(invalid)
+
+        failed = []
+        for name in absent:
+            try:
+                (self.path / name).unlink(missing_ok=True)
+            except OSError as error:
+                failed.append(error)
+        for backup in backups:
+            try:
+                backup.replace(self.path / backup.name)
+            except OSError as error:
+                failed.append(error)
+        if failed:
+            msg = f"cannot restore all files of {self.path}; any remaining backups are in {previous}"
+            raise RunError(msg) from failed[0]
+        try:
+            journal.unlink()
+            previous.rmdir()
+        except OSError as error:
+            msg = f"cannot remove the recovery journal for {self.path}"
+            raise RunError(msg) from error
 
     def load(self) -> ConfigT:
         """Read the configuration of an existing run.
@@ -374,15 +658,21 @@ class RunDirectory:
                 if an input of an earlier step has changed since that step wrote its artifact. A
                 refused step leaves the directory as it was.
         """
+        self._check_destination()
+        self.recover()
         path = self.artifact(stage)
         if stage not in ARTIFACT_INPUTS:
             msg = f"no core call runs the {stage} step"
             raise RunError(msg)
         digests = input_digests(config, chip)
-        self._check_unchanged(stage, digests)
-        # Each step reads the artifacts of the steps before it, and a missing one stops the step
-        # before anything is deleted.
-        inputs = [self._read(earlier) for earlier in ARTIFACT_INPUTS[stage]]
+        ordered = list(STAGE_FILES)
+        verified = self._check_records(ordered[: ordered.index(stage)], digests, {})
+        inputs = []
+        for earlier in ARTIFACT_INPUTS[stage]:
+            if earlier not in verified:
+                msg = f"{self.artifact(earlier).name} is missing; run the {earlier} step first"
+                raise RunError(msg)
+            inputs.append(verified[earlier])
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
         level = min(max(verbosity, 0), 3)
@@ -395,81 +685,70 @@ class RunDirectory:
         if stage not in calls:
             msg = f"no core call runs the {stage} step"
             raise RunError(msg)
-        # The artifacts of the later steps go before the core runs, so that a step that fails leaves
-        # none of them beside an input they were not made from.
-        self.invalidate_after(stage)
-        self.record(stage).unlink(missing_ok=True)
         data = calls[stage]()
-        _write_whole(path, data)
-        # The record comes after the artifact, so an artifact never carries the record of other inputs.
         record = {name: digests[name] for name in STEP_INPUTS[stage]}
-        _write_whole(self.record(stage), (json.dumps(record, indent=2) + "\n").encode("utf-8"))
+        for earlier in ARTIFACT_INPUTS[stage]:
+            record[STAGE_FILES[earlier]] = hashlib.sha256(verified[earlier]).hexdigest()
+        record[_ARTIFACT_DIGEST] = hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory(prefix=".mqt-scpd-stage-", dir=self.path) as staging:
+            pending = RunDirectory(Path(staging))
+            pending.artifact(stage).write_bytes(data)
+            pending.record(stage).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+            sources = [
+                file
+                for step in ordered[ordered.index(stage) :]
+                for file in (pending.artifact(step), pending.record(step))
+            ]
+            self._publish_files(sources, digests=digests, prerequisites=verified)
         return StageResult(stage=stage, path=path, size=len(data))
 
-    def invalidate_after(self, stage: str) -> list[Path]:
-        """Delete the artifact and the record of every step after one.
-
-        Args:
-            stage: The step whose later steps lose their artifacts.
-
-        Returns:
-            The files that were removed.
-        """
-        names = list(STAGE_FILES)
-        removed = []
-        for later in names[names.index(stage) + 1 :]:
-            for path in (self.artifact(later), self.record(later)):
-                if path.is_file():
-                    path.unlink()
-                    removed.append(path)
-        return removed
-
-    def check_current(self, stage: str, digests: dict[str, str]) -> None:
-        """Refuse the artifact of a step, and every earlier artifact, when an input changed since.
-
-        A picture of a step draws its artifact over the earlier ones, so each of them has to come
-        from the inputs the run holds now. A step that failed keeps its old artifact without a
-        record, and that artifact is refused as well.
+    def check_current(self, stage: str, digests: dict[str, str], *, data: bytes | None = None) -> dict[str, bytes]:
+        """Check that the artifact and its preceding stages match their records.
 
         Args:
             stage: The step.
             digests: The digests of the inputs the run holds now, as :func:`input_digests` gives them.
+            data: The artifact bytes the caller will consume, if it already read them.
+
+        Returns:
+            The verified artifacts, indexed by stage.
 
         Raises:
-            RunError: If one of the artifacts has no readable record, or if an input it records has
-                changed.
+            RunError: If an artifact has no readable record or its bytes or inputs have changed.
         """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
         names = list(STAGE_FILES)
-        self._check_records(names[: names.index(stage) + 1], digests)
+        return self._check_records(names[: names.index(stage) + 1], digests, {stage: data} if data is not None else {})
 
-    def _check_unchanged(self, stage: str, digests: dict[str, str]) -> None:
-        """Refuse a step when an earlier artifact was made from inputs that have changed since.
+    def _check_records(
+        self, stages: Sequence[str], digests: dict[str, str], artifacts: dict[str, bytes]
+    ) -> dict[str, bytes]:
+        """Read and verify the artifacts that are present. The caller reports missing stage inputs.
 
-        Raises:
-            RunError: If an earlier artifact has no readable record, or if an input it records has
-                changed.
-        """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
-        names = list(STAGE_FILES)
-        self._check_records(names[: names.index(stage)], digests)
-
-    def _check_records(self, stages: Sequence[str], digests: dict[str, str]) -> None:
-        """Refuse artifacts made from inputs that have changed since.
-
-        A missing artifact is left to the caller, which names the step to run first.
+        Returns:
+            The exact bytes that passed verification.
 
         Raises:
-            RunError: If an artifact has no readable record, or if an input it records has changed.
+            RunError: If an artifact has no readable record or its bytes or inputs have changed.
         """
+        verified_digests: dict[str, str] = {}
         for earlier in stages:
             artifact = self.artifact(earlier)
-            if not artifact.is_file():
-                continue
+            if earlier not in artifacts:
+                try:
+                    artifacts[earlier] = artifact.read_bytes()
+                except FileNotFoundError:
+                    continue
             try:
                 record = json.loads(self.record(earlier).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 record = None
-            if not isinstance(record, dict) or set(record) != set(STEP_INPUTS[earlier]):
+            inputs = {STAGE_FILES[step]: step for step in ARTIFACT_INPUTS[earlier]}
+            if not isinstance(record, dict) or set(record) != {*STEP_INPUTS[earlier], *inputs, _ARTIFACT_DIGEST}:
                 msg = f"{artifact.name} carries no record of the inputs it was made from; run the {earlier} step again"
+                raise RunError(msg)
+            digest = hashlib.sha256(artifacts[earlier]).hexdigest()
+            if record[_ARTIFACT_DIGEST] != digest:
+                msg = f"{artifact.name} does not match its input record; run the {earlier} step again"
                 raise RunError(msg)
             for name in STEP_INPUTS[earlier]:
                 if record[name] != digests[name]:
@@ -478,20 +757,12 @@ class RunDirectory:
                         f"{where} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
                     )
                     raise RunError(msg)
-
-    def _read(self, stage: str) -> bytes:
-        path = self.artifact(stage)
-        if not path.is_file():
-            msg = f"{path.name} is missing; run the {stage} step first"
-            raise RunError(msg)
-        return path.read_bytes()
-
-
-def _write_whole(path: Path, data: bytes) -> None:
-    """Write a file under its own name only once all of it is written."""
-    partial = path.with_name(path.name + ".tmp")
-    try:
-        partial.write_bytes(data)
-        partial.replace(path)
-    finally:
-        partial.unlink(missing_ok=True)
+            for name, step in inputs.items():
+                if name not in verified_digests:
+                    msg = f"{name} is missing; run the {step} step first"
+                    raise RunError(msg)
+                if record[name] != verified_digests[name]:
+                    msg = f"{name} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
+                    raise RunError(msg)
+            verified_digests[artifact.name] = digest
+        return artifacts

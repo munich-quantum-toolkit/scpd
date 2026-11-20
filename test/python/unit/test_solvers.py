@@ -308,13 +308,18 @@ class FakeModel:
         return self.gurobi.gap
 
     def setParam(self, name: str, value: float) -> None:  # ruff: ignore[invalid-function-name]
-        """Record a parameter of the solve, and give the status that the solve without dual reductions ends with."""
+        """Record a parameter of the solve."""
         self.gurobi.parameters[name] = value
-        if name == "DualReductions":
-            self.Status = self.gurobi.status_without_dual_reductions
+
+    def reset(self) -> None:
+        """Discard the cached solve result."""
+        self.Status = 1
+        self.Runtime = 0.0
 
     def optimize(self) -> None:
         """Record that the model was solved."""
+        if self.Status == 1 and self.gurobi.parameters.get("DualReductions") == 0:
+            self.Status = self.gurobi.status_without_dual_reductions
         self.gurobi.solved.append(self.mps)
 
     def dispose(self) -> None:
@@ -522,7 +527,7 @@ def test_a_run_interrupted_in_gurobi_ends_with_130(
 
     out = capsys.readouterr().out
     assert "📌 assign\n   ✗ interrupted" in out
-    assert not (run / "03-assign.fb").exists()
+    assert not run.exists()
 
 
 @pytest.mark.parametrize(
@@ -531,7 +536,7 @@ def test_a_run_interrupted_in_gurobi_ends_with_130(
         (3, 0, "infeasible"),
         (2, 0, "gurobi stopped without a solution"),
         (8, 0, "gurobi stopped without a solution"),
-        (17, 1, "gurobi ended with status 17"),
+        (17, 0, "gurobi stopped without a solution"),
     ],
 )
 def test_gurobi_without_a_solution_returns_no_values(
@@ -551,7 +556,7 @@ def test_gurobi_without_a_solution_returns_no_values(
     assert gurobi.released == ["model", "environment"]
 
 
-@pytest.mark.parametrize("code", [7, 8, 9, 10, 13, 15, 16])
+@pytest.mark.parametrize("code", [7, 8, 9, 10, 13, 15, 16, 17])
 def test_gurobi_stopped_at_a_limit_keeps_its_solution(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
     """A limit that stops the search with a solution in hand gives that solution, as with HiGHS."""
     with_gurobi(monkeypatch, FakeGurobi(code, 1))

@@ -17,6 +17,8 @@ pipeline; both read the artifacts of a run directory, so either can draw a run t
 from __future__ import annotations
 
 import math
+import re
+import struct
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -85,11 +87,9 @@ class PlanningGeometry:
     #: A tone for each partition of ``partitions``, so that two partitions that share a border never
     #: share a tone: a small number from zero up. None for a partition the artwork closes in.
     partition_tones: list[int | None] = field(default_factory=list)
-    #: The blocked cells of the grid the partitions were cut on, as rectangles: the artwork as the
-    #: grid rasterizes it, and the approach of every port. A strip of free cells that no partition
-    #: reached, narrower than three cells, is not a blockage and is left out.
+    #: The blocked cells of the planner's detail grid, as rectangles in layout units.
     blocked: list[list[Point]] = field(default_factory=list)
-    #: What the approaches of the ports keep clear, as closed rings.
+    #: The port approaches as closed rings, including cells the planner reopened.
     keepout: list[list[Point]] = field(default_factory=list)
     #: The border between two partitions, as the runs of cell edges it consists of, one polyline
     #: per run.
@@ -261,22 +261,23 @@ def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Po
     """
     if grid is None or grid.origin is None or not grid.cellWidth or not grid.cellHeight:
         return [samples] if samples else []
-    origin_x, width, height = float(grid.origin.x), float(grid.cellWidth), float(grid.cellHeight)
-    edges: list[tuple[Point, Point]] = []
+    origin_x, origin_y = float(grid.origin.x), float(grid.origin.y)
+    width, height = float(grid.cellWidth), float(grid.cellHeight)
+    edges: list[tuple[tuple[int, int], tuple[int, int]]] = []
     for x, y in samples:
-        across = _corner(x, origin_x, width)
-        if abs(across - round(across)) < 0.25:
-            edges.append(((x, y - height / 2), (x, y + height / 2)))
+        column = _corner(x, origin_x, width)
+        row = _corner(y, origin_y, height)
+        if abs(column - round(column)) < 0.25:
+            c, r = round(column), math.floor(row)
+            edges.append(((c, r), (c, r + 1)))
         else:
-            edges.append(((x - width / 2, y), (x + width / 2, y)))
+            c, r = math.floor(column), round(row)
+            edges.append(((c, r), (c + 1, r)))
 
-    def key(point: Point) -> Point:
-        return (round(point[0], 3), round(point[1], 3))
-
-    touching: dict[Point, list[int]] = {}
+    touching: dict[tuple[int, int], list[int]] = {}
     for index, (first, second) in enumerate(edges):
-        touching.setdefault(key(first), []).append(index)
-        touching.setdefault(key(second), []).append(index)
+        touching.setdefault(first, []).append(index)
+        touching.setdefault(second, []).append(index)
     used = [False] * len(edges)
     runs: list[list[Point]] = []
     # A run starts where the border stops or forks; what is left after that are closed loops.
@@ -289,13 +290,13 @@ def _border_runs(samples: list[Point], grid: GridExtentT | None) -> list[list[Po
             while True:
                 used[edge] = True
                 first, second = edges[edge]
-                corner = key(second) if key(first) == corner else key(first)
+                corner = second if first == corner else first
                 run.append(corner)
                 onward = [other for other in touching[corner] if not used[other]]
                 if len(touching[corner]) != 2 or not onward:
                     break
                 edge = onward[0]
-            runs.append(run)
+            runs.append([(origin_x + (x - 0.5) * width, origin_y + (y - 0.5) * height) for x, y in run])
     return _bridged(runs, 3.0 * max(width, height))
 
 
@@ -333,75 +334,29 @@ def _bridged(runs: list[list[Point]], gap: float) -> list[list[Point]]:
 
 
 def _blocked(plan: CapacityPlanT) -> list[list[Point]]:
-    """The blocked cells of the detail grid, as rectangles in layout units.
-
-    The free cells are those of the partitions, so every other cell of the grid is blocked. A
-    partition outline runs along the cell corners, cell k from corner k to corner k + 1. A row is a
-    bit mask, and the outlines fill it under the even-odd rule. An opening by three by three cells
-    then removes what is narrower than three cells: free cells that touch only at their corners,
-    which no partition grows into, and no artwork or port approach is that thin.
+    """Draw the blocked detail cells as rectangles in layout units.
 
     Returns:
-        The rectangles, as closed rings of four corners.
+        The rectangles, as rings of four corners.
     """
-    grid = plan.detailGrid
-    if grid is None or grid.origin is None or not grid.width or not grid.height:
+    grid, words = plan.detailGrid, plan.blockedWords
+    if grid is None or grid.origin is None or words is None or not grid.width or not grid.height:
         return []
     width, height = int(grid.width), int(grid.height)
     origin_x, origin_y = float(grid.origin.x), float(grid.origin.y)
     cell_width, cell_height = float(grid.cellWidth), float(grid.cellHeight)
-    crossings: list[list[int]] = [[] for _ in range(height)]
-    for partition in _entries(plan.partitions):
-        for ring in _entries(partition.outlines):
-            corners = [
-                (round(_corner(vertex.x, origin_x, cell_width)), round(_corner(vertex.y, origin_y, cell_height)))
-                for vertex in _entries(ring.vertices)
-            ]
-            for (ax, ay), (bx, by) in zip(corners, [*corners[1:], *corners[:1]], strict=True):
-                if ax == bx and ay != by:
-                    for row in range(max(min(ay, by), 0), min(max(ay, by), height)):
-                        crossings[row].append(ax)
+    packed = struct.pack(f"<{len(words)}Q", *words)
     full = (1 << width) - 1
-    blocked = []
-    for row in crossings:
-        free = 0
-        row.sort()
-        for entry, leave in zip(row[0::2], row[1::2], strict=False):
-            start, end = max(entry, 0), min(leave, width)
-            if end > start:
-                free |= ((1 << (end - start)) - 1) << start
-        blocked.append(full & ~free)
-
-    def erode(rows: list[int]) -> list[int]:
-        # Off the grid counts as blocked, so the blocked border of the grid survives.
-        across = [row & ((row << 1) | 1) & ((row >> 1) | (1 << (width - 1))) for row in rows]
-        return [
-            (across[y - 1] if y > 0 else full) & across[y] & (across[y + 1] if y + 1 < height else full)
-            for y in range(height)
-        ]
-
-    def dilate(rows: list[int]) -> list[int]:
-        across = [(row | (row << 1) | (row >> 1)) & full for row in rows]
-        return [
-            (across[y - 1] if y > 0 else 0) | across[y] | (across[y + 1] if y + 1 < height else 0)
-            for y in range(height)
-        ]
-
-    opened = dilate(erode(blocked))
     # Runs of a row that the row above continues unchanged grow one rectangle.
     rectangles: list[list[Point]] = []
     open_runs: dict[tuple[int, int], int] = {}
     for y in range(height + 1):
-        row = opened[y] if y < height else 0
-        runs, x = set(), 0
-        while row >> x:
-            if (row >> x) & 1:
-                start = x
-                while (row >> x) & 1:
-                    x += 1
-                runs.add((start, x))
-            else:
-                x += 1
+        first_bit = y * width
+        first_byte, skip = divmod(first_bit, 8)
+        last_byte = (first_bit + width + 7) // 8
+        row = (int.from_bytes(packed[first_byte:last_byte], "little") >> skip) & full if y < height else 0
+        # The least significant bit is the first column.
+        runs = {match.span() for match in re.finditer(r"1+", f"{row:b}"[::-1])}
         for run in list(open_runs):
             if run not in runs:
                 top = open_runs.pop(run)
@@ -504,8 +459,7 @@ def _capacity(plan: CapacityPlanT, geometry: PlanningGeometry) -> None:
 def _chains(plan: CapacityPlanT, chip: ChipT, geometry: PlanningGeometry) -> None:
     """Fill the chain layer: one line per link of every capacity chain.
 
-    A chain is a tree of gates from a launcher to the targets it feeds. Drawn as the lines between
-    the ports and the gates it names, a chain is visible without a route made up for it.
+    The lines show the links between targets and bottlenecks in each chain.
     """
     nodes = _entries(plan.nodes)
     bottlenecks = _entries(plan.bottlenecks)
@@ -520,24 +474,18 @@ def _chains(plan: CapacityPlanT, chip: ChipT, geometry: PlanningGeometry) -> Non
             return ((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)
         return None
 
-    # A node is walked once. The core refuses a plan whose chains meet or cycle, but an artifact
-    # read here was not checked, and a cycle must not recurse without end.
     walked: set[int] = set()
-
-    def walk(index: int) -> None:
-        walked.add(index)
-        here = position(index)
-        for child in _indices(nodes[index].next):
-            if child < len(nodes):
-                there = position(child)
-                if here is not None and there is not None:
-                    geometry.chains.append((here, there))
-                if child not in walked:
-                    walk(child)
-
     for root in _indices(plan.chains):
-        if root < len(nodes) and root not in walked:
-            walk(root)
+        pending: list[tuple[Point | None, int]] = [(None, root)]
+        while pending:
+            previous, index = pending.pop()
+            here = position(index)
+            if previous is not None and here is not None:
+                geometry.chains.append((previous, here))
+            if index in walked:
+                continue
+            walked.add(index)
+            pending.extend((here, child) for child in reversed(_indices(nodes[index].next)))
 
 
 def _global(routing: GlobalRoutingT, geometry: PlanningGeometry, *, lattice: bool = True) -> None:
@@ -727,8 +675,9 @@ def planning_geometry(
     chip: ChipT,
     stage: str,
     capacity: bytes | None = None,
-    assignment: bytes | None = None,
     global_routing: bytes | None = None,
+    *,
+    assignment: bytes | None = None,
 ) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -739,11 +688,10 @@ def planning_geometry(
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
             free space they had to fit into: the global stage over the cells the grid blocked, and
             the assign and corridor stages over the partitions their chords and wires run through.
-        assignment: The assignment artifact of the same run, for the corridor stage, which is drawn
-            with the feedlines that its resonator wires start at and the approach of every wire to
-            its target port.
         global_routing: The global artifact of the same run, for the assign and corridor stages,
             which are drawn with the lattice edges that the inner circuit selected.
+        assignment: The assignment artifact of the same run. Corridor uses it to draw feedlines and
+            the approach of each wire to its target port.
 
     Returns:
         The geometry, in layout units.

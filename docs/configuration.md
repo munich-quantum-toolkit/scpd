@@ -1,12 +1,8 @@
 # Configuration Reference
 
-A `config.toml` says how MQT SCPD plans a chip. This page lists every key with
-its default and its meaning. A key without a default is required in its section.
-Every length is in layout units, the µm of the chip input. A section or key that
-MQT SCPD does not know is an error.
-
-`mqt-scpd doctor -c config.toml` checks a configuration and its chip before a
-run.
+Run `mqt-scpd doctor -c config.toml` to check a chip and its configuration.
+Lengths are in µm. A dash in the default column marks a required key. MQT SCPD
+rejects unknown sections and keys.
 
 ## `[chip]`
 
@@ -31,8 +27,9 @@ port label. Every port must match exactly one of the role patterns `launcher`,
 | `bridge_pair`  | `""`    | The ports where a wire crosses a component instead of ending at it; empty for none          |
 | `component`    | `""`    | The component a port belongs to, as one capture group over the label; empty for no grouping |
 
-A chip with `bridge_pair` ports needs the `component` pattern, and the
-`component` pattern has to match every `bridge_pair` port.
+The `component` pattern must match every `bridge_pair` port. Resonator,
+conventional, and bridge ports must face a multiple of 45° so their approaches
+follow a grid axis or diagonal. `plan` and `doctor` check this before Capacity.
 
 ## `[ports.sequences]`
 
@@ -45,8 +42,9 @@ A chip with `bridge_pair` ports needs the `component` pattern, and the
 
 Each rule pairs the two `bridge_pair` ports that a wire crosses a component
 between. Both sides are regular expressions with exactly one capture group. Two
-ports pair when they belong to one component and their captures are equal. The
-rules apply in the order the file lists them.
+ports pair when they belong to one component and their captures are equal. Each
+component and capture must match one port per side of its rule. The pairs follow
+the rule order in the file.
 
 | Key      | Default | Meaning                           |
 | -------- | ------- | --------------------------------- |
@@ -83,29 +81,28 @@ cell into a finer detail grid.
 | `capacity_cells_y` | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio, any other value is at least two |
 | `detail_factor`    | `30`    | The detail cells per capacity cell along each axis; at least one                                                          |
 
-No stage reads `launcher_offset_x` and `launcher_offset_y` any more. The loader
-still accepts them, and `doctor` and `plan` warn about each one; a later version
-refuses them.
+Remove the deprecated `launcher_offset_x` and `launcher_offset_y` keys. `doctor`
+and `plan` warn when these keys are present.
 
-The detail grid has `capacity_cells_x` × `detail_factor` cells across and
-`capacity_cells_y` × `detail_factor` cells down; with `capacity_cells_y` at `0`,
-the aspect ratio of the chip sets the capacity cells down. The detail grid may
-have at most 25,000,000 cells, for example 5000 × 5000. The capacity step holds
-about 120 bytes per detail cell, so the limit stands for about 3 GB of memory.
-The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
-refuse a larger grid before the first stage of a run through the capacity,
-assignment or corridor step, and name the grid that the configuration asks for.
+Multiply each capacity grid dimension by `detail_factor` to get the detail grid.
+The limit is 25,000,000 detail cells. Capacity uses about 120 bytes per cell, or
+about 3 GB at the limit. The 69q benchmark uses 1500 × 1500 cells.
+
+The longer detail cell step may exceed the shorter one by up to 10%. Use
+`capacity_cells_y = 0` to derive the height from the chip aspect ratio. Increase
+`capacity_cells_x` if rounding still puts the grid outside this limit.
 
 ## `[stages.capacity]`
 
-| Key                    | Default | Meaning                                                                                                                                                                                                 |
-| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                                                                 |
-| `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive                                                 |
-| `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it, and the least distance between the crossings of two wires; it decides how many wires a border lets through; positive |
+| Key                    | Default | Meaning                                                                                                                                                 |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                 |
+| `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive |
+| `crossing_pitch`       | `165.0` | Minimum spacing between border crossings of different wires; positive                                                                                   |
 
-`crossing_pitch` applies to crossings only. A wire may cross a border closer
-than one pitch to the target cell or the feed of another wire.
+Capacity counts the crossing slots on each partition border. Corridor uses the
+same slots and enforces the crossing pitch across different borders. A crossing
+can therefore block a slot on a neighboring border.
 
 ## `[stages.global]`
 
@@ -114,32 +111,25 @@ than one pitch to the target cell or the feed of another wire.
 | `router`           | `""`    | The implementation of the step; empty takes `hanan-milp`                                                   |
 | `internal_bridges` | `false` | Whether an inner wire may cross a component that the outer ring does not reach, through its own bridges    |
 
-Every inner wire starts at the inner end of a bridge whose other end is on the
-ring, and surfaces at that ring end. With `internal_bridges`, the wire may cross
-internal bridges on the way. No ring port starts an inner wire, because the
-assignment gives every ring port a wire of its own. An inner port that no such
-wire can reach is a fail of the global step. An inner resonator that is a fail
-gets no feed.
+Each inner wire starts at the inner end of a ring bridge and surfaces at its
+ring end. It can cross other bridges when `internal_bridges` is enabled. Global
+reports unreachable inner ports as fails. An unreachable inner resonator gets no
+feed.
 
-The lattice lines of a port run through the point
-`[design_rules] min_straight_length` in front of it. The step refuses two ports
-of one capacity chain that can carry an inner wire when these points coincide,
-since both would meet the lattice of their chain at one node. A port without an
-inner wire, such as a ring port, may share its point with any port. `doctor`
-does not check this; the step refuses such a chip when it runs.
+For each port in a lattice, Global uses a point `min_straight_length` in front
+of the port. Two ports that can carry inner wires on the same capacity chain
+must have distinct points. A port without an inner wire may share a point. The
+`doctor` preflight leaves this check to Global.
 
-The wires of the ring ports behind a gate of a capacity chain pass that gate on
-their way to a launcher, and so do the inner wires that surface there. When the
-gates have no room for all of them, the step solves the circuit again and lets
-ring ports go without room. Each such ring port is a fail of the global step,
-and `-vv` names it. A port lies on one chain, and a gate on several chains holds
-the wires of all of them. The step checks a gate with some room only where it
-solves an inner circuit, and only on the chains without inner ports. Elsewhere,
-a gate that has room for some of its ring ports but not for all gives no fail. A
-ring port that no bridge joins always needs a way to a launcher: where its chain
-has no launcher, or a gate without room cuts it off, it is a fail too, also on a
-chip without inner ports. The ring end of a bridge may be cut off, because it
-needs a way only where an inner wire surfaces there.
+A gate's budget is shared by all chains that cross it. Ring ports and inner
+wires that surface on the ring both use that budget. When the budget falls
+short, Global can solve a second model that leaves some ring ports out. Global
+counts these ports as fails and lists them at `-vv`.
+
+Global checks gates with room for some ring ports only when it solves an inner
+circuit, and only on chains without inner ports. A ring port without a bridge
+always needs a path to a launcher, even on a chip without inner ports. A ring
+bridge needs a path when an inner wire surfaces there.
 
 ## `[stages.assignment]`
 
@@ -148,29 +138,24 @@ needs a way only where an inner wire surfaces there.
 | `assigner`        | `""`    | The implementation of the step; empty takes `ordered-milp`                                                                 |
 | `launcher_target` | `0`     | How many feedline chain ends stop at a launcher; `0` leaves it unset, and `plan` refuses a run that reaches the assignment |
 
-`launcher_target` plus `[design_rules] feedline_terminations` must be even,
-since every feedline chain has two ends. A ring with resonators sets four more
-limits, which the assignment refuses to break:
+For a ring with resonators, `launcher_target` and `feedline_terminations` count
+the ends of its feedline chains. Apply these rules.
 
-- the conventional ports of the ring plus `launcher_target` are at most the
-  launcher ports of the chip;
-- `launcher_target` and `feedline_terminations` are each at most the resonators
-  of the ring;
-- `feedline_terminations` is at most `launcher_target`, since every feedline
-  chain has a launcher at one end at least;
-- the resonators of the ring are at most the feedline chains,
-  (`launcher_target` + `feedline_terminations`) / 2, times
-  `[design_rules] max_feedline_utilization`.
+- The total is even. The number of chains equals half the total.
+- Conventional ring ports and launcher ends together fit on the chip's
+  launchers.
+- `launcher_target` and `feedline_terminations` are each at most the number of
+  resonators on the ring.
+- Terminations cannot outnumber launcher ends. Each chain needs a launcher.
+- The number of resonators must fit within the number of chains times
+  `max_feedline_utilization`.
 
-The global step decides whether a ring port at a bridge stays in the ring and
-whether it is a resonator. `plan` and `doctor` refuse before the first stage a
-configuration that breaks a limit for every such decision.
-
-The assignment also refuses a solution in which two feeds lie closer than
-`[design_rules] min_wire_spacing`, such as two conventional ports at launcher
-slots in one cell. It refuses two feeds that round onto one cell of the detail
-grid as well, since the Corridor step starts each wire at that cell; a detail
-cell narrower than about 0.7 wire spacings rules this out.
+Global decides which bridge ports stay on the ring and which count as
+resonators. `plan` and `doctor` reject configurations that violate a limit for
+every possible ring. Assignment also requires feed points to respect
+`min_wire_spacing` and map to distinct detail cells. Refine the detail grid if
+distinct feeds round to the same cell. Corridor uses those cells as its wire
+starts.
 
 ## `[stages.solver]`
 
@@ -181,64 +166,54 @@ cell narrower than about 0.7 wire spacings rules this out.
 | `relative_gap` | `0.0`   | The relative gap at which a solve may stop; `0.0` keeps the gap of the backend; not negative  |
 | `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
 
-A solve that the report calls `optimal` is optimal within the relative gap: its
-objective and the best bound the solver proved differ by at most that fraction
-of the objective. With `relative_gap` at `0.0`, the gap is the default of the
-backend, which is `1e-4` for HiGHS (`mip_rel_gap`) and for Gurobi (`MIPGap`). A
-solve also stops when the objective and the bound differ by less than the
-absolute gap of the backend: `1e-6` for HiGHS (`mip_abs_gap`) and `1e-10` for
-Gurobi (`MIPGapAbs`). For an objective near zero, the absolute gap decides.
+Install the Gurobi backend with `uv pip install "mqt-scpd[gurobi]"`. Gurobi has
+no Windows ARM64 wheel. The bundled license allows up to 2,000 variables and
+2,000 constraints per linear model. Larger models need a full license. Run
+`mqt-scpd doctor` with the configuration to check the backend before planning.
 
-HiGHS and Gurobi can report different optimal solutions: their objectives can
-differ by up to the relative gap, and between solutions of equal objective each
-backend can choose another one. A later stage then works on another input and
-can reach another objective.
+`optimal` means the gap between the best solution and the best bound is within
+the solver's tolerance. Both backends default to a relative gap of `1e-4`
+(`mip_rel_gap` in HiGHS and `MIPGap` in Gurobi). Their absolute gaps are `1e-6`
+(`mip_abs_gap`) and `1e-10` (`MIPGapAbs`), respectively. The absolute gap
+matters near zero. Backends can pick different solutions within the tolerance or
+break ties differently. That can change the next stage's inputs.
 
-A solve that stops at `time_limit` keeps the best solution it has found by then.
-That solution depends on the speed of the machine, so the same inputs can give
-different artifacts. Leave `time_limit` at `0.0` where a run has to repeat. Such
-a solution of the Global stage can hold wires that reach no target: a wire
-between the inner ends of two ring bridges, a closed loop through internal
-bridges, or a closed loop over crossings. The Global artifact and its objective
-leave these wires out.
+At `time_limit`, the solver returns its best feasible solution if it found one.
+The limit applies to each model. Global can solve two models when port capacity
+falls short, and reports when it used a solution from an early stop. Its gap
+applies to a model objective that includes penalties for missing ports. Its
+reported wire length counts only wires that reach a target.
 
-With `threads` at `0`, HiGHS uses half the hardware threads of the machine, and
-Gurobi chooses the count itself (its parameter `Threads`). The count changes the
-order of the search, so the time of a solve, its node count and, between optimal
-solutions of equal objective, its answer can differ from one machine to the
-next. A fixed `threads` makes runs on different machines comparable. The limit
-of `1024` is the largest value that Gurobi accepts.
+With `threads = 0`, the bundled HiGHS uses the physical cores available to the
+process, and Gurobi selects its own count. Thread counts and time limits can
+change the solution. Use a fixed thread count and leave `time_limit` at `0.0`
+for more comparable runs.
+
+HiGHS supports concurrent solves from separate calling threads. A callback
+cannot start a nested solve. To change the thread count on a calling thread, let
+any other active solves in MQT SCPD finish first.
 
 ## `[stages.corridor]`
 
-| Key              | Default | Meaning                                                                                                                                                                |
-| ---------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `router`         | `""`    | The implementation of the step; empty takes `partition-astar`                                                                                                          |
-| `rounds`         | `12`    | The most sweeps over the connections, in turn forward and backward; at least `1`                                                                                       |
-| `max_relaxation` | `4`     | How many neighboring connections along a sweep a connection without a way may rip up, and how many wires in its way it may move aside; the stage limits it (see below) |
+| Key              | Default | Meaning                                                       |
+| ---------------- | ------- | ------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar` |
+| `rounds`         | `12`    | Maximum number of routing sweeps; at least one                |
+| `max_relaxation` | `4`     | Maximum number of connections to remove per reroute attempt   |
 
-The later sweeps let a connection without a way take room that another
-connection has not claimed yet. A sweep can take a way from a connection that
-had one, so the fails of the rounds can go up as well as down. The stage keeps
-the plan of the round with the fewest fails, and goes back to it when the last
-round ends with more. The fails of a round count every connection without a way
-at its end, also one that the round ripped up after its sweep had passed it and
-so did not place again. After the rounds, one last pass offers every connection
-without a way the free slots of that plan, and rips up nothing; the stage block
-shows it as `free slots` when it places a connection. Within a sweep, a
-connection without a way also raises the price of the slots in its way that
-another wire holds, so that the next sweeps leave them to it. The step that
-moves the wires in its way aside raises the price, so with `max_relaxation` at
-`0`, no price rises.
+Corridor alternates forward and backward sweeps. It can remove routes to make
+room and raises the cost of occupied slots for later sweeps. The stage keeps the
+round with the fewest unrouted connections, then tries the remaining connections
+using free slots only. It reports a `free slots` entry if that pass routes a
+connection.
 
-The stage limits `max_relaxation` to a value below half the number of
-connections. A connection that may rip up all the others takes their room, they
-find no way back, and every round repeats this. With two or more connections,
-the limit is at least `1`, so that two connections that want one slot can still
-move each other aside. With the default of `4`, the eight benchmark chips route
-every wire within two rounds. `2` is the smallest value that routes every wire
-there, in up to four rounds. A value above `4` routes them in two rounds as
-well, but each round takes longer.
+With fewer than two connections, Corridor uses zero relaxation. Otherwise, it
+caps `max_relaxation` at half the number of other connections, rounded down,
+with a minimum cap of one. Set `max_relaxation = 0` to disable route removal and
+slot cost increases.
+
+Corridor checks wire intersections with straight segments inside each partition.
+This check is exact for convex partitions.
 
 ## `[run]`
 

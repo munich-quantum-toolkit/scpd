@@ -180,7 +180,7 @@ enum class CapacityElement : uint8_t {
   Target = 1,
   /// A gate the wires beyond it have to pass.
   Bottleneck = 2,
-  /// The launcher the chain starts at.
+  /// A chamber from which a launcher can be reached.
   Launcher = 3,
   MIN = Unset,
   MAX = Launcher
@@ -971,10 +971,9 @@ struct CapacityNodeT : public ::flatbuffers::NativeTable {
 
 /// One link of a capacity chain.
 ///
-/// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
-/// stored flat and a link names its branches by index. Two chains can then
-/// share a subtree without storing it twice. A target lies on one chain only,
-/// so a shared subtree holds no target.
+/// A link names its branches by index. The flat node list keeps serialization
+/// depth fixed and lets two chains share a subtree. A target lies on one
+/// chain only, so a shared subtree holds no target.
 struct CapacityNode FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef CapacityNodeT NativeTableType;
   typedef CapacityNodeBuilder Builder;
@@ -1094,6 +1093,7 @@ struct CapacityPlanT : public ::flatbuffers::NativeTable {
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT>> nodes{};
   std::vector<uint32_t> chains{};
   std::vector<std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT>> port_keepout{};
+  std::vector<uint64_t> blocked_words{};
   CapacityPlanT() = default;
   CapacityPlanT(const CapacityPlanT &o);
   CapacityPlanT(CapacityPlanT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1117,7 +1117,8 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_LAUNCHERS = 14,
     VT_NODES = 16,
     VT_CHAINS = 18,
-    VT_PORT_KEEPOUT = 20
+    VT_PORT_KEEPOUT = 20,
+    VT_BLOCKED_WORDS = 22
   };
   const mqt::scpd::flatbuffers::artifacts::GridExtent *capacity_grid() const {
     return GetPointer<const mqt::scpd::flatbuffers::artifacts::GridExtent *>(VT_CAPACITY_GRID);
@@ -1144,18 +1145,17 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *chains() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_CHAINS);
   }
-  /// What the approaches of the ports keep clear, as closed rings in layout
-  /// units: the strip a wire leaves each routable port along, extended
-  /// forward and backward.
-  ///
-  /// These are obstacles to everything the stages route, and they are not
-  /// chip artwork, so they are a layer of their own rather than more
-  /// polygons of the chip. Only the cells that were free before a band took
-  /// them are here; where a band covers artwork, the artwork is already
-  /// drawn. The rings follow the cells, so a band along a diagonal is the
-  /// staircase the grid blocks.
+  /// Closed rings in layout units for drawing the port approaches. They
+  /// cover cells that were free before a band took them, including cells
+  /// that the planner reopened. They do not determine routing obstacles.
   const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *port_keepout() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *>(VT_PORT_KEEPOUT);
+  }
+  /// The blocked cells of detail_grid after the planner places all targets
+  /// and launcher slots. Cell i in row-major order is bit i % 64 of word
+  /// i / 64, starting at the least significant bit. Padding bits are zero.
+  const ::flatbuffers::Vector<uint64_t> *blocked_words() const {
+    return GetPointer<const ::flatbuffers::Vector<uint64_t> *>(VT_BLOCKED_WORDS);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -1184,6 +1184,8 @@ struct CapacityPlan FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_PORT_KEEPOUT) &&
            verifier.VerifyVector(port_keepout()) &&
            verifier.VerifyVectorOfTables(port_keepout()) &&
+           VerifyOffsetRequired(verifier, VT_BLOCKED_WORDS) &&
+           verifier.VerifyVector(blocked_words()) &&
            verifier.EndTable();
   }
   CapacityPlanT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1222,6 +1224,9 @@ struct CapacityPlanBuilder {
   void add_port_keepout(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> port_keepout) {
     fbb_.AddOffset(CapacityPlan::VT_PORT_KEEPOUT, port_keepout);
   }
+  void add_blocked_words(::flatbuffers::Offset<::flatbuffers::Vector<uint64_t>> blocked_words) {
+    fbb_.AddOffset(CapacityPlan::VT_BLOCKED_WORDS, blocked_words);
+  }
   explicit CapacityPlanBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1237,6 +1242,7 @@ struct CapacityPlanBuilder {
     fbb_.Required(o, CapacityPlan::VT_LAUNCHERS);
     fbb_.Required(o, CapacityPlan::VT_NODES);
     fbb_.Required(o, CapacityPlan::VT_CHAINS);
+    fbb_.Required(o, CapacityPlan::VT_BLOCKED_WORDS);
     return o;
   }
 };
@@ -1251,8 +1257,10 @@ inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>>> launchers = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>>> nodes = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> chains = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> port_keepout = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>> port_keepout = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint64_t>> blocked_words = 0) {
   CapacityPlanBuilder builder_(_fbb);
+  builder_.add_blocked_words(blocked_words);
   builder_.add_port_keepout(port_keepout);
   builder_.add_chains(chains);
   builder_.add_nodes(nodes);
@@ -1280,7 +1288,8 @@ inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlanDirect(
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::LauncherSlot>> *launchers = nullptr,
     const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> *nodes = nullptr,
     const std::vector<uint32_t> *chains = nullptr,
-    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *port_keepout = nullptr) {
+    const std::vector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> *port_keepout = nullptr,
+    const std::vector<uint64_t> *blocked_words = nullptr) {
   auto partitions__ = partitions ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Partition>>(*partitions) : 0;
   auto borders__ = borders ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::PartitionBorder>>(*borders) : 0;
   auto bottlenecks__ = bottlenecks ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::Bottleneck>>(*bottlenecks) : 0;
@@ -1288,6 +1297,7 @@ inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlanDirect(
   auto nodes__ = nodes ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>>(*nodes) : 0;
   auto chains__ = chains ? _fbb.CreateVector<uint32_t>(*chains) : 0;
   auto port_keepout__ = port_keepout ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>>(*port_keepout) : 0;
+  auto blocked_words__ = blocked_words ? _fbb.CreateVector<uint64_t>(*blocked_words) : 0;
   return mqt::scpd::flatbuffers::artifacts::CreateCapacityPlan(
       _fbb,
       capacity_grid,
@@ -1298,7 +1308,8 @@ inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlanDirect(
       launchers__,
       nodes__,
       chains__,
-      port_keepout__);
+      port_keepout__,
+      blocked_words__);
 }
 
 ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityPlanT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3012,7 +3023,8 @@ inline bool operator==(const CapacityPlanT &lhs, const CapacityPlanT &rhs) {
       (lhs.launchers.size() == rhs.launchers.size() && std::equal(lhs.launchers.cbegin(), lhs.launchers.cend(), rhs.launchers.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LauncherSlotT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::LauncherSlotT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
       (lhs.nodes.size() == rhs.nodes.size() && std::equal(lhs.nodes.cbegin(), lhs.nodes.cend(), rhs.nodes.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
       (lhs.chains == rhs.chains) &&
-      (lhs.port_keepout.size() == rhs.port_keepout.size() && std::equal(lhs.port_keepout.cbegin(), lhs.port_keepout.cend(), rhs.port_keepout.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &b) { return (a == b) || (a && b && *a == *b); }));
+      (lhs.port_keepout.size() == rhs.port_keepout.size() && std::equal(lhs.port_keepout.cbegin(), lhs.port_keepout.cend(), rhs.port_keepout.cbegin(), [](std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &a, std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT> const &b) { return (a == b) || (a && b && *a == *b); })) &&
+      (lhs.blocked_words == rhs.blocked_words);
 }
 
 inline bool operator!=(const CapacityPlanT &lhs, const CapacityPlanT &rhs) {
@@ -3023,7 +3035,8 @@ inline bool operator!=(const CapacityPlanT &lhs, const CapacityPlanT &rhs) {
 inline CapacityPlanT::CapacityPlanT(const CapacityPlanT &o)
       : capacity_grid((o.capacity_grid) ? new mqt::scpd::flatbuffers::artifacts::GridExtentT(*o.capacity_grid) : nullptr),
         detail_grid((o.detail_grid) ? new mqt::scpd::flatbuffers::artifacts::GridExtentT(*o.detail_grid) : nullptr),
-        chains(o.chains) {
+        chains(o.chains),
+        blocked_words(o.blocked_words) {
   partitions.reserve(o.partitions.size());
   for (const auto &partitions_ : o.partitions) { partitions.emplace_back((partitions_) ? new mqt::scpd::flatbuffers::artifacts::PartitionT(*partitions_) : nullptr); }
   borders.reserve(o.borders.size());
@@ -3048,6 +3061,7 @@ inline CapacityPlanT &CapacityPlanT::operator=(CapacityPlanT o) FLATBUFFERS_NOEX
   std::swap(nodes, o.nodes);
   std::swap(chains, o.chains);
   std::swap(port_keepout, o.port_keepout);
+  std::swap(blocked_words, o.blocked_words);
   return *this;
 }
 
@@ -3069,6 +3083,7 @@ inline void CapacityPlan::UnPackTo(CapacityPlanT *_o, const ::flatbuffers::resol
   { auto _e = nodes(); if (_e) { _o->nodes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->nodes[_i]) { _e->Get(_i)->UnPackTo(_o->nodes[_i].get(), _resolver); } else { _o->nodes[_i] = std::unique_ptr<mqt::scpd::flatbuffers::artifacts::CapacityNodeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->nodes.resize(0); } }
   { auto _e = chains(); if (_e) { _o->chains.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->chains[_i] = _e->Get(_i); } } else { _o->chains.resize(0); } }
   { auto _e = port_keepout(); if (_e) { _o->port_keepout.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->port_keepout[_i]) { _e->Get(_i)->UnPackTo(_o->port_keepout[_i].get(), _resolver); } else { _o->port_keepout[_i] = std::unique_ptr<mqt::scpd::flatbuffers::geometry::PolygonT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->port_keepout.resize(0); } }
+  { auto _e = blocked_words(); if (_e) { _o->blocked_words.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->blocked_words[_i] = _e->Get(_i); } } else { _o->blocked_words.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<CapacityPlan> CreateCapacityPlan(::flatbuffers::FlatBufferBuilder &_fbb, const CapacityPlanT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3088,6 +3103,7 @@ inline ::flatbuffers::Offset<CapacityPlan> CapacityPlan::Pack(::flatbuffers::Fla
   auto _nodes = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::CapacityNode>> (_o->nodes.size(), [](size_t i, _VectorArgs *__va) { return CreateCapacityNode(*__va->__fbb, __va->__o->nodes[i].get(), __va->__rehasher); }, &_va );
   auto _chains = _fbb.CreateVector(_o->chains);
   auto _port_keepout = _o->port_keepout.size() ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::geometry::Polygon>> (_o->port_keepout.size(), [](size_t i, _VectorArgs *__va) { return CreatePolygon(*__va->__fbb, __va->__o->port_keepout[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _blocked_words = _fbb.CreateVector(_o->blocked_words);
   return mqt::scpd::flatbuffers::artifacts::CreateCapacityPlan(
       _fbb,
       _capacity_grid,
@@ -3098,7 +3114,8 @@ inline ::flatbuffers::Offset<CapacityPlan> CapacityPlan::Pack(::flatbuffers::Fla
       _launchers,
       _nodes,
       _chains,
-      _port_keepout);
+      _port_keepout,
+      _blocked_words);
 }
 
 
@@ -4157,7 +4174,8 @@ inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
     { ::flatbuffers::ET_SEQUENCE, 1, 4 },
     { ::flatbuffers::ET_SEQUENCE, 1, 5 },
     { ::flatbuffers::ET_UINT, 1, -1 },
-    { ::flatbuffers::ET_SEQUENCE, 1, 6 }
+    { ::flatbuffers::ET_SEQUENCE, 1, 6 },
+    { ::flatbuffers::ET_ULONG, 1, -1 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     mqt::scpd::flatbuffers::artifacts::GridExtentTypeTable,
@@ -4177,10 +4195,11 @@ inline const ::flatbuffers::TypeTable *CapacityPlanTypeTable() {
     "launchers",
     "nodes",
     "chains",
-    "port_keepout"
+    "port_keepout",
+    "blocked_words"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 9, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 10, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }
@@ -4438,7 +4457,7 @@ inline const mqt::scpd::flatbuffers::artifacts::Artifact *GetSizePrefixedArtifac
 }
 
 inline const char *ArtifactIdentifier() {
-  return "SCP1";
+  return "SCP2";
 }
 
 inline bool ArtifactBufferHasIdentifier(const void *buf) {

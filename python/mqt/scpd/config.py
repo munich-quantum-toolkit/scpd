@@ -198,9 +198,6 @@ def _read_ports(table: dict[str, Any], problems: list[str]) -> PortConfigT:
         config.patterns.launcher = patterns.take("launcher", str, required=True, default="")
         config.patterns.resonator = patterns.take("resonator", str, required=True, default="")
         config.patterns.conventional = patterns.take("conventional", str, required=True, default="")
-        # Both are optional. A bridge port is one where a wire crosses a component rather than ends,
-        # and [[ports.bridge_pairs]] says which two of them pair. The component pattern declares
-        # which part of a label names the component, so no algorithm reads a label itself.
         config.patterns.bridgePair = patterns.take("bridge_pair", str, default="")
         config.patterns.component = patterns.take("component", str, default="")
         patterns.finish()
@@ -501,19 +498,27 @@ def load_config(path: Path, *, strict: bool = False) -> ConfigT:
 
     Returns:
         The configuration.
+    """
+    return parse_config(read_config_text(path), source=str(path), strict=strict)
+
+
+def read_config_text(path: Path) -> str:
+    """Read the exact UTF-8 text of a configuration.
+
+    Returns:
+        The source text, with its line endings intact.
 
     Raises:
-        ConfigError: If the file cannot be read or has a problem.
+        ConfigError: If the file cannot be read or is not UTF-8.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_bytes().decode("utf-8")
     except OSError as error:
         msg = f"cannot read {path}: {error}"
         raise ConfigError(msg) from error
     except UnicodeDecodeError as error:
         msg = f"cannot read {path}: it is not UTF-8 ({error.reason} at byte {error.start})"
         raise ConfigError(msg) from error
-    return parse_config(text, source=str(path), strict=strict)
 
 
 def write_config(config: ConfigT) -> bytes:

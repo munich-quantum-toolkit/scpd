@@ -23,10 +23,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -255,6 +257,7 @@ TEST(HighsBackend, RefusesThreadsThatHighsCannotCount) {
 TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {
   const auto model = hardKnapsack();
   testing::internal::CaptureStdout();
+  testing::internal::CaptureStderr();
   const auto quiet = makeHighsBackend()->solve(model, {});
   std::vector<std::string> lines;
   SolveOptions options;
@@ -263,6 +266,7 @@ TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {
   };
   const auto talkative = makeHighsBackend()->solve(model, options);
   const auto printed = testing::internal::GetCapturedStdout();
+  const auto errors = testing::internal::GetCapturedStderr();
 
   ASSERT_EQ(quiet.status, SolveStatus::Optimal);
   ASSERT_EQ(talkative.status, SolveStatus::Optimal);
@@ -273,6 +277,7 @@ TEST(HighsBackend, WritesItsLogOnlyToAnObserverThatAsksForIt) {
   }
   // The core never writes to the process output, whether or not it logs.
   EXPECT_EQ(printed, "");
+  EXPECT_EQ(errors, "");
 }
 
 TEST(HighsBackend, ReportsTheProgressOfASearch) {
@@ -425,6 +430,71 @@ TEST(HighsBackend, SolvesWithAnotherThreadCountEachTime) {
     EXPECT_EQ(solution.status, SolveStatus::Optimal)
         << "threads " << threads << ": " << solution.message;
   }
+}
+
+TEST(HighsBackend, RefusesReentryFromAnObserver) {
+  const auto model = hardKnapsack();
+  const auto backend = makeHighsBackend();
+  SolveOptions outer;
+  outer.threads = 2;
+  SolveOptions inner;
+  inner.threads = 2;
+  bool logged = false;
+  bool reported = false;
+  const auto checkReentry = [&](bool& called) {
+    if (!called) {
+      called = true;
+      const auto nested = backend->solve(model, inner);
+      EXPECT_EQ(nested.status, SolveStatus::Error);
+    }
+  };
+  outer.observer.log = [&](std::string_view) { checkReentry(logged); };
+  outer.observer.progress = [&](const SolveProgress&) {
+    checkReentry(reported);
+  };
+
+  EXPECT_EQ(backend->solve(model, outer).status, SolveStatus::Optimal);
+  EXPECT_TRUE(logged);
+  EXPECT_TRUE(reported);
+  EXPECT_EQ(backend->solve(model, inner).status, SolveStatus::Optimal);
+}
+
+TEST(HighsBackend, RefusesAResetWhileAnotherThreadSolves) {
+  const auto model = hardKnapsack();
+  const auto backend = makeHighsBackend();
+  SolveOptions options;
+  options.threads = 1;
+  ASSERT_EQ(backend->solve(model, options).status, SolveStatus::Optimal);
+
+  std::promise<void> started;
+  std::promise<void> release;
+  auto active = started.get_future();
+  auto done = release.get_future();
+  SolveStatus workerStatus = SolveStatus::Error;
+  std::jthread worker([&] {
+    SolveOptions concurrent;
+    concurrent.threads = 1;
+    bool signaled = false;
+    concurrent.observer.log = [&](const std::string_view) {
+      if (!signaled) {
+        signaled = true;
+        started.set_value();
+        static_cast<void>(done.wait_for(std::chrono::seconds(10)));
+      }
+    };
+    workerStatus = backend->solve(model, concurrent).status;
+  });
+
+  const auto running = active.wait_for(std::chrono::seconds(10));
+  EXPECT_EQ(running, std::future_status::ready);
+  options.threads = 2;
+  if (running == std::future_status::ready) {
+    EXPECT_EQ(backend->solve(model, options).status, SolveStatus::Error);
+  }
+  release.set_value();
+  worker.join();
+  EXPECT_EQ(workerStatus, SolveStatus::Optimal);
+  EXPECT_EQ(backend->solve(model, options).status, SolveStatus::Optimal);
 }
 
 TEST(HighsBackend, EndsTheSolveWhenTheObserverThrowsAndRethrows) {

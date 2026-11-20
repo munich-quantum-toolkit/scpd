@@ -34,8 +34,8 @@ __all__ = ["GUROBI_STATUS", "SolveAnswer", "SolverUnavailableError", "available"
 #: nodes are None where Gurobi reports none.
 SolveAnswer = tuple[str, float, list[float], float, float, int | None]
 
-#: What each Gurobi status code means in the terms of the core. Every other code is an error, which
-#: the core reports and does not raise. Code 4 says "infeasible or unbounded"; the solve repeats
+#: What each Gurobi status code means in the terms of the core. Code 4 says "infeasible or
+#: unbounded". The solve repeats
 #: without dual reductions to tell the two apart, so that the code does not reach this table. Code
 #: 11 says that Ctrl-C stopped the solve, and :func:`solve_mps` raises KeyboardInterrupt for it. A
 #: limit that stops the search is "feasible", as for HiGHS: whether a solution exists is decided
@@ -51,6 +51,7 @@ GUROBI_STATUS: dict[int, str] = {
     13: "feasible",  # suboptimal
     15: "feasible",  # objective limit
     16: "feasible",  # work limit
+    17: "feasible",  # soft memory limit
 }
 
 
@@ -79,7 +80,7 @@ def available() -> tuple[bool, str]:
         Whether Gurobi can be used, and why not when it cannot.
     """
     try:
-        import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
+        import gurobipy  # ruff: ignore[import-outside-top-level]
     except ImportError as error:
         return False, f"gurobipy is not installed ({error})"
     environment = gurobipy.Env(empty=True)
@@ -162,7 +163,7 @@ def solve_mps(
             first.
     """
     try:
-        import gurobipy  # ruff: ignore[import-outside-top-level]  # ty: ignore[unresolved-import]
+        import gurobipy  # ruff: ignore[import-outside-top-level]
     except ImportError as error:
         msg = "gurobipy is not installed; install it and a license, or use the highs backend"
         raise SolverUnavailableError(msg) from error
@@ -195,6 +196,7 @@ def solve_mps(
                     model.setParam("DualReductions", 0)
                     if time_limit > 0.0:
                         model.setParam("TimeLimit", max(time_limit - model.Runtime, 0.0))
+                    model.reset()
                     model.optimize()
                 if model.Status == INTERRUPTED:
                     # The finally clauses release the model and the environment before the

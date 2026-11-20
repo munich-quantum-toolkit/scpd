@@ -66,7 +66,8 @@ orientationStep(double orientationDegrees);
  * @param spacing The spacing, in layout units.
  * @param grid The grid, whose cell steps the spacing is counted in.
  * @param step The step the band runs along.
- * @return The half width, in cells, or zero for a zero step.
+ * @return The half width, in cells, capped at the largest uint32_t, or zero
+ * for a zero step.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t
 bandHalfWidth(double spacing, const GridMetrics& grid, Step step);
@@ -77,7 +78,8 @@ bandHalfWidth(double spacing, const GridMetrics& grid, Step step);
  * @param grid The grid, whose cell steps give the length of one step.
  * @param step The step, whose length in layout units counts both of its
  * components.
- * @return The length in whole steps, rounded down, or zero for a zero step.
+ * @return The length in whole steps, rounded down and capped at the
+ * largest uint32_t, or zero for a zero step.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT uint32_t bandLength(double length,
                                                        const GridMetrics& grid,

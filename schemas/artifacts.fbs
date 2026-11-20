@@ -7,8 +7,8 @@
 // Licensed under the MIT License
 
 // The stage artifacts of a run directory, 01-capacity.fb through
-// 07-geometry.fb. Owned by MQT::ScpdIO. Grids and router containers are
-// derived state and never appear here.
+// 07-geometry.fb. Owned by MQT::ScpdIO. A reader rebuilds any grid or router
+// state that is not part of the stored stage output.
 //
 // Each stage appends the fields of its output when the stage is implemented,
 // so the tables of stages that do not exist yet are empty on purpose.
@@ -68,16 +68,15 @@ enum CapacityElement : ubyte {
   Target,
   /// A gate the wires beyond it have to pass.
   Bottleneck,
-  /// The launcher the chain starts at.
+  /// A chamber from which a launcher can be reached.
   Launcher,
 }
 
 /// One link of a capacity chain.
 ///
-/// A chain is a tree and FlatBuffers has no recursive table, so the nodes are
-/// stored flat and a link names its branches by index. Two chains can then
-/// share a subtree without storing it twice. A target lies on one chain only,
-/// so a shared subtree holds no target.
+/// A link names its branches by index. The flat node list keeps serialization
+/// depth fixed and lets two chains share a subtree. A target lies on one
+/// chain only, so a shared subtree holds no target.
 table CapacityNode {
   kind: CapacityElement;
   /// The port of a Target and the index into `bottlenecks` of a Bottleneck.
@@ -100,17 +99,14 @@ table CapacityPlan {
   nodes: [CapacityNode] (required);
   /// The index in `nodes` of the root of each chain.
   chains: [uint32] (required);
-  /// What the approaches of the ports keep clear, as closed rings in layout
-  /// units: the strip a wire leaves each routable port along, extended
-  /// forward and backward.
-  ///
-  /// These are obstacles to everything the stages route, and they are not
-  /// chip artwork, so they are a layer of their own rather than more
-  /// polygons of the chip. Only the cells that were free before a band took
-  /// them are here; where a band covers artwork, the artwork is already
-  /// drawn. The rings follow the cells, so a band along a diagonal is the
-  /// staircase the grid blocks.
+  /// Closed rings in layout units for drawing the port approaches. They
+  /// cover cells that were free before a band took them, including cells
+  /// that the planner reopened. They do not determine routing obstacles.
   port_keepout: [geometry.Polygon];
+  /// The blocked cells of detail_grid after the planner places all targets
+  /// and launcher slots. Cell i in row-major order is bit i % 64 of word
+  /// i / 64, starting at the least significant bit. Padding bits are zero.
+  blocked_words: [uint64] (required);
 }
 
 /// Output of the Assignment stage.
@@ -297,5 +293,5 @@ root_type Artifact;
 // The identifier records the schema version. Change the digit on an
 // incompatible schema change, so that loading an artifact written by an
 // incompatible version fails with a clear message rather than misreading it.
-file_identifier "SCP1";
+file_identifier "SCP2";
 file_extension "fb";

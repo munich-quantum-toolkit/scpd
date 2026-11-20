@@ -19,13 +19,14 @@ import argparse
 import contextlib
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import pyscpd
 from .artifacts import ArtifactError
-from .chip import ChipError, decode_chip, load_chip
-from .config import ConfigError, load_config, removed_keys_in, write_config
+from .chip import ChipError, classify_chip, decode_chip, load_chip
+from .config import ConfigError, load_config, removed_keys, removed_keys_in, write_config
 from .console import Console, size, write_out
 from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
@@ -39,6 +40,7 @@ from .steps import STEPS
 if TYPE_CHECKING:
     from .console import StageBlock
     from .flatbuffers.config.Config import ConfigT
+    from .run import RunInputs
 
 
 def _positive_int(text: str) -> int:
@@ -106,7 +108,6 @@ def command_plan(args: argparse.Namespace) -> int:
         ConfigError: If the core refuses a value of the configuration, or if the configuration
             and the chip would stop one of the steps, as ``pyscpd.plan_problems`` and
             ``solver_problem`` report it. The run directory stays as it was.
-        BrokenPipeError: If the reader of the output went away, also while a stage wrote.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
     # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
@@ -114,6 +115,8 @@ def command_plan(args: argparse.Namespace) -> int:
     register_external_solver()
 
     directory = RunDirectory(args.output)
+    directory.recover()
+    snapshot: RunInputs | None = None
     if args.stage is not None:
         # A resumed step reads the configuration and the chip the run carries, so that it equals
         # the step of an uninterrupted run.
@@ -121,14 +124,16 @@ def command_plan(args: argparse.Namespace) -> int:
         steps = [args.stage]
         subject = directory.path.resolve().name
         chip = directory.classified_chip(config)
+        warnings = removed_keys_in(directory.config)
     else:
-        config, chip_input = directory.inputs(args.config, args.chip)
-        _validated(config, args.config)
+        snapshot = directory.inputs(args.config, args.chip)
+        config = _validated(snapshot.config, args.config)
         configured = config.run.stopAfter if config.run is not None else None
         steps = steps_until(args.stop_after if args.stop_after is not None else configured)
         subject = _subject(args.config)
-        chip = load_chip(config, args.config, chip_input)
-    # Every check runs before a fresh run deletes the artifacts of the run it replaces.
+        chip = classify_chip(config, snapshot.chip_text, snapshot.chip_path)
+        warnings = removed_keys(tomllib.loads(snapshot.config_text))
+
     config_bytes = write_config(config)
     problems = pyscpd.plan_problems(chip, config_bytes, steps)
     if (problem := solver_problem(chip, config_bytes, steps)) is not None:
@@ -136,17 +141,38 @@ def command_plan(args: argparse.Namespace) -> int:
     if problems:
         raise ConfigError("; ".join(problems))
     solver = pyscpd.solver_info(config_bytes)
-    if args.stage is None:
-        directory.prepare(args.config, args.chip)
-
     console.header("plan", subject, str(directory.path), [solver])
-    for warning in removed_keys_in(args.config if args.stage is None else directory.config):
+    for warning in warnings:
         console.warning(warning)
+    staging = directory.staging(snapshot) if snapshot is not None else contextlib.nullcontext(directory)
+    with staging as work:
+        return _run_plan(directory, work, console, steps, config, chip, args.verbose)
+
+
+def _run_plan(
+    directory: RunDirectory,
+    work: RunDirectory,
+    console: Console,
+    steps: list[str],
+    config: ConfigT,
+    chip: bytes,
+    verbosity: int,
+) -> int:
+    """Run the steps and publish a staged run after its last step.
+
+    Returns:
+        The exit code.
+
+    Raises:
+        BrokenPipeError: If the reader of the output went away while a stage wrote.
+    """
     last: str | None = None
     for step in steps:
         with console.stage(step) as block:
             try:
-                result = directory.run_stage(step, config, chip, BlockReporter(block), args.verbose)
+                result = work.run_stage(step, config, chip, BlockReporter(block), verbosity)
+                if work is not directory and step == steps[-1]:
+                    directory.publish(work)
             except KeyboardInterrupt:
                 block.failure("interrupted")
                 console.closing(stopped_after=last, failed=step)
@@ -208,18 +234,16 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     if not artifact.is_file():
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
-    directory.check_current(args.stage, input_digests(config, chip_bytes))
-    # The global picture is drawn over the cells the grid blocked, and the assign and corridor
-    # pictures over the partitions their chords and wires run through, with the inner circuit of the
-    # global step. The corridor picture also shows the feedlines its resonator wires start at.
-    plan = directory.artifact("capacity")
-    capacity = plan.read_bytes() if args.stage in {"global", "assign", "corridor"} and plan.is_file() else None
-    chosen = directory.artifact("assign")
-    assignment = chosen.read_bytes() if args.stage == "corridor" and chosen.is_file() else None
-    solved = directory.artifact("global")
-    routing = solved.read_bytes() if args.stage in {"assign", "corridor"} and solved.is_file() else None
+    data = artifact.read_bytes()
+    verified = directory.check_current(args.stage, input_digests(config, chip_bytes), data=data)
+    del verified[args.stage]
     geometry = planning_geometry(
-        artifact.read_bytes(), decode_chip(chip_bytes), args.stage, capacity, assignment, routing
+        data,
+        decode_chip(chip_bytes),
+        args.stage,
+        capacity=verified.get("capacity"),
+        global_routing=verified.get("global"),
+        assignment=verified.get("assign"),
     )
     return chip_bytes, title, geometry
 
@@ -282,11 +306,11 @@ def command_list_algorithms(args: argparse.Namespace) -> int:
     return 0
 
 
-def _stale_reason(artifact: Path) -> str | None:
+def _stale_reason(artifact: Path, data: bytes) -> str | None:
     """Why an artifact of a run directory no longer matches the inputs of the run.
 
-    A step that failed keeps its old artifact without a record, and an input of the run can change
-    after a step wrote its artifact. An artifact outside a run directory has no record to check.
+    An input of the run can change after a step wrote its artifact. An artifact outside a run
+    directory has no record to check.
 
     Returns:
         The reason, or None when the artifact is current or lies outside a run directory.
@@ -297,7 +321,7 @@ def _stale_reason(artifact: Path) -> str | None:
         return None
     try:
         config = directory.load()
-        directory.check_current(stage, input_digests(config, directory.classified_chip(config)))
+        directory.check_current(stage, input_digests(config, directory.classified_chip(config)), data=data)
     except (RunError, ConfigError, ChipError) as error:
         return str(error)
     return None
@@ -312,9 +336,10 @@ def command_inspect(args: argparse.Namespace) -> int:
     Returns:
         The exit code.
     """
-    if (reason := _stale_reason(args.artifact)) is not None:
+    data = args.artifact.read_bytes()
+    if (reason := _stale_reason(args.artifact, data)) is not None:
         Console(file=sys.stderr).warning(reason)
-    text = artifact_to_json(args.artifact.read_bytes())
+    text = artifact_to_json(data)
     if args.output is None:
         write_out(text)
     else:

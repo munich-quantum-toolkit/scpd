@@ -21,8 +21,10 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mqt::scpd::milp {
@@ -201,6 +203,38 @@ TEST(Mps, RefusesNamesTheTextCannotCarry) {
   const auto x = objective.addBinary("x");
   objective.addEqual("COST", 1.0 * x, 1.0);
   EXPECT_THROW(static_cast<void>(toMps(objective)), std::invalid_argument);
+}
+
+TEST(Mps, RefusesNamesThatReadersTreatAsSyntax) {
+  Model column("names");
+  static_cast<void>(column.addBinary("NAME"));
+  EXPECT_THROW(static_cast<void>(toMps(column)), std::invalid_argument);
+
+  Model row("names");
+  const auto x = row.addBinary("x");
+  row.addEqual("'MARKER'", 1.0 * x, 1.0);
+  EXPECT_THROW(static_cast<void>(toMps(row)), std::invalid_argument);
+}
+
+TEST(Mps, RefusesNonfinitePrimalAnswers) {
+  Model model("finite");
+  static_cast<void>(model.addBinary("x"));
+  for (const auto [objective, value] :
+       {std::pair{std::numeric_limits<double>::quiet_NaN(), 1.0},
+        std::pair{0.0, std::numeric_limits<double>::infinity()}}) {
+    const auto backend = makeMpsBackend(
+        "external", [&](const auto&, const auto&, const auto&) -> Solution {
+          return {.status = SolveStatus::Optimal,
+                  .objective = objective,
+                  .nodes = {},
+                  .values = {value},
+                  .backend = {},
+                  .message = {}};
+        });
+    const auto answer = backend->solve(model, {});
+    EXPECT_EQ(answer.status, SolveStatus::Error);
+    EXPECT_FALSE(answer.hasValues());
+  }
 }
 
 } // namespace

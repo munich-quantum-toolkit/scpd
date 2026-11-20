@@ -86,7 +86,7 @@ def test_round_trip_keeps_the_producer_and_the_identifier() -> None:
     """A written artifact starts with the identifier and reads back complete."""
     data = write_artifact(wrap(StageOutput.GlobalRouting, _global_routing()))
 
-    assert data[4:8] == IDENTIFIER
+    assert data[4:8] == b"SCP2"
     back = read_artifact(data)
     assert back.producer == "mqt-scpd test"
     assert back.outputType == StageOutput.GlobalRouting
@@ -170,7 +170,7 @@ def test_read_rejects_a_buffer_without_its_producer() -> None:
     ArtifactAddOutput(builder, output)
     builder.Finish(ArtifactEnd(builder), file_identifier=IDENTIFIER)
 
-    with pytest.raises(ArtifactError, match="producer is missing"):
+    with pytest.raises(ArtifactError, match="verification failed"):
         read_artifact(bytes(builder.Output()))
 
 
@@ -181,7 +181,16 @@ def test_read_rejects_foreign_bytes() -> None:
     with pytest.raises(ArtifactError, match="identifier"):
         read_artifact(bytes(data))
     with pytest.raises(ArtifactError):
-        read_artifact(b"SCP1")
+        read_artifact(IDENTIFIER)
+
+
+def test_read_rejects_the_previous_schema_identifier() -> None:
+    """An artifact using the previous schema must be rebuilt."""
+    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, _global_routing())))
+    data[4:8] = b"SCP1"
+
+    with pytest.raises(ArtifactError, match=r"identifier.*SCP2"):
+        read_artifact(bytes(data))
 
 
 def test_assignment_round_trips() -> None:
@@ -250,6 +259,7 @@ def _capacity_plan(**changes: object) -> CapacityPlanT:
         launchers=[],
         nodes=[],
         chains=[],
+        blockedWords=[],
     )
     for name, value in changes.items():
         setattr(plan, name, value)
@@ -318,6 +328,11 @@ INCOMPLETE_ARTIFACTS = [
         wrap(StageOutput.CapacityPlan, _capacity_plan(nodes=[CapacityNodeT()])),
         r"nodes\[0\]: next is missing",
         id="capacity-node",
+    ),
+    pytest.param(
+        wrap(StageOutput.CapacityPlan, _capacity_plan(blockedWords=None)),
+        "blocked_words is missing",
+        id="blocked-words",
     ),
     pytest.param(
         wrap(StageOutput.GlobalRouting, _global_routing(outerRing=None)),

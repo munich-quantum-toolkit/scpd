@@ -346,6 +346,13 @@ std::vector<geometry::Point> slottedLaunchers(const ChipT& chip) {
   return launchers;
 }
 
+/// Whether the configured dimensions permit the Capacity stage to place slots.
+bool hasSlotGrid(const ConfigT& config) {
+  return config.grid == nullptr || (config.grid->capacity_cells_x >= 2 &&
+                                    config.grid->capacity_cells_y != 1 &&
+                                    config.grid->detail_factor != 0);
+}
+
 /// The label of a port, or "termination" for a chain end without one.
 std::string endName(const ChipT& chip,
                     const std::unique_ptr<fbd::PortRef>& port) {
@@ -361,13 +368,19 @@ public:
                                 const ConfigT& config,
                                 const Report& report) const override {
     report.progress("working out the inputs", "", 0, 0);
-    if (const auto problem = launcherOrderProblem(chip, config)) {
+    const auto inputs = assignmentInputs(chip, capacity, global);
+    std::vector<geometry::Point> ringPoints;
+    ringPoints.reserve(inputs.ring.size());
+    for (const auto port : inputs.ring) {
+      ringPoints.push_back(chip.ports[port]->center);
+    }
+    if (const auto problem =
+            orderProblem(ringPoints, inputs.launcherPosition)) {
       throw std::invalid_argument(*problem);
     }
     if (config.rules == nullptr) {
       throw std::invalid_argument("the configuration carries no design rules");
     }
-    const auto inputs = assignmentInputs(chip, capacity, global);
     if (std::ranges::find(inputs.isResonator, true) !=
         inputs.isResonator.end()) {
       if (const auto problem = placesProblem(inputs.launcherPosition)) {
@@ -457,9 +470,6 @@ private:
     std::vector<milp::Var> termination;
     /// Whether each ring edge is used.
     std::vector<milp::Var> edge;
-    /// How many resonators the feedline chain of each anchor feeds from that
-    /// anchor to its end.
-    std::vector<milp::Var> utilization;
     /// The rotation of the whole flow assignment.
     milp::Var offset;
   };
@@ -471,8 +481,6 @@ private:
                                        const std::uint32_t target) {
     const auto launchers = static_cast<double>(inputs.launchers.size());
     const auto& rules = *config.rules;
-    const auto utilizationCap =
-        static_cast<double>(rules.max_feedline_utilization);
     const auto terminations = static_cast<double>(rules.feedline_terminations);
 
     Variables variables;
@@ -525,8 +533,6 @@ private:
           model.addBinary(std::format("launcher_{}", index)));
       variables.termination.push_back(
           model.addBinary(std::format("termination_{}", index)));
-      variables.utilization.push_back(model.addInteger(
-          std::format("utilization_{}", index), 0.0, utilizationCap));
     }
     for (std::size_t index = 0; index < ring.edges.size(); ++index) {
       variables.edge.push_back(
@@ -538,11 +544,10 @@ private:
     // an end. An end is a launcher or a permitted termination.
     for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
       milp::LinearExpr degree;
-      for (std::size_t edge = 0; edge < ring.edges.size(); ++edge) {
-        if (ring.edges[edge].first == index ||
-            ring.edges[edge].second == index) {
-          degree.add(variables.edge[edge], 1.0);
-        }
+      if (!ring.leaving.empty()) {
+        const auto previous = index == 0 ? ring.anchors.size() - 1 : index - 1;
+        degree.add(variables.edge[ring.leaving[previous]], 1.0);
+        degree.add(variables.edge[ring.leaving[index]], 1.0);
       }
       degree.add(variables.launcher[index], 1.0);
       degree.add(variables.termination[index], 1.0);
@@ -616,57 +621,21 @@ private:
                            0.0);
     }
 
-    // The utilization at an anchor counts the resonators from it to the end
-    // of its feedline chain: one at the last anchor, where the chain ends and
-    // the chord that leaves it is unused, and one more than at the next anchor
-    // everywhere else. Its upper bound limits how many resonators one chain
-    // feeds. A big-M pair per anchor switches between the two.
-    const auto bigM = static_cast<double>(ring.anchors.size()) + 2.0;
-    for (std::size_t index = 0; index < ring.anchors.size(); ++index) {
-      const auto next =
-          variables.utilization[(index + 1) % ring.anchors.size()];
-      // A single resonator has no chord to leave it.
-      const auto leaving =
-          ring.leaving.empty()
-              ? milp::LinearExpr()
-              : milp::LinearExpr(variables.edge[ring.leaving[index]]);
-      const auto starts = model.addBinary(std::format("starts_{}", index));
-
-      // `starts` is one exactly where the anchor ends a chain and the chord
-      // that leaves it is unused, which is where a new corridor begins. An
-      // anchor ends a chain where it takes a launcher, a termination, or
-      // both, and it takes both where it is a chain of its own. The first
-      // row keeps `starts` at zero at an anchor without an end, and the
-      // second where the leaving chord is used. The last two rows set it
-      // where either end is there and the leaving chord is unused.
-      model.addLessOrEqual(std::format("starts_a_{}", index),
-                           milp::LinearExpr(starts) -
-                               variables.launcher[index] -
-                               variables.termination[index],
-                           0.0);
-      model.addLessOrEqual(std::format("starts_b_{}", index),
-                           milp::LinearExpr(starts) + leaving, 1.0);
-      model.addGreaterOrEqual(
-          std::format("starts_launcher_{}", index),
-          milp::LinearExpr(starts) - variables.launcher[index] + leaving, 0.0);
-      model.addGreaterOrEqual(std::format("starts_termination_{}", index),
-                              milp::LinearExpr(starts) -
-                                  variables.termination[index] + leaving,
-                              0.0);
-
-      const auto here = milp::LinearExpr(variables.utilization[index]);
-      model.addLessOrEqual(std::format("util_reset_up_{}", index),
-                           here + (bigM * milp::LinearExpr(starts)),
-                           1.0 + bigM);
-      model.addGreaterOrEqual(std::format("util_reset_low_{}", index),
-                              here - (bigM * milp::LinearExpr(starts)),
-                              1.0 - bigM);
-      model.addLessOrEqual(std::format("util_step_up_{}", index),
-                           here - next - (bigM * milp::LinearExpr(starts)),
-                           1.0);
-      model.addGreaterOrEqual(std::format("util_step_low_{}", index),
-                              here - next + (bigM * milp::LinearExpr(starts)),
-                              1.0);
+    // A chain of B + 1 resonators uses B consecutive chords. Leave a chord
+    // unused in each cyclic window of B chords. One row rules out a full cycle.
+    const auto edgeCount = variables.edge.size();
+    if (edgeCount != 0) {
+      const auto width =
+          std::min<std::size_t>(rules.max_feedline_utilization, edgeCount);
+      const auto windows = width < edgeCount ? edgeCount : 1;
+      for (std::size_t first = 0; first < windows; ++first) {
+        milp::LinearExpr window;
+        for (std::size_t step = 0; step < width; ++step) {
+          window.add(variables.edge[(first + step) % edgeCount], 1.0);
+        }
+        model.addLessOrEqual(std::format("chain_limit_{}", first), window,
+                             static_cast<double>(width) - 1.0);
+      }
     }
 
     milp::LinearExpr activeLaunchers;
@@ -790,8 +759,7 @@ private:
                        const milp::Solution& solution, const double spacing,
                        const fba::GridExtentT* detail) {
     const auto launchers = inputs.launchers.size();
-    const auto offset = static_cast<std::int64_t>(
-        std::llround(solution.valueOf(variables.offset)));
+    const auto offset = std::llround(solution.valueOf(variables.offset));
 
     // The launcher the walk gave each ring node. The potential is a place on
     // the launcher ring, so the launcher is that place modulo the launcher
@@ -804,8 +772,7 @@ private:
     std::vector<bool> closing(inputs.ring.size(), false);
     assignment.launchers.reserve(inputs.ring.size());
     for (std::size_t index = 0; index < inputs.ring.size(); ++index) {
-      const auto placed = static_cast<std::int64_t>(
-          std::llround(solution.valueOf(variables.flow[index])));
+      const auto placed = std::llround(solution.valueOf(variables.flow[index]));
       const auto count = static_cast<std::int64_t>(launchers);
       closing[index] = placed == count;
       slotOf[index] = static_cast<std::size_t>(
@@ -945,10 +912,9 @@ private:
       }
     }
 
-    // The Corridor stage starts each wire at the detail cell nearest its
-    // feed. Where a detail cell is wider than about 0.7 wire spacings, two
-    // feeds one spacing apart can round onto one cell, and the second wire
-    // would start on the first.
+    // A wire starts at the detail cell nearest its feed. Where a detail cell
+    // is wider than about 0.7 wire spacings, two feeds one spacing apart can
+    // round onto one cell, and the second wire would start on the first.
     if (detail != nullptr) {
       const grid::GridMetrics grid{.width = detail->width,
                                    .height = detail->height,
@@ -1149,8 +1115,6 @@ std::optional<std::string> launcherOrderProblem(const ChipT& chip,
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     byLabel.emplace(chip.ports[index]->label, index);
   }
-  // The stage checks the slots, which are these launchers in this order.
-  const auto launchers = slottedLaunchers(chip);
   std::vector<geometry::Point> ring;
   if (config.ports != nullptr && config.ports->sequences != nullptr) {
     for (const auto& label : config.ports->sequences->all_outer) {
@@ -1159,7 +1123,10 @@ std::optional<std::string> launcherOrderProblem(const ChipT& chip,
       }
     }
   }
-  return orderProblem(ring, launchers);
+  if (!hasSlotGrid(config) || detailGridProblem(chip, config).has_value()) {
+    return std::nullopt;
+  }
+  return orderProblem(ring, launcherSlotPositions(chip, config));
 }
 
 std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
@@ -1169,13 +1136,7 @@ std::optional<std::string> launcherPlacesProblem(const ChipT& chip,
       })) {
     return std::nullopt;
   }
-  if (config.grid != nullptr && config.grid->detail_factor == 0) {
-    // A grid without cells places no slot. The configuration check reports
-    // it.
-    return std::nullopt;
-  }
-  if (detailGridProblem(chip, config).has_value()) {
-    // planProblems() reports a grid above the limit.
+  if (!hasSlotGrid(config) || detailGridProblem(chip, config).has_value()) {
     return std::nullopt;
   }
   return placesProblem(launcherSlotPositions(chip, config));

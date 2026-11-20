@@ -177,8 +177,11 @@ selectedCorridorRouter(const ConfigT& config);
  * it have run. The check reads only the chip and the configuration:
  *
  * - every step names an implementation this build registers;
- * - a run through the capacity, assignment or corridor step asks for a detail
- *   grid of at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - Capacity, Assignment, and Corridor require a near-square detail grid of
+ *   at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - every routable port faces a step of that grid, as orientationProblem()
+ *   checks;
+ * - the chip has at least one port with a launcher slot;
  * - a run through the global step has a ring that innerCircuitOf() accepts;
  * - a run through the assignment sets `[stages.assignment] launcher_target`;
  * - `launcher_target` plus `[design_rules] feedline_terminations` is even,

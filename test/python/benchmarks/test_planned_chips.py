@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import math
 import os
+import platform
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
+from mqt.scpd import pyscpd
 from mqt.scpd.artifacts import read_artifact
 from mqt.scpd.chip import decode_chip, role_name
 from mqt.scpd.export import HAS_KLAYOUT
@@ -34,15 +37,18 @@ from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
 from mqt.scpd.planning import PLANNING_STAGES, planning_geometry
 from mqt.scpd.plot import layout_svg
 from mqt.scpd.run import BlockReporter, RunDirectory
+from mqt.scpd.solvers import register
 from mqt.scpd.steps import STEPS
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Generator, Iterable, Sequence
 
     from mqt.scpd.console import Figure
     from mqt.scpd.flatbuffers.design.Chip import ChipT
 
 DATA = Path(os.environ["MQT_SCPD_BENCHMARKS"]) if "MQT_SCPD_BENCHMARKS" in os.environ else None
+# Both models of each chip fit within Gurobi's bundled limit of 2,000 variables and constraints.
+GUROBI_CHIPS = ("4q", "9q", "17q", "21q", "33q", "45q")
 CHIPS = sorted(path.parent.name for path in DATA.glob("inputs/*/config.toml")) if DATA else []
 
 pytestmark = pytest.mark.skipif(DATA is None, reason="MQT_SCPD_BENCHMARKS names no clone of the benchmark data")
@@ -300,7 +306,26 @@ def check_the_corridors(routing: CorridorRoutingT, plan: CapacityPlanT, pitch: f
         by_partition.setdefault(partition, []).append((wire, start, end))
 
 
-@pytest.mark.parametrize("chip", CHIPS)
+@pytest.fixture
+def benchmark_solver(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Select the solver for this benchmark case."""
+    backend = request.param
+    if backend == "gurobi":
+        if sys.platform == "win32" and platform.machine() == "ARM64":
+            pytest.skip("Gurobi has no Windows ARM64 wheel")
+        register()
+    monkeypatch.setenv("SCPD_SOLVER", backend)
+    yield
+    if backend == "gurobi":
+        pyscpd.set_solver(None)
+
+
+@pytest.mark.usefixtures("benchmark_solver")
+@pytest.mark.parametrize(
+    ("chip", "benchmark_solver"),
+    [(chip, "highs") for chip in CHIPS] + [(chip, "gurobi") for chip in CHIPS if chip in GUROBI_CHIPS],
+    indirect=["benchmark_solver"],
+)
 def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_path: Path) -> None:
     """Every step runs without a fail, and the plan keeps the rules the later stages rely on."""
     assert DATA is not None
@@ -330,14 +355,15 @@ def test_a_chip_plans_into_a_plan_the_later_stages_can_follow(chip: str, tmp_pat
 
     capacity = directory.artifact("capacity").read_bytes()
     assigned = directory.artifact("assign").read_bytes()
+    solved = directory.artifact("global").read_bytes()
     for stage in PLANNING_STAGES:
-        # The corridor picture draws the feedlines of the assignment, as `plot` draws it.
-        chosen = assigned if stage == "corridor" else None
-        geometry = planning_geometry(directory.artifact(stage).read_bytes(), model, stage, capacity, chosen)
+        geometry = planning_geometry(
+            directory.artifact(stage).read_bytes(), model, stage, capacity, solved, assignment=assigned
+        )
         assert not geometry.is_empty(), stage
-        if chosen is not None:
+        if stage == "corridor":
             assert geometry.feedlines, stage
-        assert len(layout_svg(model, planning=geometry).encode("utf-8")) < SVG_LIMIT, stage
+        assert len(layout_svg(model, stage=stage, planning=geometry).encode("utf-8")) < SVG_LIMIT, stage
         if HAS_KLAYOUT:
             from mqt.scpd.export import write_layout  # ruff: ignore[import-outside-top-level]  # needs the optional dependency
 

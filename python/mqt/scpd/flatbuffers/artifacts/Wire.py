@@ -27,7 +27,7 @@ class Wire(object):
         return cls.GetRootAs(buf, offset)
     @classmethod
     def WireBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
-        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x31", size_prefixed=size_prefixed)
+        return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x32", size_prefixed=size_prefixed)
 
     # Wire
     def Init(self, buf: bytes, pos: int):

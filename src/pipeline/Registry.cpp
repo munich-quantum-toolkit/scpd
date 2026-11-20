@@ -145,6 +145,8 @@ std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
   // places the launcher slots on it.
   if (takes("capacity") || takes("assign") || takes("corridor")) {
     note(detailGridProblem(chip, config));
+    note(orientationProblem(chip));
+    note(launcherProblem(chip));
   }
   if (takes("global")) {
     note(unknownName(globalRouters(), selectedGlobalRouter(config),

@@ -104,6 +104,7 @@ STAGE_OUTPUTS = [
             launchers=[],
             nodes=[],
             chains=[],
+            blockedWords=[],
         ),
         {
             "capacity_grid": {
@@ -120,6 +121,7 @@ STAGE_OUTPUTS = [
             "launchers": [],
             "nodes": [],
             "chains": [],
+            "blocked_words": [],
         },
         id="capacity",
     ),
@@ -305,7 +307,7 @@ def test_bytes_that_are_not_an_artifact_are_refused() -> None:
     with pytest.raises(InspectionError, match="identifier"):
         artifact_to_json(bytes(data))
     with pytest.raises(InspectionError, match="not an artifact"):
-        artifact_to_json(b"\xff\xff\xff\xffSCP1")
+        artifact_to_json(b"\xff\xff\xff\xff" + IDENTIFIER)
 
     # A buffer whose producer is present but empty passes the verifier, and fails the check that
     # every artifact names what wrote it.

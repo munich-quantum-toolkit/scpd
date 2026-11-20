@@ -389,7 +389,11 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
   // no partner there would end a wire inside the coupler, so it is a problem
   // too. A bridge port that the component pattern does not match takes no
   // part in the pairing at all, which is the same problem.
-  const auto bridging = bridgingPorts(chip, ports.bridge_pairs);
+  std::vector<bool> bridging(chip.ports.size(), false);
+  for (const auto& pair : bridgePairsOf(chip, matches)) {
+    bridging[pair.first] = true;
+    bridging[pair.second] = true;
+  }
   for (std::size_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = chip.ports[index];
     if (port == nullptr || port->role != UnassignedRole::BridgePair ||
@@ -403,7 +407,7 @@ Problems validate(const ConfigT& config, const ChipT& chip) {
       continue;
     }
     problems.push_back("port '" + port->label +
-                       "' is a bridge_pair port without a partner in "
+                       "' is a bridge_pair port without a unique partner in "
                        "component '" +
                        port->component + "'");
   }

@@ -14,6 +14,7 @@
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
+#include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/Registry.hpp"
 #include "mqt-scpd/pipeline/Report.hpp"
@@ -158,16 +159,18 @@ TEST(PlanProblems, FindNothingWrongWithTheFixture) {
 TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
   auto config = test::miniConfig();
   config.stages->global->router = "other-router";
+  config.stages->assignment->assigner = "other-assigner";
   config.stages->corridor->router = "other-corridors";
 
   const auto problems = planProblems(test::miniChip(), config, allSteps());
-  EXPECT_EQ(problems.size(), 2U);
+  EXPECT_EQ(problems.size(), 3U);
   EXPECT_TRUE(mentions(problems,
                        "[stages.global] router 'other-router' is not a "
                        "known implementation; the registered ones "
                        "are hanan-milp"));
+  EXPECT_TRUE(
+      mentions(problems, "[stages.assignment] assigner 'other-assigner'"));
   EXPECT_TRUE(mentions(problems, "[stages.corridor] router 'other-corridors'"));
-  // A run that ends before the corridor does not build its router.
   EXPECT_EQ(
       planProblems(test::miniChip(), config, {"capacity", "global"}).size(),
       1U);
@@ -322,7 +325,33 @@ TEST(PlanProblems, RefuseADetailGridAboveTheLimit) {
                 "detail_factor 60; the limit is 25000000 cells"});
   // The global step reads no grid.
   EXPECT_TRUE(planProblems(test::miniChip(), config, {"global"}).empty());
+  EXPECT_EQ(planProblems(test::miniChip(), config, {"assign"}).size(), 1U);
   EXPECT_EQ(planProblems(test::miniChip(), config, {"corridor"}).size(), 1U);
+}
+
+TEST(PlanProblems, RecommendsFinerCapacityCellsWhenHeightIsDerived) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 2;
+  config.grid->capacity_cells_y = 0;
+  const auto problems = planProblems(test::miniChip(), config, allSteps());
+
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_NE(problems.front().find("increase capacity_cells_x"),
+            std::string::npos);
+  EXPECT_EQ(problems.front().find("set capacity_cells_y"), std::string::npos);
+}
+
+TEST(PlanProblems, RefuseAChipWithNoGridExtent) {
+  auto chip = test::miniChip();
+  chip.obstacles.clear();
+  for (auto& port : chip.ports) {
+    port->center = {port->center.x(), 0.0};
+  }
+
+  for (const auto* step : {"capacity", "assign"}) {
+    EXPECT_TRUE(mentions(planProblems(chip, test::miniConfig(), {step}),
+                         "a grid needs a box with a positive, finite extent"));
+  }
 }
 
 TEST(PlanProblems, AcceptADetailGridAtTheLimit) {
@@ -332,7 +361,11 @@ TEST(PlanProblems, AcceptADetailGridAtTheLimit) {
   config.grid->detail_factor = 50;
   ASSERT_EQ(100U * 50U * 100U * 50U, MAX_DETAIL_CELLS);
 
-  EXPECT_TRUE(planProblems(test::miniChip(), config, allSteps()).empty());
+  auto chip = test::miniChip();
+  const auto box = grid::chipBounds(chip);
+  chip.ports.push_back(std::make_unique<flatbuffers::design::PortT>());
+  chip.ports.back()->center = {box.minX, box.minY + box.width()};
+  EXPECT_TRUE(planProblems(chip, config, allSteps()).empty());
 }
 
 TEST(PlanProblems, CountTheDetailCellsAlongYFromTheAspectRatio) {
@@ -349,6 +382,53 @@ TEST(PlanProblems, CountTheDetailCellsAlongYFromTheAspectRatio) {
                 "[grid] asks for a detail grid of 6000 × 5080 = 30480000 "
                 "cells, a capacity grid of 600 × 508 cells times "
                 "detail_factor 10; the limit is 25000000 cells"});
+}
+
+TEST(PlanProblems, NameEveryRoutablePortThatFacesNoStepOfTheGrid) {
+  auto chip = test::miniChip();
+  for (auto& port : chip.ports) {
+    if (port->label == "Q1.port0") {
+      port->orientation = 10.0;
+    } else if (port->label == "Q2.port1") {
+      port->orientation = -100.0;
+    } else if (port->label == "Chip.port0") {
+      // A launcher has no band, so its orientation does not count.
+      port->orientation = 30.0;
+    }
+  }
+
+  EXPECT_EQ(planProblems(chip, test::miniConfig(), allSteps()),
+            std::vector<std::string>{
+                "the orientation of a routable port has to be a multiple of "
+                "45°, so that its approach runs along an axis or a diagonal "
+                "of the grid; Q1.port0 faces 10°, Q2.port1 faces -100°"});
+  // A run that does not take the capacity step stamps no band.
+  EXPECT_TRUE(planProblems(chip, test::miniConfig(), {}).empty());
+}
+
+TEST(PlanProblems, RefuseAChipWithoutALauncher) {
+  auto chip = test::miniChip();
+  std::erase_if(chip.ports,
+                [](const auto& port) { return hasLauncherSlot(*port); });
+
+  EXPECT_EQ(planProblems(chip, test::miniConfig(), {"capacity"}),
+            std::vector<std::string>{
+                "the chip carries no launcher a wire could be routed to"});
+}
+
+TEST(PlanProblems, RejectDetailCellsThatDistortTheLayoutMetric) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 9;
+  config.grid->capacity_cells_y = 5;
+  config.grid->detail_factor = 1;
+  const auto chip = test::miniChip();
+
+  const auto problems = planProblems(chip, config, allSteps());
+  ASSERT_EQ(problems.size(), 1U);
+  EXPECT_NE(problems.front().find("near-square detail cells"),
+            std::string::npos);
+  EXPECT_THROW(static_cast<void>(buildScene(chip, config)),
+               std::invalid_argument);
 }
 
 TEST(PlanProblems, RefuseADetailGridBeyondTheRangeOfAnAxis) {

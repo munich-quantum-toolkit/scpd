@@ -36,22 +36,20 @@ add_mqt_python_binding(
   LINK_LIBS
   MQT::SCPD)
 
-# The extension links HiGHS, FlatBuffers and nlohmann/json in, and the license of each asks that its
-# notice goes with every copy of the binary. HiGHS compiles in its LP file reader, which carries an
-# MIT notice of its own. The wheel carries them in its .dist-info/licenses directory, taken from the
-# sources that the build fetched. The Boost Software License and the zlib license of pdqsort ask no
-# notice for object code.
+# Ship the notices of libraries linked into the wheel.
 if(SKBUILD)
   install(
     FILES ${highs_SOURCE_DIR}/LICENSE.txt
     DESTINATION ${SKBUILD_METADATA_DIR}/licenses
     RENAME HiGHS-LICENSE.txt
     COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
-  install(
-    FILES ${highs_SOURCE_DIR}/extern/filereaderlp/LICENSE
-    DESTINATION ${SKBUILD_METADATA_DIR}/licenses
-    RENAME HiGHS-filereaderlp-LICENSE.txt
-    COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
+  if(EXISTS "${highs_SOURCE_DIR}/extern/filereaderlp/LICENSE")
+    install(
+      FILES ${highs_SOURCE_DIR}/extern/filereaderlp/LICENSE
+      DESTINATION ${SKBUILD_METADATA_DIR}/licenses
+      RENAME HiGHS-filereaderlp-LICENSE.txt
+      COMPONENT ${MQT_SCPD_TARGET_NAME}_Python)
+  endif()
   install(
     FILES ${flatbuffers_SOURCE_DIR}/LICENSE
     DESTINATION ${SKBUILD_METADATA_DIR}/licenses

@@ -55,7 +55,7 @@ enum class Sense : std::uint8_t {
   Maximize,
 };
 
-/// A variable of a model, as an index into its variable list.
+/// An index into one model's variable list. Use it only with that model.
 struct Var {
   /// The position of the variable in the variable list of its model.
   std::size_t index = 0;

@@ -13,6 +13,7 @@
 #include "mqt-scpd/milp/Model.hpp"
 #include "mqt-scpd/milp/Mps.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 #include <memory>
@@ -79,6 +80,17 @@ public:
               .message =
                   std::format("the backend returned {} values for {} variables",
                               solution.values.size(), model.variableCount())};
+    }
+    if (solution.hasValues() &&
+        (!std::isfinite(solution.objective) ||
+         !std::ranges::all_of(solution.values, [](const double value) {
+           return std::isfinite(value);
+         }))) {
+      return {.status = SolveStatus::Error,
+              .nodes = {},
+              .values = {},
+              .backend = backendName,
+              .message = "the backend returned a nonfinite primal solution"};
     }
     return solution;
   }

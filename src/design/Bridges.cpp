@@ -13,13 +13,14 @@
 #include "mqt-scpd/design/Roles.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <regex>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -86,10 +87,50 @@ bridgeMatchesOf(const flatbuffers::design::ChipT& chip,
   return matches;
 }
 
+std::vector<BridgePair>
+bridgePairsOf(const flatbuffers::design::ChipT& chip,
+              const std::vector<std::vector<BridgeMatch>>& matches) {
+  struct Sides {
+    std::optional<std::uint32_t> first;
+    std::optional<std::uint32_t> second;
+    bool ambiguous = false;
+  };
+  using Key = std::tuple<std::size_t, std::string_view, std::string_view>;
+  std::map<Key, Sides> groups;
+  for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
+    const auto& port = chip.ports[index];
+    if (port == nullptr || port->component.empty() || !isRoutable(port->role) ||
+        matches.at(index).size() != 1) {
+      continue;
+    }
+    const auto& match = matches[index].front();
+    auto& group = groups[{match.rule, port->component, match.key}];
+    auto& side = match.first ? group.first : group.second;
+    group.ambiguous |= side.has_value();
+    side = index;
+  }
+
+  // Preserve the order of the rules, then the order of first-side port indices.
+  std::map<std::pair<std::size_t, std::uint32_t>, BridgePair> ordered;
+  for (const auto& [key, group] : groups) {
+    if (!group.ambiguous && group.first && group.second) {
+      ordered.emplace(
+          std::pair{std::get<0>(key), *group.first},
+          BridgePair{.first = *group.first, .second = *group.second});
+    }
+  }
+
+  std::vector<BridgePair> pairs;
+  pairs.reserve(ordered.size());
+  for (const auto& [key, pair] : ordered) {
+    pairs.push_back(pair);
+  }
+  return pairs;
+}
+
 std::vector<ComponentPorts> componentsOf(const flatbuffers::design::ChipT& chip,
                                          const BridgeRules& rules) {
-  // A map ordered by name, so the components come out the same on every run
-  // whatever order the ports were read in.
+  // A map ordered by name gives a stable order independent of the input.
   std::map<std::string, ComponentPorts> byName;
   for (std::uint32_t index = 0; index < chip.ports.size(); ++index) {
     const auto& port = chip.ports[index];
@@ -101,56 +142,19 @@ std::vector<ComponentPorts> componentsOf(const flatbuffers::design::ChipT& chip,
     component.ports.push_back(index);
   }
 
-  const auto matches = bridgeMatchesOf(chip, rules);
+  std::vector<bool> paired(chip.ports.size(), false);
+  for (const auto& pair : bridgePairsOf(chip, bridgeMatchesOf(chip, rules))) {
+    byName.at(chip.ports[pair.first]->component).bridges.push_back(pair);
+    paired[pair.first] = true;
+    paired[pair.second] = true;
+  }
 
   std::vector<ComponentPorts> components;
   components.reserve(byName.size());
   for (auto& [name, component] : byName) {
-    std::ranges::sort(component.ports);
-    std::vector<bool> paired(component.ports.size(), false);
-
-    // The rules apply in the order they are declared, and each rule over the
-    // ports of the component in ascending order, so the pairing depends on
-    // the configuration alone.
-    for (std::size_t rule = 0; rule < rules.size(); ++rule) {
-      for (std::size_t left = 0; left < component.ports.size(); ++left) {
-        if (paired[left]) {
-          continue;
-        }
-        const auto& leftMatches = matches[component.ports[left]];
-        const auto side =
-            std::ranges::find_if(leftMatches, [&](const BridgeMatch& match) {
-              return match.rule == rule && match.first;
-            });
-        if (side == leftMatches.end()) {
-          continue;
-        }
-        for (std::size_t right = 0; right < component.ports.size(); ++right) {
-          if (paired[right] || right == left) {
-            continue;
-          }
-          const auto& rightMatches = matches[component.ports[right]];
-          const auto other =
-              std::ranges::find_if(rightMatches, [&](const BridgeMatch& match) {
-                return match.rule == rule && !match.first &&
-                       match.key == side->key;
-              });
-          if (other == rightMatches.end()) {
-            continue;
-          }
-          paired[left] = true;
-          paired[right] = true;
-          component.bridges.push_back({.first = component.ports[left],
-                                       .second = component.ports[right]});
-          break;
-        }
-      }
-    }
-
-    for (std::size_t position = 0; position < component.ports.size();
-         ++position) {
-      if (!paired[position]) {
-        component.ends.push_back(component.ports[position]);
+    for (const auto port : component.ports) {
+      if (!paired[port]) {
+        component.ends.push_back(port);
       }
     }
     components.push_back(std::move(component));
@@ -161,11 +165,9 @@ std::vector<ComponentPorts> componentsOf(const flatbuffers::design::ChipT& chip,
 std::vector<bool> bridgingPorts(const flatbuffers::design::ChipT& chip,
                                 const BridgeRules& rules) {
   std::vector<bool> bridging(chip.ports.size(), false);
-  for (const auto& component : componentsOf(chip, rules)) {
-    for (const auto& bridge : component.bridges) {
-      bridging[bridge.first] = true;
-      bridging[bridge.second] = true;
-    }
+  for (const auto& pair : bridgePairsOf(chip, bridgeMatchesOf(chip, rules))) {
+    bridging[pair.first] = true;
+    bridging[pair.second] = true;
   }
   return bridging;
 }

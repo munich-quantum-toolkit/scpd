@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <queue>
@@ -91,7 +92,8 @@ void unstampBand(BitGrid& mask, const StampedBand& band) {
 } // namespace
 
 Step orientationStep(const double orientationDegrees) {
-  const double radians = orientationDegrees * (std::numbers::pi / 180.0);
+  const double degrees = std::remainder(orientationDegrees, 360.0);
+  const double radians = degrees * (std::numbers::pi / 180.0);
   const double dx = std::cos(radians);
   const double dy = std::sin(radians);
   constexpr double threshold = 0.05;
@@ -105,6 +107,28 @@ Step orientationStep(const double orientationDegrees) {
 }
 
 namespace {
+
+constexpr auto MAX_BAND_CELLS =
+    static_cast<double>(std::numeric_limits<uint32_t>::max());
+
+/// Bounds a cell count before narrowing it to the band representation.
+uint32_t boundedBandCells(const double cells) {
+  return static_cast<uint32_t>(std::min(std::max(0.0, cells), MAX_BAND_CELLS));
+}
+
+/// Restricts the range of t to positions start + step * t on one grid axis.
+void clipStripAxis(const int64_t start, const int64_t step,
+                   const int64_t lastCell, int64_t& first, int64_t& last) {
+  if (step > 0) {
+    first = std::max(first, -start);
+    last = std::min(last, lastCell - start);
+  } else if (step < 0) {
+    first = std::max(first, start - lastCell);
+    last = std::min(last, start);
+  } else if (start < 0 || start > lastCell) {
+    last = first - 1;
+  }
+}
 
 /// The length of one step in layout units.
 double stepLength(const Step step, const GridMetrics& grid) {
@@ -127,15 +151,15 @@ uint32_t bandHalfWidth(const double spacing, const GridMetrics& grid,
     // band, and the diagonal then shortens it.
     cell /= std::numbers::sqrt2;
   }
-  auto square = static_cast<int64_t>(std::ceil(spacing / cell));
-  if (square % 2 == 0) {
-    ++square;
+  // Even on a diagonal, four times the largest half width saturates
+  // after converting the odd square width into a half width.
+  const auto cells = std::min(std::ceil(spacing / cell), 4.0 * MAX_BAND_CELLS);
+  if (!(cells > 0.0)) {
+    return 0;
   }
-  if (step.diagonal()) {
-    return static_cast<uint32_t>(
-        (static_cast<double>(square) / std::numbers::sqrt2) / 2.0);
-  }
-  return static_cast<uint32_t>(square / 2);
+  const auto square = static_cast<uint64_t>(cells) | uint64_t{1};
+  const auto diagonalScale = step.diagonal() ? std::numbers::sqrt2 : 1.0;
+  return boundedBandCells((static_cast<double>(square) / diagonalScale) / 2.0);
 }
 
 uint32_t bandLength(const double length, const GridMetrics& grid,
@@ -144,11 +168,15 @@ uint32_t bandLength(const double length, const GridMetrics& grid,
   if (cell <= 0.0) {
     return 0;
   }
-  return static_cast<uint32_t>(std::max(0.0, std::floor(length / cell)));
+  return boundedBandCells(std::floor(length / cell));
 }
 
 StampedBand stampBand(BitGrid& mask, const PortBand& band) {
   StampedBand stamped;
+  if (mask.empty()) {
+    stamped.lastForwardOnGrid = false;
+    return stamped;
+  }
   const uint32_t width = mask.width();
   const uint32_t height = mask.height();
   const int64_t perpX = -band.step.y;
@@ -156,14 +184,13 @@ StampedBand stampBand(BitGrid& mask, const PortBand& band) {
   std::unordered_set<std::size_t> covered;
 
   const auto markStrip = [&](const int64_t cx, const int64_t cy) {
-    for (int64_t t = -static_cast<int64_t>(band.halfWidth);
-         std::cmp_less_equal(t, band.halfWidth); ++t) {
+    auto last = static_cast<int64_t>(band.halfWidth);
+    auto first = -last;
+    clipStripAxis(cx, perpX, width - 1, first, last);
+    clipStripAxis(cy, perpY, height - 1, first, last);
+    for (auto t = first; t <= last; ++t) {
       const int64_t px = cx + (t * perpX);
       const int64_t py = cy + (t * perpY);
-      if (px < 0 || py < 0 || std::cmp_greater_equal(px, width) ||
-          std::cmp_greater_equal(py, height)) {
-        continue;
-      }
       const std::size_t index =
           (static_cast<std::size_t>(py) * width) + static_cast<std::size_t>(px);
       if (covered.insert(index).second) {
@@ -176,37 +203,41 @@ StampedBand stampBand(BitGrid& mask, const PortBand& band) {
 
   const int64_t startX = band.center.x();
   const int64_t startY = band.center.y();
-  int64_t lastX = startX;
-  int64_t lastY = startY;
+  const auto markAlong = [&](const int64_t dx, const int64_t dy,
+                             const int64_t first, const uint32_t reach) {
+    const auto stride = (dx * dx) + (dy * dy);
+    if (stride == 0) {
+      markStrip(startX, startY);
+      return;
+    }
 
-  // Forward along the step, with the joining cell of a diagonal move.
-  int64_t prevX = startX;
-  int64_t prevY = startY;
-  for (int64_t d = 0; std::cmp_less_equal(d, band.forward); ++d) {
-    const int64_t cx = startX + (band.step.x * d);
-    const int64_t cy = startY + (band.step.y * d);
-    lastX = cx;
-    lastY = cy;
-    if (band.step.diagonal() && (cx != prevX || cy != prevY)) {
-      markStrip(cx, prevY);
+    // The perpendicular offsets disappear when projected onto the band
+    // direction. Only strips whose projection can reach the grid can
+    // contribute cells. A diagonal joining strip projects one unit earlier.
+    const auto xEnd = dx * (width - 1);
+    const auto yEnd = dy * (height - 1);
+    const auto origin = (startX * dx) + (startY * dy);
+    const auto low = std::min<int64_t>(0, xEnd) + std::min<int64_t>(0, yEnd);
+    const auto high = std::max<int64_t>(0, xEnd) + std::max<int64_t>(0, yEnd);
+    const int64_t join = band.step.diagonal() ? 1 : 0;
+    const auto last = std::min<int64_t>(reach, (high - origin + join) / stride);
+    for (auto d = std::max(first, (low - origin) / stride); d <= last; ++d) {
+      const auto cx = startX + (dx * d);
+      const auto cy = startY + (dy * d);
+      if (join != 0 && d != 0) {
+        markStrip(cx, cy - dy);
+      }
+      markStrip(cx, cy);
     }
-    markStrip(cx, cy);
-    prevX = cx;
-    prevY = cy;
-  }
-  // Backward against the step, from the first cell past the center.
-  prevX = startX;
-  prevY = startY;
-  for (int64_t d = 1; std::cmp_less_equal(d, band.backward); ++d) {
-    const int64_t cx = startX - (band.step.x * d);
-    const int64_t cy = startY - (band.step.y * d);
-    if (band.step.diagonal() && (cx != prevX || cy != prevY)) {
-      markStrip(cx, prevY);
-    }
-    markStrip(cx, cy);
-    prevX = cx;
-    prevY = cy;
-  }
+  };
+  markAlong(band.step.x, band.step.y, 0, band.forward);
+  markAlong(-band.step.x, -band.step.y, 1, band.backward);
+
+  // The unclipped end tells target placement whether to undo the band.
+  const auto lastX =
+      startX + (band.step.x * static_cast<int64_t>(band.forward));
+  const auto lastY =
+      startY + (band.step.y * static_cast<int64_t>(band.forward));
   stamped.lastForwardCenter =
       DCoord(static_cast<uint32_t>(std::clamp<int64_t>(lastX, 0, width - 1)),
              static_cast<uint32_t>(std::clamp<int64_t>(lastY, 0, height - 1)));

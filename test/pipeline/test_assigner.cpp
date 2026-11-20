@@ -248,10 +248,47 @@ TEST(LauncherOrder, IsWhatTheStageRefuses) {
   }
 }
 
+TEST(LauncherOrder, ChecksTheSlotPositionsUsedByAssignment) {
+  const auto chip =
+      squareChip({{2.4, 0.51}, {3.6, 0.9}, {-2.4, -0.51}, {-3.6, -0.9}});
+  auto config = squareConfig();
+  config.rules = std::make_unique<fbd::DesignRulesT>();
+  auto plan = planWithLaunchersOf(chip);
+  plan.launchers[0]->position = {2, 1};
+  plan.launchers[1]->position = {4, 1};
+  plan.launchers[2]->position = {-2, -1};
+  plan.launchers[3]->position = {-4, -1};
+  try {
+    static_cast<void>(makeOrderedMilpAssigner()->run(
+        chip, plan, routingWithRing({0, 1, 2, 3}, {0}), config, {}));
+    FAIL() << "the stage accepted launcher slots that turn with the ring";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string_view(error.what())
+                  .find("in the direction of the port ring"),
+              std::string_view::npos);
+  }
+}
+
 std::string
 placesProblemOf(const std::vector<std::array<double, 2>>& launchers) {
   return launcherPlacesProblem(squareChip(launchers), squareConfig())
       .value_or("");
+}
+
+TEST(LauncherOrder, LeavesInvalidGridDimensionsToConfigurationValidation) {
+  const auto chip =
+      squareChip({{-10.0, 50.0}, {50.0, -10.0}, {110.0, 50.0}, {50.0, 110.0}});
+  auto config = squareConfig();
+  for (const auto [columns, rows, refinement] :
+       {std::array{1U, 0U, 2U}, std::array{2U, 1U, 2U},
+        std::array{2U, 0U, 0U}}) {
+    config.grid = std::make_unique<flatbuffers::config::GridParamsT>();
+    config.grid->capacity_cells_x = columns;
+    config.grid->capacity_cells_y = rows;
+    config.grid->detail_factor = refinement;
+    EXPECT_EQ(launcherOrderProblem(chip, config), std::nullopt);
+    EXPECT_EQ(launcherPlacesProblem(chip, config), std::nullopt);
+  }
 }
 
 /// The reason the stage gives for a chip whose launchers cannot feed its
@@ -789,7 +826,8 @@ ChipT octagonChip() {
 
 /// The configuration of octagonChip with a ring that opens at @p first.
 ConfigT octagonConfig(const std::size_t first, const std::uint32_t target,
-                      const std::uint32_t terminations) {
+                      const std::uint32_t terminations,
+                      const std::uint32_t utilization = 8) {
   ConfigT config;
   config.ports = std::make_unique<flatbuffers::config::PortConfigT>();
   config.ports->sequences =
@@ -799,7 +837,7 @@ ConfigT octagonConfig(const std::size_t first, const std::uint32_t target,
         "r" + std::to_string((first + step) % 8));
   }
   config.rules = std::make_unique<fbd::DesignRulesT>();
-  config.rules->max_feedline_utilization = 8;
+  config.rules->max_feedline_utilization = utilization;
   config.rules->feedline_terminations = terminations;
   config.stages = std::make_unique<flatbuffers::config::StageParamsT>();
   config.stages->assignment =
@@ -814,7 +852,7 @@ AssignmentT assignOctagon(const std::size_t first,
                           const std::vector<std::uint32_t>& resonators,
                           const std::uint32_t target,
                           const std::uint32_t terminations,
-                          const Report& report = {}) {
+                          const std::uint32_t utilization = 8) {
   const auto chip = octagonChip();
   std::vector<std::uint32_t> ring;
   ring.reserve(8);
@@ -823,7 +861,7 @@ AssignmentT assignOctagon(const std::size_t first,
   }
   return makeOrderedMilpAssigner()->run(
       chip, planWithLaunchersOf(chip), routingWithRing(ring, resonators),
-      octagonConfig(first, target, terminations), report);
+      octagonConfig(first, target, terminations, utilization), {});
 }
 
 /// The side of the line through @p from and @p to that @p point lies on: 1 to
@@ -922,6 +960,17 @@ TEST(Assigner, FindsTheSameOptimumWhereverTheRingOpens) {
                   objective, 1.0e-6)
           << "the ring opens at r" << first << " with " << terminations
           << " terminations";
+    }
+  }
+}
+
+TEST(Assigner, LimitsChainUtilizationWhereverTheRingOpens) {
+  for (std::size_t first = 0; first < 8; ++first) {
+    SCOPED_TRACE(first);
+    const auto assignment = assignOctagon(first, {0, 1, 6, 7}, 2, 2, 2);
+    ASSERT_EQ(assignment.chains.size(), 2U);
+    for (const auto& chain : assignment.chains) {
+      EXPECT_EQ(chain->nodes.size(), 2U);
     }
   }
 }

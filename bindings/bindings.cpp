@@ -169,9 +169,8 @@ const char* toneName(const mqt::scpd::pipeline::Tone tone) {
   case mqt::scpd::pipeline::Tone::Bad:
     return "bad";
   case mqt::scpd::pipeline::Tone::Plain:
-    break;
+    return "plain";
   }
-  return "plain";
 }
 
 /// Figures as a Python list of (text, tone) pairs.
@@ -431,6 +430,13 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       },
       "The implementations this build ships, as (stage, names) pairs in "
       "pipeline order.");
+
+  m.def(
+      "validate_artifact",
+      [](const nb::bytes& artifact) {
+        static_cast<void>(mqt::scpd::io::readArtifact(asSpan(artifact)));
+      },
+      "artifact"_a, "Raise ValueError if the stored artifact is invalid.");
 
   m.def(
       "set_solver",
