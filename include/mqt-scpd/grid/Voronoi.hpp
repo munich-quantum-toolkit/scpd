@@ -104,8 +104,8 @@ struct MedialAxis {
  * coordinates, and the axis then lies off the middle of a corridor by up to
  * one cell. Beside a rectangular obstacle that can give an opening more than
  * one bottleneck, and two mirrored openings different ones. The rasterization
- * keeps the truncation, because rounding changes the bottlenecks of the
- * benchmark chips.
+ * keeps the truncation, because rounding changes the bottlenecks, the Global
+ * circuit and the assignment of the benchmark chips.
  *
  * @param blocked The obstacle mask the edges were computed from.
  * @param grid The metrics of the grid of the mask.

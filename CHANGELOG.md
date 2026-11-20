@@ -29,6 +29,13 @@ releases may include breaking changes.
   configuration ([#166]) ([**@FeldmeierMichael**])
 - ✨ Add the `--chip` option of `doctor`, `plot`, `render` and `plan` ([#166])
   ([**@FeldmeierMichael**])
+- ✨ Add Global routing on Hanan lattices and Assignment of ring ports to
+  launchers and feedline chains ([#167]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
+- ➕ Add HiGHS 1.16.0, the `gurobi` installation extra, and solver configuration
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
+- 🎨 Draw Global and Assignment artifacts with the stored Capacity raster
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ✨ Add `MQT::ScpdRouting`: a curvature-constrained A* over eight-way Dubins
   move primitives, with a distance-field heuristic, a bucket queue whose memory
   is that of its largest search, one shared read-only obstacle mask and
@@ -66,6 +73,10 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⬆️ Require KLayout 0.30.13 or later in the 0.30 series for Python 3.15 wheels
+  on Linux and macOS ([#167]) ([**@marcelwa**])
+- ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])
 - 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
   ([**@FeldmeierMichael**])
@@ -98,6 +109,8 @@ releases may include breaking changes.
   ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🐛 Preserve port-keepout holes in GDS/OASIS exports ([#166])
   ([**@FeldmeierMichael**], [**@marcelwa**])
+- 🐛 Check launcher slot order and keep plain ring ports first at capacity gates
+  ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 
 <!-- Version links -->
 
@@ -106,6 +119,7 @@ releases may include breaking changes.
 <!-- PR links -->
 
 [#178]: https://github.com/munich-quantum-toolkit/scpd/pull/178
+[#167]: https://github.com/munich-quantum-toolkit/scpd/pull/167
 [#166]: https://github.com/munich-quantum-toolkit/scpd/pull/166
 [#134]: https://github.com/munich-quantum-toolkit/scpd/pull/134
 [#111]: https://github.com/munich-quantum-toolkit/scpd/pull/111

@@ -17,5 +17,7 @@ from __future__ import annotations
 
 __all__ = ["STEPS"]
 
-#: The steps this release runs, in order. Each is a stage that writes one artifact.
-STEPS: tuple[str, ...] = ("capacity",)
+#: The steps this release runs, in order. Each is a stage that writes one artifact. The Global stage
+#: runs before the Assignment stage: the assignment consumes the outer port ring that the inner
+#: circuit extends with the coupler ports it surfaces at.
+STEPS: tuple[str, ...] = ("capacity", "global", "assign")

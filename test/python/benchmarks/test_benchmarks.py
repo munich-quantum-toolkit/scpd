@@ -46,7 +46,7 @@ def test_every_benchmark_is_present() -> None:
 
 @pytest.mark.parametrize("chip", CHIPS)
 def test_the_configuration_follows_table_one(chip: str) -> None:
-    """The configuration obeys the rules for a shipped file and carries the values of Table I."""
+    """The configuration obeys the rules for a shipped file and carries Table I and the launcher target of a plan."""
     assert DATA is not None
     config = load_config(_config(chip), strict=True)
     with (DATA / "qor" / "qor.csv").open(encoding="utf-8") as file:
@@ -55,6 +55,9 @@ def test_the_configuration_follows_table_one(chip: str) -> None:
     assert config.rules is not None
     assert config.rules.targetResonatorLength == pytest.approx(float(row["resonator_length_d_fix_um"]))
     assert config.rules.maxFeedlineUtilization == int(row["feedline_max_capacity_r_util"])
+    assert config.stages is not None
+    assert config.stages.assignment is not None
+    assert config.stages.assignment.launcherTarget > 0
 
 
 @pytest.mark.parametrize("chip", CHIPS)

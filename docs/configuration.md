@@ -1,12 +1,8 @@
 # Configuration Reference
 
-A `config.toml` says how MQT SCPD plans a chip. This page lists every key with
-its default and its meaning. A key without a default is required in its section.
-Every length is in layout units, the µm of the chip input. A section or key that
-MQT SCPD does not know is an error.
-
-`mqt-scpd doctor -c config.toml` checks a configuration and its chip before a
-run.
+Run `mqt-scpd doctor -c config.toml` to check a chip and its configuration.
+Lengths are in µm. A dash in the default column marks a required key. MQT SCPD
+rejects unknown sections and keys.
 
 ## `[chip]`
 
@@ -31,13 +27,9 @@ port label. Every port must match exactly one of the role patterns `launcher`,
 | `bridge_pair`  | `""`    | The ports where a wire crosses a component instead of ending at it; empty for none          |
 | `component`    | `""`    | The component a port belongs to, as one capture group over the label; empty for no grouping |
 
-A chip with `bridge_pair` ports needs the `component` pattern, and the
-`component` pattern has to match every `bridge_pair` port.
-
-A `resonator`, `conventional` or `bridge_pair` port has to face a multiple of
-45°, so that its approach runs along an axis or a diagonal of the grid. `plan`
-and `doctor` refuse any other orientation before the capacity step and name the
-port.
+The `component` pattern must match every `bridge_pair` port. Resonator,
+conventional, and bridge ports must face a multiple of 45° so their approaches
+follow a grid axis or diagonal. `plan` and `doctor` check this before Capacity.
 
 ## `[ports.sequences]`
 
@@ -74,9 +66,9 @@ Every design rule is required. Every length must be positive.
 | `max_feedline_utilization`   | —       | The most resonators that one feedline chain feeds; at least one                                      |
 | `feedline_terminations`      | —       | How many feedline chain ends stop at a termination instead of a launcher                             |
 
-The planning steps of this release read only `min_wire_spacing`,
-`min_obstacle_spacing` and `min_straight_length`. The assignment and the routing
-stages of a later release read the others.
+The planning steps of this release do not read `min_bend_radius`,
+`target_resonator_length` and `resonator_length_tolerance`. The routing stages
+of a later release read them.
 
 ## `[grid]`
 
@@ -89,24 +81,16 @@ cell into a finer detail grid.
 | `capacity_cells_y` | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio, any other value is at least two |
 | `detail_factor`    | `30`    | The detail cells per capacity cell along each axis; at least one                                                          |
 
-No stage reads `launcher_offset_x` and `launcher_offset_y` any more. The loader
-still accepts them, and `doctor` and `plan` warn about each one; a later version
-refuses them.
+Remove the deprecated `launcher_offset_x` and `launcher_offset_y` keys. `doctor`
+and `plan` warn when these keys are present.
 
-The detail grid has `capacity_cells_x` × `detail_factor` cells across and
-`capacity_cells_y` × `detail_factor` cells down; with `capacity_cells_y` at `0`,
-the aspect ratio of the chip sets the capacity cells down. The detail grid may
-have at most 25,000,000 cells, for example 5000 × 5000. The capacity step holds
-about 120 bytes per detail cell, so the limit stands for about 3 GB of memory.
-The finest benchmark chip, 69q, plans on 1500 × 1500 cells. `plan` and `doctor`
-refuse a larger grid before the first stage of a run through the capacity step,
-and name the grid that the configuration asks for.
+Multiply each capacity grid dimension by `detail_factor` to get the detail grid.
+The limit is 25,000,000 detail cells. Capacity uses about 120 bytes per cell, or
+about 3 GB at the limit. The 69q benchmark uses 1500 × 1500 cells.
 
-The Capacity stage measures clearance on a square lattice and treats a diagonal
-step as a 45° port approach. It accepts a longer detail cell step up to 10%
-larger than the shorter step to allow for rounding the grid dimensions. Set
-`capacity_cells_y = 0` to derive it from the chip aspect ratio. Increase
-`capacity_cells_x` if a low resolution still produces cells outside this limit.
+The longer detail cell step may exceed the shorter one by up to 10%. Use
+`capacity_cells_y = 0` to derive the height from the chip aspect ratio. Increase
+`capacity_cells_x` if rounding still puts the grid outside this limit.
 
 ## `[stages.capacity]`
 
@@ -116,11 +100,99 @@ larger than the shorter step to allow for rounding the grid dimensions. Set
 | `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive |
 | `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it; it decides how many wires a border lets through; positive            |
 
+## `[stages.global]`
+
+| Key                | Default | Meaning                                                                                                    |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `router`           | `""`    | The implementation of the step; empty takes `hanan-milp`                                                   |
+| `internal_bridges` | `false` | Whether an inner wire may cross a component that the outer ring does not reach, through its own bridges    |
+
+Each inner wire starts at the inner end of a ring bridge and surfaces at its
+ring end. It can cross other bridges when `internal_bridges` is enabled. Global
+reports unreachable inner ports as fails. An unreachable inner resonator gets no
+feed.
+
+For each port in a lattice, Global uses a point `min_straight_length` in front
+of the port. Two ports that can carry inner wires on the same capacity chain
+must have distinct points. A port without an inner wire may share a point. The
+`doctor` preflight leaves this check to Global.
+
+A gate's budget is shared by all chains that cross it. Ring ports and inner
+wires that surface on the ring both use that budget. When the budget falls
+short, Global can solve a second model that leaves some ring ports out. Global
+counts these ports as fails and lists them at `-vv`.
+
+Global checks gates with room for some ring ports only when it solves an inner
+circuit, and only on chains without inner ports. A ring port without a bridge
+always needs a path to a launcher, even on a chip without inner ports. A ring
+bridge needs a path when an inner wire surfaces there.
+
+## `[stages.assignment]`
+
+| Key               | Default | Meaning                                                                                                                    |
+| ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `assigner`        | `""`    | The implementation of the step; empty takes `ordered-milp`                                                                 |
+| `launcher_target` | `0`     | How many feedline chain ends stop at a launcher; `0` leaves it unset, and `plan` refuses a run that reaches the assignment |
+
+For a ring with resonators, `launcher_target` and `feedline_terminations` count
+the ends of its feedline chains. Apply these rules.
+
+- The total is even. The number of chains equals half the total.
+- Conventional ring ports and launcher ends together fit on the chip's
+  launchers.
+- `launcher_target` and `feedline_terminations` are each at most the number of
+  resonators on the ring.
+- Terminations cannot outnumber launcher ends. Each chain needs a launcher.
+- The number of resonators must fit within the number of chains times
+  `max_feedline_utilization`.
+
+Global decides which bridge ports stay on the ring and which count as
+resonators. `plan` and `doctor` reject configurations that violate a limit for
+every possible ring. Assignment also requires feed points to respect
+`min_wire_spacing` and map to distinct detail cells. Refine the detail grid if
+distinct feeds round to the same cell.
+
+## `[stages.solver]`
+
+| Key            | Default | Meaning                                                                                       |
+| -------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `backend`      | `""`    | `highs` or `gurobi`; empty takes `highs`. The environment variable `SCPD_SOLVER` overrides it |
+| `time_limit`   | `0.0`   | The seconds one solve may take; `0.0` sets no limit; not negative                             |
+| `relative_gap` | `0.0`   | The relative gap at which a solve may stop; `0.0` keeps the gap of the backend; not negative  |
+| `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
+
+Install the Gurobi backend with `uv pip install "mqt-scpd[gurobi]"`. Gurobi has
+no Windows ARM64 wheel. The bundled license allows up to 2,000 variables and
+2,000 constraints per linear model. Larger models need a full license. Run
+`mqt-scpd doctor` with the configuration to check the backend before planning.
+
+`optimal` means the gap between the best solution and the best bound is within
+the solver's tolerance. Both backends default to a relative gap of `1e-4`
+(`mip_rel_gap` in HiGHS and `MIPGap` in Gurobi). Their absolute gaps are `1e-6`
+(`mip_abs_gap`) and `1e-10` (`MIPGapAbs`), respectively. The absolute gap
+matters near zero. Backends can pick different solutions within the tolerance or
+break ties differently. That can change the next stage's inputs.
+
+At `time_limit`, the solver returns its best feasible solution if it found one.
+The limit applies to each model. Global can solve two models when port capacity
+falls short, and reports when it used a solution from an early stop. Its gap
+applies to a model objective that includes penalties for missing ports. Its
+reported wire length counts only wires that reach a target.
+
+With `threads = 0`, the bundled HiGHS uses the physical cores available to the
+process, and Gurobi selects its own count. Thread counts and time limits can
+change the solution. Use a fixed thread count and leave `time_limit` at `0.0`
+for more comparable runs.
+
+HiGHS supports concurrent solves from separate calling threads. A callback
+cannot start a nested solve. To change the thread count on a calling thread, let
+any other active solves in MQT SCPD finish first.
+
 ## `[run]`
 
-| Key          | Default | Meaning                                                   |
-| ------------ | ------- | --------------------------------------------------------- |
-| `stop_after` | `""`    | The last step of a run: `capacity`; empty runs every step |
+| Key          | Default | Meaning                                                                       |
+| ------------ | ------- | ----------------------------------------------------------------------------- |
+| `stop_after` | `""`    | The last step of a run: `capacity`, `global` or `assign`; empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each
 step. `--stop-after` replaces `stop_after` for one run.

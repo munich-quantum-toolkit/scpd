@@ -6,10 +6,8 @@
 #
 # Licensed under the MIT License
 
-# A two-qubit chip for the unit tests, small enough to read. Its two qubit pads
-# wind in opposite directions and the coupler between them overlaps both; the
-# round pad has 256 vertices; fixed_outer is an open sub-chain of all_outer.
-# The benchmark chips live in https://github.com/cda-tum/planar-superconducting-pd.
+# Launcher numbering runs against the outer ring. Three launchers serve
+# conventional ports. The fourth feeds both resonators and ends at a termination.
 
 [chip]
 input = "routing_config.json"
@@ -31,7 +29,10 @@ min_straight_length = 100.0
 target_resonator_length = 2500.0
 resonator_length_tolerance = 100.0
 max_feedline_utilization = 4
-feedline_terminations = 0
+feedline_terminations = 1
 
 [grid]
 capacity_cells_x = 12
+
+[stages.assignment]
+launcher_target = 1

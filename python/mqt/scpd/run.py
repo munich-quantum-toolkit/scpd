@@ -9,13 +9,13 @@
 """The run directory: what a step reads, what it writes, and how a run is resumed.
 
 Every step reads the artifacts of the steps before it and writes one artifact, so a run can be
-continued from any completed step. Running a step deletes the artifacts of every later step, so
-the directory never holds a later artifact beside an earlier one it did not come from. An artifact
-is written to a file of its own first and then renamed, so no half-written artifact is left behind.
+continued from any completed step. A successful rerun removes the artifacts of every later step.
+Publication installs the staged files by rename. If the planning process is interrupted during
+publication, the next writer recovers the run before starting.
 
-Beside each artifact a step writes a record of the inputs it read: a digest of the classified chip,
-of every configuration section the step reads, and of the artifact itself. A step refuses to run
-on an earlier artifact whose bytes or inputs do not match its record.
+Beside each artifact a step records digests of the classified chip, the configuration sections and
+artifacts it reads, and the artifact it writes. A step refuses to run on an earlier artifact whose
+bytes or inputs do not match its record.
 
 Python does the file work. The core never opens a file: it takes bytes and returns bytes.
 """
@@ -74,6 +74,8 @@ class RunError(RuntimeError):
 #: of the directory reads like the pipeline.
 STAGE_FILES: dict[str, str] = {
     "capacity": "01-capacity.fb",
+    "global": "02-global.fb",
+    "assign": "03-assign.fb",
 }
 
 
@@ -81,12 +83,16 @@ STAGE_FILES: dict[str, str] = {
 #: sections, named as in ``config.toml``, and the chip copy of the run as the configuration classifies it.
 STEP_INPUTS: dict[str, tuple[str, ...]] = {
     "capacity": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", RUN_CHIP),
+    "global": ("[ports]", "[design_rules]", "[grid]", "[stages.global]", "[stages.solver]", RUN_CHIP),
+    "assign": ("[ports]", "[design_rules]", "[grid]", "[stages.assignment]", "[stages.solver]", RUN_CHIP),
 }
 
 
 #: The artifacts each step reads, in the order the core takes them.
 ARTIFACT_INPUTS: dict[str, tuple[str, ...]] = {
     "capacity": (),
+    "global": ("capacity",),
+    "assign": ("capacity", "global"),
 }
 
 
@@ -108,6 +114,10 @@ def _plain(value: object) -> object:
 def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
     """The SHA-256 digest of every input a step can read.
 
+    ``SCPD_SOLVER`` is not an input: it chooses the backend of one invocation, and the run directory
+    records only the files of the run. A step that resumes under another backend can therefore give
+    another artifact, as ``docs/benchmarks.md`` says.
+
     Args:
         config: The configuration of the run.
         chip: The classified chip.
@@ -123,6 +133,9 @@ def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
         # A configuration without [grid] takes the defaults, as one that states them does.
         "[grid]": config.grid if config.grid is not None else GridParamsT(),
         "[stages.capacity]": stages.capacity if stages is not None else None,
+        "[stages.global]": stages.global_ if stages is not None else None,
+        "[stages.assignment]": stages.assignment if stages is not None else None,
+        "[stages.solver]": stages.solver if stages is not None else None,
     }
     digests = {
         name: hashlib.sha256(json.dumps(_plain(section), sort_keys=True).encode("utf-8")).hexdigest()
@@ -159,7 +172,7 @@ class StageBlockLike(Protocol):
         """Take a line of free text."""
 
     def entry(self, level: int, label: str, figures: Sequence[Figure]) -> None:
-        """Take an entry, such as one chain."""
+        """Take an entry, such as one feedline chain."""
 
     def result(self, figures: Sequence[Figure], fails: int | None = None) -> None:
         """Take the result of the stage."""
@@ -481,6 +494,9 @@ class RunDirectory:
         """
         targets = [self.path / source.name for source in sources]
         with self._write_lock():
+            if self._recovery.exists():
+                msg = f"cannot write {self.path}: cannot remove the recovery journal"
+                raise RunError(msg)
             if digests is not None:
                 config = self.load()
                 if input_digests(config, self.classified_chip(config)) != digests:
@@ -581,8 +597,12 @@ class RunDirectory:
         if failed:
             msg = f"cannot restore all files of {self.path}; any remaining backups are in {previous}"
             raise RunError(msg) from failed[0]
-        journal.unlink()
-        previous.rmdir()
+        try:
+            journal.unlink()
+            previous.rmdir()
+        except OSError as error:
+            msg = f"cannot remove the recovery journal for {self.path}"
+            raise RunError(msg) from error
 
     def load(self) -> ConfigT:
         """Read the configuration of an existing run.
@@ -651,15 +671,19 @@ class RunDirectory:
             inputs.append(verified[earlier])
         packed = write_config(config)
         producer = f"mqt-scpd {__version__}"
-        level = min(max(verbosity, 0), 2)
+        level = min(max(verbosity, 0), 3)
         calls: dict[str, Callable[[], bytes]] = {
-            "capacity": lambda: pyscpd.plan_capacity(chip, *inputs, packed, producer, reporter, level),
+            "capacity": lambda: pyscpd.plan_capacity(chip, packed, producer, reporter, level),
+            "global": lambda: pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level),
+            "assign": lambda: pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level),
         }
         if stage not in calls:
             msg = f"no core call runs the {stage} step"
             raise RunError(msg)
         data = calls[stage]()
         record = {name: digests[name] for name in STEP_INPUTS[stage]}
+        for earlier in ARTIFACT_INPUTS[stage]:
+            record[STAGE_FILES[earlier]] = hashlib.sha256(verified[earlier]).hexdigest()
         record[_ARTIFACT_DIGEST] = hashlib.sha256(data).hexdigest()
         with tempfile.TemporaryDirectory(prefix=".mqt-scpd-stage-", dir=self.path) as staging:
             pending = RunDirectory(Path(staging))
@@ -673,7 +697,7 @@ class RunDirectory:
             self._publish_files(sources, digests=digests, prerequisites=verified)
         return StageResult(stage=stage, path=path, size=len(data))
 
-    def check_current(self, stage: str, digests: dict[str, str], *, data: bytes | None = None) -> None:
+    def check_current(self, stage: str, digests: dict[str, str], *, data: bytes | None = None) -> dict[str, bytes]:
         """Check that the artifact and its preceding stages match their records.
 
         Args:
@@ -681,11 +705,14 @@ class RunDirectory:
             digests: The digests of the inputs the run holds now, as :func:`input_digests` gives them.
             data: The artifact bytes the caller will consume, if it already read them.
 
+        Returns:
+            The verified artifacts, indexed by stage.
+
         Raises:
             RunError: If an artifact has no readable record or its bytes or inputs have changed.
         """  # ruff: ignore[docstring-extraneous-exception]  # _check_records() raises it
         names = list(STAGE_FILES)
-        self._check_records(names[: names.index(stage) + 1], digests, {stage: data} if data is not None else {})
+        return self._check_records(names[: names.index(stage) + 1], digests, {stage: data} if data is not None else {})
 
     def _check_records(
         self, stages: Sequence[str], digests: dict[str, str], artifacts: dict[str, bytes]
@@ -698,6 +725,7 @@ class RunDirectory:
         Raises:
             RunError: If an artifact has no readable record or its bytes or inputs have changed.
         """
+        verified_digests: dict[str, str] = {}
         for earlier in stages:
             artifact = self.artifact(earlier)
             if earlier not in artifacts:
@@ -709,10 +737,12 @@ class RunDirectory:
                 record = json.loads(self.record(earlier).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 record = None
-            if not isinstance(record, dict) or set(record) != {*STEP_INPUTS[earlier], _ARTIFACT_DIGEST}:
+            inputs = {STAGE_FILES[step]: step for step in ARTIFACT_INPUTS[earlier]}
+            if not isinstance(record, dict) or set(record) != {*STEP_INPUTS[earlier], *inputs, _ARTIFACT_DIGEST}:
                 msg = f"{artifact.name} carries no record of the inputs it was made from; run the {earlier} step again"
                 raise RunError(msg)
-            if record[_ARTIFACT_DIGEST] != hashlib.sha256(artifacts[earlier]).hexdigest():
+            digest = hashlib.sha256(artifacts[earlier]).hexdigest()
+            if record[_ARTIFACT_DIGEST] != digest:
                 msg = f"{artifact.name} does not match its input record; run the {earlier} step again"
                 raise RunError(msg)
             for name in STEP_INPUTS[earlier]:
@@ -722,4 +752,12 @@ class RunDirectory:
                         f"{where} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
                     )
                     raise RunError(msg)
+            for name, step in inputs.items():
+                if name not in verified_digests:
+                    msg = f"{name} is missing; run the {step} step first"
+                    raise RunError(msg)
+                if record[name] != verified_digests[name]:
+                    msg = f"{name} changed after the {earlier} step wrote {artifact.name}; run the {earlier} step again"
+                    raise RunError(msg)
+            verified_digests[artifact.name] = digest
         return artifacts

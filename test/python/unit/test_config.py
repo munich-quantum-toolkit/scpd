@@ -87,8 +87,19 @@ STAGES = """
 [stages.capacity]
 crossing_pitch = 150.0
 
+[stages.global]
+internal_bridges = true
+
+[stages.assignment]
+launcher_target = 7
+
+[stages.solver]
+backend = "highs"
+time_limit = 30
+threads = 4
+
 [run]
-stop_after = "capacity"
+stop_after = "assign"
 """
 
 WITH_STAGES = MANUAL + STAGES
@@ -178,6 +189,7 @@ def test_a_removed_key_loads_and_is_named() -> None:
     message = "[grid] launcher_offset_x has no effect, and a later version will refuse it; remove it"
     assert removed_keys({"grid": {"launcher_offset_x": 0, "capacity_cells_x": 25}}) == [message]
     assert removed_keys({"grid": {"capacity_cells_x": 25}}) == []
+    assert shipped_config_problems({"grid": {"launcher_offset_y": 7}}) == [message.replace("_x", "_y")]
 
 
 def test_removed_keys_in_reads_the_file(tmp_path: Path) -> None:
@@ -220,6 +232,15 @@ def test_the_stage_and_run_sections_default_when_the_file_leaves_them_out() -> N
     assert (stages.capacity.planner,) == ("",)
     assert stages.capacity.bottleneckClearance == pytest.approx(1.5)
     assert stages.capacity.crossingPitch == pytest.approx(165.0)
+    assert stages.global_ is not None
+    assert (stages.global_.router,) == ("",)
+    assert stages.global_.internalBridges is False
+    assert stages.assignment is not None
+    assert stages.assignment.launcherTarget == 0
+    assert stages.solver is not None
+    assert (stages.solver.backend,) == ("",)
+    assert stages.solver.timeLimit == pytest.approx(0.0)
+    assert stages.solver.threads == 0
     assert config.run is not None
     assert (config.run.stopAfter,) == ("",)
 
@@ -233,8 +254,15 @@ def test_a_stage_section_sets_what_it_names() -> None:
     assert stages.capacity is not None
     assert stages.capacity.crossingPitch == pytest.approx(150.0)
     assert stages.capacity.bottleneckClearance == pytest.approx(1.5)
+    assert stages.global_ is not None
+    assert stages.global_.internalBridges is True
+    assert stages.assignment is not None
+    assert stages.assignment.launcherTarget == 7
+    assert stages.solver is not None
+    assert (stages.solver.backend, stages.solver.timeLimit) == ("highs", pytest.approx(30.0))
+    assert stages.solver.threads == 4
     assert config.run is not None
-    assert config.run.stopAfter == "capacity"
+    assert config.run.stopAfter == "assign"
 
 
 def test_the_bridge_declarations_load() -> None:
@@ -267,11 +295,10 @@ def test_the_grid_reads_the_detail_factor() -> None:
     [
         (MANUAL + "\n[stages.capacity]\nsloppy = 1\n", "[stages.capacity] has the unknown key 'sloppy'"),
         (MANUAL + "\n[stages.detail]\nrounds = 3\n", "[stages] has the unknown key 'detail'"),
-        (
-            MANUAL + '\n[stages.capacity]\ncrossing_pitch = "wide"\n',
-            "[stages.capacity] crossing_pitch must be a number",
-        ),
-        (MANUAL + "\n[stages.capacity]\nplanner = 2\n", "[stages.capacity] planner must be a string"),
+        (MANUAL + "\n[stages.global]\ninternal_bridges = 1\n", "internal_bridges must be true or false"),
+        (MANUAL + "\n[stages.assignment]\nlauncher_target = -1\n", "between 0 and 4294967295"),
+        (MANUAL + "\n[stages.solver]\nthreads = -2\n", "[stages.solver] threads must be between 0 and 4294967295"),
+        (MANUAL + "\n[stages.solver]\nthreads = 2.5\n", "[stages.solver] threads must be an integer"),
         (
             MANUAL.replace("[ports.patterns]", "[ports]\nbridge_pairs = 3\n\n[ports.patterns]"),
             "[ports] bridge_pairs must be an array of tables",
@@ -282,15 +309,17 @@ def test_the_grid_reads_the_detail_factor() -> None:
         ),
         (
             MANUAL + '\n[run]\nstop_after = "outer"\n',
-            "[run] stop_after must be empty or one of 'capacity'",
+            "[run] stop_after must be empty or one of 'capacity', 'global', 'assign'",
         ),
         (MANUAL + "\n[run]\nstop = 1\n", "[run] has the unknown key 'stop'"),
     ],
     ids=[
         "unknown-stage-key",
         "unknown-stage",
-        "pitch-not-number",
-        "planner-not-string",
+        "flag-not-boolean",
+        "negative-count",
+        "negative-threads",
+        "fractional-threads",
         "bridge-pairs-not-tables",
         "bridge-rule-without-second",
         "unknown-step",
@@ -306,19 +335,21 @@ def test_stage_problems_are_named(text: str, message: str) -> None:
 def test_shipped_stage_sections_carry_only_what_differs_from_the_defaults() -> None:
     """Strict loading rejects a stage or run key written out at its default, and empty sections."""
     parse_config(WITH_STAGES, strict=True)
-    assert shipped_config_problems({"stages": {"capacity": {}}}) == [
+    assert shipped_config_problems({"stages": {"solver": {"threads": 0}, "capacity": {}}}) == [
         "[stages.capacity] is empty; remove it",
+        "[stages.solver] threads is set to its default 0; remove it",
     ]
-    assert shipped_config_problems({"stages": {"capacity": {"planner": ""}}}) == [
-        '[stages.capacity] planner is set to its default ""; remove it',
+    assert shipped_config_problems({"stages": {"global": {"internal_bridges": False}}}) == [
+        "[stages.global] internal_bridges is set to its default false; remove it",
     ]
     assert shipped_config_problems({"run": {"stop_after": ""}}) == [
         '[run] stop_after is set to its default ""; remove it',
     ]
-    # A whole number in a key that holds a number is that number.
-    assert shipped_config_problems({"stages": {"capacity": {"crossing_pitch": 165}}}) == [
-        "[stages.capacity] crossing_pitch is set to its default 165.0; remove it",
+    # A whole number in a key that holds a number is that number; a flag is not a number.
+    assert shipped_config_problems({"stages": {"solver": {"time_limit": 0}}}) == [
+        "[stages.solver] time_limit is set to its default 0.0; remove it",
     ]
+    assert shipped_config_problems({"stages": {"assignment": {"launcher_target": False}}}) == []
     assert shipped_config_problems({"stages": {}, "run": {}}) == [
         "[stages] is empty; remove it",
         "[run] is empty; remove it",
@@ -336,10 +367,13 @@ def test_the_stage_and_bridge_sections_round_trip_through_the_core_bytes() -> No
         (rule.first, rule.second) for rule in config.ports.bridgePairs
     ]
     assert back.stages is not None
-    assert back.stages.capacity is not None
-    assert back.stages.capacity.crossingPitch == pytest.approx(150.0)
+    assert back.stages.assignment is not None
+    assert back.stages.assignment.launcherTarget == 7
+    assert back.stages.solver is not None
+    assert back.stages.solver.backend == "highs"
+    assert back.stages.solver.threads == 4
     assert back.run is not None
-    assert back.run.stopAfter == "capacity"
+    assert back.run.stopAfter == "assign"
 
 
 def test_load_config_names_the_file(tmp_path: Path) -> None:

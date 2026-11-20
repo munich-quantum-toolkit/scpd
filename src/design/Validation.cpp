@@ -17,6 +17,8 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <format>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -36,12 +38,25 @@ using flatbuffers::design::ChipT;
 using flatbuffers::design::Rotation;
 using flatbuffers::design::UnassignedRole;
 
+/// The most threads a solve may ask for. It is the upper limit of the Gurobi
+/// parameter Threads, and far below the largest thread count of HiGHS.
+constexpr std::uint32_t MAX_SOLVER_THREADS = 1024;
+
 void requirePositive(const double value, const std::string& what,
                      Problems& problems) {
   if (!std::isfinite(value)) {
     problems.push_back(what + " must be finite");
   } else if (!(value > 0.0)) {
     problems.push_back(what + " must be positive");
+  }
+}
+
+void requireNonNegative(const double value, const std::string& what,
+                        Problems& problems) {
+  if (!std::isfinite(value)) {
+    problems.push_back(what + " must be finite");
+  } else if (value < 0.0) {
+    problems.push_back(what + " must not be negative");
   }
 }
 
@@ -292,6 +307,23 @@ Problems validate(const ConfigT& config) {
                       "stages.capacity: bottleneck_clearance", problems);
       requirePositive(stages.capacity->crossing_pitch,
                       "stages.capacity: crossing_pitch", problems);
+    }
+    if (stages.solver != nullptr) {
+      const auto& backend = stages.solver->backend;
+      if (!backend.empty() && backend != "highs" && backend != "gurobi") {
+        problems.push_back(
+            "stages.solver: backend must be one of highs, gurobi, not '" +
+            backend + "'");
+      }
+      requireNonNegative(stages.solver->time_limit, "stages.solver: time_limit",
+                         problems);
+      requireNonNegative(stages.solver->relative_gap,
+                         "stages.solver: relative_gap", problems);
+      if (stages.solver->threads > MAX_SOLVER_THREADS) {
+        problems.push_back(
+            std::format("stages.solver: threads must be at most {}, not {}",
+                        MAX_SOLVER_THREADS, stages.solver->threads));
+      }
     }
   }
   return problems;

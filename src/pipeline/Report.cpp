@@ -10,7 +10,10 @@
 
 #include "mqt-scpd/pipeline/Report.hpp"
 
+#include "mqt-scpd/milp/Backend.hpp"
+
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <format>
 #include <memory>
@@ -92,6 +95,41 @@ void Report::progress(const std::string_view task,
   state->lastTask = task;
   state->lastUpdate = now;
   sinks->progress(task, detail, done, total);
+}
+
+milp::SolveObserver Report::solveObserver(const std::string_view task) const {
+  milp::SolveObserver observer;
+  if (sinks != nullptr && sinks->line && Detail::Solver <= reportLevel) {
+    observer.log = [report = *this](const std::string_view text) {
+      report.line(Detail::Solver, text);
+    };
+  }
+  if (sinks != nullptr && sinks->progress) {
+    // The check repeats the last state of the search, so the progress sink
+    // runs, and a caller that stops there stops the solve.
+    auto last = std::make_shared<std::string>();
+    observer.check = [report = *this, name = std::string(task), last] {
+      report.progress(name, *last, 0, 0);
+    };
+    observer.progress = [report = *this, name = std::string(task),
+                         last](const milp::SolveProgress& search) {
+      std::string detail;
+      const auto append = [&detail](const std::string& figure) {
+        detail += detail.empty() ? "" : FIGURE_SEPARATOR;
+        detail += figure;
+      };
+      if (!std::isnan(search.objective)) {
+        append(std::format("objective {:.2f}", search.objective));
+      }
+      if (!std::isnan(search.gap)) {
+        append(std::format("gap {:.1f} %", search.gap * 100.0));
+      }
+      append(counted(search.nodes, "node"));
+      report.progress(name, detail, 0, 0);
+      *last = std::move(detail);
+    };
+  }
+  return observer;
 }
 
 } // namespace mqt::scpd::pipeline

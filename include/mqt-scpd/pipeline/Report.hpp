@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "mqt-scpd/milp/Backend.hpp"
 #include "mqt-scpd/pipeline/mqt_scpd_pipeline_export.hpp"
 
 #include <cstdint>
@@ -27,10 +28,12 @@ namespace mqt::scpd::pipeline {
 enum class Detail : std::uint8_t {
   /// What a run says without -v: the result of a stage.
   Summary = 0,
-  /// With -v: the parameters and the steps of a stage.
+  /// With -v: the parameters, the steps of a stage and the result of a solve.
   Steps = 1,
-  /// With -vv: one line per item, such as a chain.
+  /// With -vv: one line per item, such as a chain or a connection.
   Items = 2,
+  /// With -vvv: the own log of the solver.
+  Solver = 3,
 };
 
 /// What joins two figures in one line of text: a middle dot between two
@@ -42,6 +45,10 @@ inline constexpr std::string_view FIGURE_SEPARATOR = " \xC2\xB7 ";
 /// The sign between the two sides of a size, such as 12×12: U+00D7 in UTF-8.
 inline constexpr std::string_view TIMES = "\xC3\x97";
 
+/// The sign between the two ends of a connection, such as Q1.port1 → Q2.port1:
+/// U+2192 in UTF-8.
+inline constexpr std::string_view ARROW = "\xE2\x86\x92";
+
 /// How a renderer colors a figure.
 enum class Tone : std::uint8_t {
   /// A figure without a verdict.
@@ -52,9 +59,9 @@ enum class Tone : std::uint8_t {
   Bad,
 };
 
-/// One figure of a result or an entry, such as "363 partitions" or "fails 2".
-/// The text follows the wording rules of the terminal output; the renderer only
-/// lays it out and colors it.
+/// One figure of a result or an entry, such as "363 partitions",
+/// "objective 27.84" or "fails 2". The text follows the wording rules of the
+/// terminal output; the renderer only lays it out and colors it.
 struct Figure {
   /// The figure as it is shown.
   std::string text;
@@ -143,7 +150,7 @@ public:
   void line(Detail detail, std::string_view text) const;
 
   /**
-   * @brief Reports an entry, such as one chain.
+   * @brief Reports an entry, such as one feedline chain of an assignment.
    * @param detail The level of the entry.
    * @param label What the entry is about.
    * @param figures Its figures.
@@ -174,6 +181,25 @@ public:
    */
   void progress(std::string_view task, std::string_view detail,
                 std::uint64_t done, std::uint64_t total) const;
+
+  /**
+   * @brief Makes the observer through which a solve reports.
+   *
+   * The solver log reaches the line sink at the Solver level, and only when
+   * the report is that detailed. The state of the search reaches the progress
+   * sink, under @p task, as its objective, gap and node count. While the
+   * backend has no new state, the check of the observer repeats the last one,
+   * so that a progress sink that throws stops the solve. HiGHS calls the check
+   * only for a model without integer variables, which has no state of a
+   * search, so there the check reports the task without figures. HiGHS calls
+   * neither during presolve and postsolve, while it solves the linear
+   * relaxation of a mixed-integer model, or inside a sub-MIP of its
+   * heuristics.
+   *
+   * @param task What the solve is for, such as "solving the assignment".
+   * @return The observer.
+   */
+  [[nodiscard]] milp::SolveObserver solveObserver(std::string_view task) const;
 
 private:
   struct State;

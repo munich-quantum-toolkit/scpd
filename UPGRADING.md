@@ -1,21 +1,41 @@
 # Upgrade Guide
 
-This document describes breaking changes and how to upgrade. For a complete list
-of changes including minor and patch releases, please refer to the
-[changelog](CHANGELOG.md).
+See the [changelog](CHANGELOG.md) for the full list of changes.
 
 ## [Unreleased]
 
-- Stage artifacts use the `SCP2` identifier. The former `SCP1` tables cannot
-  store the full Capacity plan. To upgrade a run, use the old `config.toml` and
-  `00-chip.json` as inputs to
-  `mqt-scpd plan -c <config> --chip <chip> -o <new-dir>`. The new directory has
-  the marker and input records this version requires.
+- To upgrade an `SCP1` run, use its `config.toml` and `00-chip.json` with
+  `mqt-scpd plan -c <config> --chip <chip> -o <new-dir>`. This creates `SCP2`
+  artifacts with the run marker and input records.
 - The Capacity stage requires detail grid steps within 10% of each other. Set
   `[grid] capacity_cells_y` to zero to derive it from the chip aspect ratio, or
   set explicit dimensions that produce nearly square cells.
 - Remove `[grid] launcher_offset_x` and `launcher_offset_y` from existing
   configurations. The loader accepts these keys with a warning.
+
+To plan through Assignment, set `[stages.assignment] launcher_target` to the
+number of chain ends that need a launcher on your chip. Use
+`[run] stop_after = "capacity"` for Capacity alone. `doctor` checks through the
+configured stop point, which defaults to Assignment. See the
+[configuration reference](docs/configuration.md) for launcher order, ring
+counts, and solver settings.
+
+The Linux x86-64 wheels require a processor with the POPCNT instruction.
+
+Keep existing `SCP2` Capacity artifacts. Regenerate earlier `SCP2` Global and
+Assignment placeholders from the original configuration and chip.
+
+Assignment uses a sliding window to enforce the feedline utilization limit. The
+bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning
+Assignment can select a different layout when objective values tie.
+
+Install the optional Gurobi backend with `uv pip install "mqt-scpd[gurobi]"`.
+
+GDS/OASIS planning exports preserve holes in the port approach layer. Run
+`mqt-scpd render` again to update exported files.
+
+KLayout 0.30.13 has Python 3.15 wheels on Linux and macOS. On Windows x86-64,
+its wheels cover Python through 3.14. KLayout has no Windows ARM64 wheel.
 
 <!-- Version links -->
 

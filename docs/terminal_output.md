@@ -1,32 +1,26 @@
 # Terminal Output
 
-This page fixes what each command of `mqt-scpd` prints. The first section holds
-the rules that every command follows. A section per command then shows its
-output on the 17-qubit benchmark chip. The tests in
-`test/python/unit/test_console.py`, `test/python/unit/test_cli.py` and
-`test/python/unit/test_doctor.py` check the format.
+Use this reference to read command output or check the format that MQT SCPD uses
+in its CLI tests. The examples use the 17-qubit benchmark chip.
 
 ## Rules for Every Command
 
 ### Result and Error Lines
 
-A command that writes a file prints one result line on stdout. The line starts
-with `✓`, names the file and gives its size:
+A file result on stdout starts with `✓` and gives the filename and size.
 
 ```text
 ✓ runs/17q-capacity.svg  810.0 kB
 ```
 
-A command that cannot do what it was asked prints one error line on stderr. The
-line starts with `✗` and says why:
+An error on stderr starts with `✗` and gives the reason.
 
 ```text
 ✗ runs/17q/01-capacity.fb is missing; run `mqt-scpd plan` up to the capacity step first
 ```
 
-A warning starts with `⚠`. `plan` prints it on stdout, and `inspect` prints it
-on stderr. `doctor` is the exception to these rules; its section describes its
-report.
+Warnings start with `⚠`. `plan` sends them to stdout and `inspect` sends them to
+stderr. `doctor` has its own report format.
 
 ### Symbols and Colors
 
@@ -113,27 +107,18 @@ fixed_outer: 44 ports
 doctor: OK
 ```
 
-The example shortens the two port lists. The report has these parts:
-
-1. The configuration and the chip input it names.
-2. One line `WARNING: <warning>` per key that no stage reads any more.
-3. One line `PROBLEM: <problem>` per problem. A problem is an error in the
-   configuration or the chip, or a preflight problem in a step up to
-   `[run] stop_after`. Each step can also report problems it finds while
-   planning.
-4. The counts of obstacles and ports.
-5. The roles of the ports: the count, the pattern and the first three labels of
-   each role.
-6. With `--ports`, one line per port with its label and its role.
-7. The outer port ring: the `all_outer` and the `fixed_outer` sequences.
-8. The verdict: `doctor: OK`, or `doctor: <n> problem(s)`.
+The example shortens the port lists and omits the solver availability section.
+Use `--ports` to list every port and its role. `doctor` prints deprecated keys
+as `WARNING: <warning>`. It prints input errors and preflight problems through
+`[run] stop_after` as `PROBLEM: <problem>`. The report ends with `doctor: OK` or
+`doctor: <n> problem(s)`.
 
 A problem in the configuration or the chip ends the report after that line:
 
 ```text
 $ mqt-scpd doctor -c inputs/17q/config.toml
 configuration: inputs/17q/config.toml
-PROBLEM: inputs/17q/config.toml: [stages] has the unknown key 'assignment'
+PROBLEM: inputs/17q/config.toml: [stages] has the unknown key 'example'
 doctor: 1 problem(s)
 ```
 
@@ -142,8 +127,7 @@ change the code.
 
 ## `plan`
 
-`plan` prints one block per stage. Every stage follows the format of this
-section, and so does every stage that a later release adds.
+`plan` prints one block per stage.
 
 ### A Run
 
@@ -151,42 +135,44 @@ Without `-v`, a run on the 17-qubit benchmark chip prints this:
 
 ```text
 $ mqt-scpd plan -c inputs/17q/config.toml -o runs/17q
-mqt-scpd plan 17q → runs/17q
+mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.16.0
 
 🧩 capacity
-   356 partitions · 55 bottlenecks · 72 chains                     0.74s
-   ✓ 01-capacity.fb  1.3 MB
+   356 partitions · 55 bottlenecks · 72 chains                     2.58s
+   ✓ 01-capacity.fb  1.4 MB
+🔳 global
+   14 inner wires · 8 lattices · length 23419.67                   0.09s
+   ✓ 02-global.fb  13.7 kB · fails 0
+📌 assign
+   58 ports · 7 launcher ends · objective 27.84 · optimal          0.53s
+   ✓ 03-assign.fb  2.8 kB · fails 0
 
-✓ 1 stage · 0.75s · stopped after capacity
+✓ 3 stages · 3.38s · stopped after assign · fails 0
 ```
 
-The run has these parts:
+With `--stage`, the header shows the run directory in place of the chip name.
+Deprecated keys produce one warning each.
 
-- The header names the command, the chip and the run directory. With `--stage`,
-  the header names the run directory in place of the chip.
-- One line `⚠ <warning>` per key that no stage reads any more.
-- A block per stage starts with the mark and the name of the stage. It holds the
-  result of the stage and the artifact the stage wrote.
-- A blank line.
-- The closing line counts the stages, the time and the fails, and names the step
-  after which the run stopped.
-
-`plan` checks the configuration and the chip before its first stage. A problem
-prints one error line on stderr and no header, and the run directory stays as it
-was. A stage failure also leaves a previously completed run intact.
+`plan` accepts a new directory, an empty directory, or an existing run with a
+valid `.mqt-scpd-run` marker. A preflight error prints only the error line on
+stderr. A full run saves its input snapshot and artifacts after all requested
+stages succeed. If a stage fails or the run stops before publication, the
+previous run stays intact. The next planning command recovers an interrupted
+publication.
 
 ### Levels
 
 Each `-v` adds lines to the ones below it.
 
-| Option | What the run shows in addition                                               |
-| ------ | ---------------------------------------------------------------------------- |
-| none   | The header, the result of each stage, the artifact line and the closing line |
-| `-v`   | The parameters of a stage and its steps                                      |
-| `-vv`  | One line per item, such as a wire or a chain                                 |
+| Option | What the run shows in addition                                                              |
+| ------ | ------------------------------------------------------------------------------------------- |
+| none   | The header, the result of each stage, the artifact line and the closing line                |
+| `-v`   | The parameters of a stage, its steps, the size of each model and how each solve ended       |
+| `-vv`  | One line per item, such as a wire, a feedline chain or a connection                         |
+| `-vvv` | The log of HiGHS; the Gurobi backend solves without a log                                   |
 
-Warnings and failures show at every level. With `-v`, the capacity stage prints
-its steps:
+Warnings and failures show at every level. For example, `-v` prints Capacity's
+individual steps.
 
 ```text
 $ mqt-scpd plan --stage capacity -o runs/17q -v
@@ -200,7 +186,7 @@ mqt-scpd plan 17q → runs/17q
      72 chains cross 55 of 243 candidate bottlenecks               0.34s
      356 partitions · 600 borders                                  0.74s
    356 partitions · 55 bottlenecks · 72 chains                     0.74s
-   ✓ 01-capacity.fb  1.3 MB
+   ✓ 01-capacity.fb  1.4 MB
 
 ✓ 1 stage · 0.74s · stopped after capacity
 ```
@@ -212,11 +198,12 @@ mqt-scpd plan 17q → runs/17q
 - A line that a stage reports at a time carries the time since the stage began.
   The time ends at column 72 in a file. On a terminal it ends at the width of
   the terminal, but not after column 100. A line too long for the column carries
-  its time after two spaces.
-- An entry, such as a chain at `-vv`, has a label and figures. The label fills a
-  column of 18 characters, and the figures start after it.
+  its time after two spaces. A solver log line carries no time.
+- An entry, such as a feedline chain at `-vv`, has a label and figures. The
+  label fills a column of 18 characters, and the figures start after it.
 - The artifact line is `✓ <file>  <size>`, followed by `· fails <n>` for a stage
-  that reports fails.
+  that reports fails. The assign stage reports them too, and its count is always
+  zero.
 - A failure of a stage starts with `✗` in its block and ends the run.
 - The closing line starts with `✓` when nothing failed and with `✗` when a stage
   failed or a stage reported fails. After a failure, the closing line is
@@ -224,18 +211,23 @@ mqt-scpd plan 17q → runs/17q
 
 ### Fails
 
-A stage that can fail on part of its work reports how many parts failed. The
-artifact line shows that count, and the closing line adds the counts of every
-stage. A run that ends with fails exits with code 1. The capacity stage reports
-no fails: it plans the whole chip, or it stops with an error.
+Each artifact line shows the stage's fail count when available. The closing line
+adds those counts. Any fails give the run exit code 1.
+
+Global counts unreachable inner ports, ring ports without gate capacity, and
+non-bridge ring ports cut off from a launcher. The {doc}`configuration`
+reference explains the gate checks. Assignment either assigns every ring port
+and shows `fails 0`, or stops with an error.
 
 ### Stage Marks
 
 Each step has a mark, a plain form and a color.
 
-| Step     | Mark | Plain form | Color |
-| -------- | ---- | ---------- | ----- |
-| capacity | 🧩   | `[#]`      | cyan  |
+| Step     | Mark | Plain form | Color   |
+| -------- | ---- | ---------- | ------- |
+| capacity | 🧩   | `[#]`      | cyan    |
+| global   | 🔳   | `[+]`      | blue    |
+| assign   | 📌   | `[>]`      | magenta |
 
 A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and
 without a variation selector, so that every terminal draws it two cells wide. A
@@ -243,14 +235,11 @@ step that a later release adds follows the same rule.
 
 ### Progress
 
-On a terminal, a live line at the bottom shows the stage that runs: a spinner,
-the name of the stage, its time, what it is doing and how far it has got. The
-live line goes away when the stage ends, so a log or a pipe receives the lasting
-lines only.
-
-The live line is off when the output is not a terminal, with `--no-progress`,
-with `TERM=dumb`, with `TTY_INTERACTIVE=0` and with `TTY_COMPATIBLE=0`. A file
-gets no live line, also with `FORCE_COLOR`, and keeps the time at column 72.
+The live line shows the active stage, elapsed time, and progress. A solve adds
+the objective, gap, and node count. The line disappears at the end of the stage.
+Redirected output keeps only the lasting lines, even with `FORCE_COLOR`. Use
+`--no-progress`, `TERM=dumb`, `TTY_INTERACTIVE=0`, or `TTY_COMPATIBLE=0` to hide
+the live line.
 
 ## `plot`
 
@@ -322,12 +311,13 @@ A stage reports through the `Report` it is given and never prints.
    fail on part of its work passes the number of fails as well.
 2. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
-3. Report the steps and the parameters at `Detail::Steps`, and one line per item
-   at `Detail::Items`. Ask `Report::wants` before building a line that takes
-   time to build.
+3. Report the steps, the parameters and the solves at `Detail::Steps`, and one
+   line per item at `Detail::Items`. Ask `Report::wants` before building a line
+   that takes time to build.
 4. Report progress through `Report::progress` in every loop that can run for
    longer than a second, so that the live line moves and Ctrl-C stops the stage.
-   A progress report is the only place where a stage notices Ctrl-C.
+   Outside a solve, a progress report is the only place where a stage notices
+   Ctrl-C.
 5. Add the step to `STEPS` in `python/mqt/scpd/steps.py` and its mark to
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
    add its artifact to `STAGE_FILES`, the configuration sections it reads to

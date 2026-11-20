@@ -71,7 +71,7 @@ TEST(Roles, NamesFollowTheConfigurationKeys) {
   EXPECT_TRUE(isRoutable(UnassignedRole::Resonator));
   EXPECT_TRUE(isRoutable(UnassignedRole::Conventional));
   // A wire runs to a bridge port, crosses the component and leaves through
-  // the paired port, so the grid and the ring carry it.
+  // the paired port, so the grid, the ring and the lattices carry it.
   EXPECT_TRUE(isRoutable(UnassignedRole::BridgePair));
   EXPECT_FALSE(isRoutable(UnassignedRole::Launcher));
   EXPECT_FALSE(isRoutable(UnassignedRole::Coupler));

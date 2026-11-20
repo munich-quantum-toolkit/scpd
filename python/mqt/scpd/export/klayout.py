@@ -49,6 +49,11 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "bottlenecks": (23, 0, "plan.bottleneck"),
     "launchers": (24, 0, "plan.launcher"),
     "chains": (25, 0, "plan.chain"),
+    "lattice": (26, 0, "plan.lattice"),
+    "inner": (27, 0, "plan.inner-circuit"),
+    "assignments": (28, 0, "plan.assignment"),
+    "ring": (29, 0, "plan.ring"),
+    "feedlines": (32, 0, "plan.feedline"),
     "blocked": (33, 0, "plan.blocked"),
     "budgets": (34, 0, "plan.budget"),
 }
@@ -188,8 +193,21 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
     for x, y in planning.launchers:
         top.shapes(layer("launchers")).insert(square(x, y, PLANNING_MARKER_RADIUS))
         written += 1
-    for first, second in planning.chains:
-        if first != second:
-            top.shapes(layer("chains")).insert(path([first, second]))
+    for name, segments in (
+        ("chains", planning.chains),
+        ("lattice", planning.lattice),
+        ("inner", planning.inner),
+        ("assignments", planning.assignments),
+    ):
+        for first, second in segments:
+            if first != second:
+                top.shapes(layer(name)).insert(path([first, second]))
+                written += 1
+    if len(planning.ring) >= 2:
+        top.shapes(layer("ring")).insert(path([*planning.ring, planning.ring[0]]))
+        written += 1
+    for feedline in planning.feedlines:
+        if len(feedline.points) >= 2:
+            top.shapes(layer("feedlines")).insert(path(feedline.points))
             written += 1
     return written

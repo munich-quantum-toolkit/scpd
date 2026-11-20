@@ -23,11 +23,12 @@ def test_package_imports() -> None:
 
 
 def test_distribution_carries_the_licenses_of_the_linked_libraries() -> None:
-    """The extension links FlatBuffers and nlohmann/json, so their licenses go with it."""
+    """The wheel includes the licenses of HiGHS, FlatBuffers, and nlohmann/json."""
     files = metadata.files("mqt-scpd") or []
     licenses = {file.name for file in files if file.parent.name == "licenses"}
     assert {
         "LICENSE",
+        "HiGHS-LICENSE.txt",
         "FlatBuffers-LICENSE.txt",
         "nlohmann_json-LICENSE.txt",
     } <= licenses

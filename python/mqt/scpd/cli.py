@@ -28,12 +28,13 @@ from .artifacts import ArtifactError
 from .chip import ChipError, classify_chip, decode_chip, load_chip
 from .config import ConfigError, load_config, removed_keys, removed_keys_in, write_config
 from .console import Console, size, write_out
-from .doctor import run_doctor
+from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .planning import PLANNING_STAGES, PlanningError, PlanningGeometry, planning_geometry
 from .plot import STAGES, PlotError, layout_svg
 from .run import STAGE_FILES, BlockReporter, RunDirectory, RunError, input_digests, steps_until
+from .solvers import register as register_external_solver
 from .steps import STEPS
 
 if TYPE_CHECKING:
@@ -105,10 +106,13 @@ def command_plan(args: argparse.Namespace) -> int:
 
     Raises:
         ConfigError: If the core refuses a value of the configuration, or if the configuration
-            and the chip would stop one of the steps, as ``pyscpd.plan_problems`` reports it. The
-            run directory stays as it was.
+            and the chip would stop one of the steps, as ``pyscpd.plan_problems`` and
+            ``solver_problem`` report it. The run directory stays as it was.
     """
     console = Console(verbosity=args.verbose, live=False if args.no_progress else None)
+    # The core reaches gurobipy only for a configuration that names the gurobi backend; every other
+    # configuration solves with the linked-in HiGHS.
+    register_external_solver()
 
     directory = RunDirectory(args.output)
     directory.recover()
@@ -131,9 +135,13 @@ def command_plan(args: argparse.Namespace) -> int:
         warnings = removed_keys(tomllib.loads(snapshot.config_text))
 
     config_bytes = write_config(config)
-    if problems := pyscpd.plan_problems(chip, config_bytes, steps):
+    problems = pyscpd.plan_problems(chip, config_bytes, steps)
+    if (problem := solver_problem(chip, config_bytes, steps)) is not None:
+        problems.append(problem)
+    if problems:
         raise ConfigError("; ".join(problems))
-    console.header("plan", subject, str(directory.path))
+    solver = pyscpd.solver_info(config_bytes)
+    console.header("plan", subject, str(directory.path), [solver])
     for warning in warnings:
         console.warning(warning)
     staging = directory.staging(snapshot) if snapshot is not None else contextlib.nullcontext(directory)
@@ -176,7 +184,8 @@ def _run_plan(
                     raise
                 return _stage_failed(console, block, error, last, step)
             # A stage that fails in any way ends the run with the reason in its block and the
-            # closing line, never with a traceback.
+            # closing line, never with a traceback: the core raises ValueError and RuntimeError,
+            # but a solver of the user's own may raise anything.
             except Exception as error:  # ruff: ignore[blind-except]
                 return _stage_failed(console, block, error, last, step)
             block.artifact(result.path.name, result.size)
@@ -226,8 +235,15 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         msg = f"{artifact} is missing; run `mqt-scpd plan` up to the {args.stage} step first"
         raise RunError(msg)
     data = artifact.read_bytes()
-    directory.check_current(args.stage, input_digests(config, chip_bytes), data=data)
-    geometry = planning_geometry(data, decode_chip(chip_bytes), args.stage)
+    verified = directory.check_current(args.stage, input_digests(config, chip_bytes), data=data)
+    del verified[args.stage]
+    geometry = planning_geometry(
+        data,
+        decode_chip(chip_bytes),
+        args.stage,
+        capacity=verified.get("capacity"),
+        global_routing=verified.get("global"),
+    )
     return chip_bytes, title, geometry
 
 
@@ -383,7 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="count",
         default=0,
-        help="show more: -v the steps of a stage, -vv one line per item",
+        help="show more: -v the steps of a stage and its solves, -vv one line per item, -vvv the log of HiGHS",
     )
     plan.add_argument("--no-progress", action="store_true", help="never show the live progress line")
     plan.set_defaults(run=command_plan)

@@ -48,48 +48,40 @@ def make(verbosity: int = 0, *, encoding: str = "utf-8") -> tuple[Console, io.St
     return console, out, clock
 
 
-def capacity_run(console: Console, clock: Clock) -> None:
-    """Report the capacity stage of a run on 17q."""
-    console.header("plan", "17q", "runs/17q")
+def global_run(console: Console, clock: Clock) -> None:
+    """Report the capacity stage and the global stage of a run on 17q."""
+    console.header("plan", "17q", "runs/17q", ["HiGHS 1.11.0"])
     with console.stage("capacity") as stage:
         clock.now += 1.02
         stage.result([Figure("363 partitions"), Figure("62 bottlenecks"), Figure("69 chains")])
         stage.artifact("01-capacity.fb", 1_341_000)
-    console.closing(stopped_after="capacity")
+    with console.stage("global") as stage:
+        clock.now += 0.11
+        stage.entry(0, "lattice 1", [Figure("12 nodes"), Figure("fails 2", "bad")])
+        clock.now += 0.08
+        stage.entry(0, "lattice 2", [Figure("16 nodes"), Figure("fails 0", "good")])
+        stage.result([], fails=0)
+        stage.artifact("02-global.fb", 13_700)
+    console.closing(stopped_after="global")
 
 
 def test_a_run_prints_one_block_per_stage() -> None:
     """The layout of a run without -v: a header, one block per stage and a closing line."""
     console, out, clock = make()
-    capacity_run(console, clock)
+    global_run(console, clock)
 
     assert out.getvalue().splitlines() == [
-        "mqt-scpd plan 17q → runs/17q",
+        "mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.11.0",
         "",
         "🧩 capacity",
         "   363 partitions · 62 bottlenecks · 69 chains                     1.02s",
         "   ✓ 01-capacity.fb  1.3 MB",
+        "🔳 global",
+        "   lattice 1          12 nodes · fails 2                           0.11s",
+        "   lattice 2          16 nodes · fails 0                           0.19s",
+        "   ✓ 02-global.fb  13.7 kB · fails 0",
         "",
-        "✓ 1 stage · 1.02s · stopped after capacity",
-    ]
-
-
-def test_an_entry_puts_its_figures_in_a_column() -> None:
-    """The label of an entry fills a column of its own, so the figures of the entries line up."""
-    console, out, clock = make()
-    with console.stage("capacity") as stage:
-        clock.now += 0.11
-        stage.entry(0, "chain 1", [Figure("12 nodes"), Figure("fails 2", "bad")])
-        clock.now += 0.08
-        stage.entry(0, "chain 2", [Figure("16 nodes"), Figure("fails 0", "good")])
-        stage.result([], fails=2)
-        stage.artifact("01-capacity.fb", 13_700)
-
-    assert out.getvalue().splitlines() == [
-        "🧩 capacity",
-        "   chain 1            12 nodes · fails 2                           0.11s",
-        "   chain 2            16 nodes · fails 0                           0.19s",
-        "   ✓ 01-capacity.fb  13.7 kB · fails 2",
+        "✓ 2 stages · 1.21s · stopped after global · fails 0",
     ]
 
 
@@ -101,20 +93,29 @@ def test_a_line_shows_only_up_to_the_verbosity() -> None:
             clock.now += 0.5
             stage.line(1, "a step line")
             stage.line(2, "an item line")
+            stage.line(3, "a solver line")
         lines = out.getvalue().splitlines()[1:]
         assert len(lines) == expected
         assert all(line.startswith("     ") for line in lines)
 
 
+def test_a_solver_line_shows_at_the_highest_verbosity_only() -> None:
+    """-vvv passes the own log of the solver through."""
+    console, out, _ = make(3)
+    with console.stage("assign") as stage:
+        stage.line(3, "Presolving model")
+    assert out.getvalue().splitlines()[-1] == "     Presolving model"
+
+
 def test_warnings_and_failures_show_at_every_level() -> None:
     """A warning and a failure are never filtered by the verbosity."""
     console, out, _ = make(0)
-    with console.stage("capacity") as stage:
+    with console.stage("global") as stage:
         stage.warning("27 of 73 chains reach no launcher")
-        stage.failure("the chip carries no launcher")
+        stage.failure("the inner circuit did not solve: infeasible")
     assert out.getvalue().splitlines()[1:] == [
         "   ⚠ 27 of 73 chains reach no launcher",
-        "   ✗ the chip carries no launcher",
+        "   ✗ the inner circuit did not solve: infeasible",
     ]
 
 
@@ -123,23 +124,23 @@ def test_the_closing_line_names_a_failed_stage() -> None:
     console, out, clock = make()
     with console.stage("capacity"):
         clock.now += 2.0
-    console.closing(stopped_after=None, failed="capacity")
-    assert out.getvalue().splitlines()[-1] == "✗ stopped at capacity after 2.00s"
+    console.closing(stopped_after=None, failed="assign")
+    assert out.getvalue().splitlines()[-1] == "✗ stopped at assign after 2.00s"
 
 
 def test_the_closing_line_counts_the_fails_of_every_stage() -> None:
     """The fails of the stages that report them add up."""
     console, out, _ = make()
-    with console.stage("capacity") as stage:
+    with console.stage("global") as stage:
         stage.result([], fails=2)
-    console.closing(stopped_after="capacity")
-    assert out.getvalue().splitlines()[-1] == "✗ 1 stage · 0.00s · stopped after capacity · fails 2"
+    console.closing(stopped_after="global")
+    assert out.getvalue().splitlines()[-1] == "✗ 1 stage · 0.00s · stopped after global · fails 2"
 
 
 def test_a_long_line_keeps_its_time_after_two_spaces() -> None:
     """A line too long for the time column carries the time after it."""
     console, out, clock = make()
-    with console.stage("capacity") as stage:
+    with console.stage("assign") as stage:
         clock.now += 0.38
         stage.result([Figure("x" * 80)])
     assert out.getvalue().splitlines()[1] == "   " + "x" * 80 + "  0.38s"
@@ -184,14 +185,15 @@ def test_an_artifact_size_reads_at_a_glance(size: int, shown: str) -> None:
 def test_a_terminal_without_unicode_gets_the_ascii_forms() -> None:
     """Where the output cannot encode the symbols, every one of them has a plain form."""
     console, out, clock = make(encoding="ascii")
-    capacity_run(console, clock)
+    global_run(console, clock)
 
     text = out.getvalue()
     text.encode("ascii")
     assert "[#] capacity" in text
+    assert "[+] global" in text
     assert "   ok 01-capacity.fb  1.3 MB" in text
-    assert "363 partitions - 62 bottlenecks" in text
-    assert text.splitlines()[0] == "mqt-scpd plan 17q -> runs/17q"
+    assert "12 nodes - fails 2" in text
+    assert text.splitlines()[0] == "mqt-scpd plan 17q -> runs/17q  -  HiGHS 1.11.0"
 
 
 def test_the_sign_of_a_size_has_a_plain_form() -> None:
@@ -229,11 +231,11 @@ def test_every_step_has_a_style() -> None:
 def test_progress_never_reaches_a_file() -> None:
     """Live progress is for a terminal; in a file only the lasting lines remain."""
     console, out, _ = make()
-    with console.stage("capacity") as stage:
+    with console.stage("global") as stage:
         for done in range(1, 59):
-            stage.progress("chains", "", done, 58)
+            stage.progress("building the lattices", "", done, 58)
         stage.result([], fails=0)
-    assert out.getvalue().splitlines() == ["🧩 capacity"]
+    assert out.getvalue().splitlines() == ["🔳 global"]
 
 
 @pytest.mark.parametrize("variable", ["FORCE_COLOR", "TTY_COMPATIBLE"])
@@ -244,11 +246,11 @@ def test_a_forced_color_leaves_a_file_without_the_live_line(monkeypatch: pytest.
     console = Console(out, encoding="utf-8", clock=Clock())
     assert not console.show_live
     assert console.width == 72
-    with console.stage("capacity") as stage:
+    with console.stage("global") as stage:
         for done in range(1, 59):
-            stage.progress("chains", "", done, 58)
+            stage.progress("building the lattices", "", done, 58)
         stage.result([], fails=0)
-    assert visible(out.getvalue()).splitlines() == ["🧩 capacity"]
+    assert visible(out.getvalue()).splitlines() == ["🔳 global"]
     assert "\x1b[2K" not in out.getvalue()
 
 
@@ -268,11 +270,11 @@ def test_a_terminal_that_takes_no_cursor_movements_gets_no_live_line(monkeypatch
     monkeypatch.setattr(out, "isatty", lambda: True)
     console = Console(out, encoding="utf-8", clock=Clock())
     assert not console.show_live
-    with console.stage("capacity") as stage:
+    with console.stage("global") as stage:
         for done in range(1, 59):
-            stage.progress("chains", "", done, 58)
+            stage.progress("building the lattices", "", done, 58)
         stage.result([], fails=0)
-    assert out.getvalue().splitlines() == ["🧩 capacity"]
+    assert out.getvalue().splitlines() == ["🔳 global"]
 
 
 def test_the_block_header_waits_for_the_first_lasting_line_on_a_terminal() -> None:
@@ -305,10 +307,10 @@ def test_color_marks_a_verdict_and_dims_a_step() -> None:
     console = Console(
         out, verbosity=1, live=False, width=72, encoding="utf-8", clock=itertools.count().__next__, color=True
     )
-    with console.stage("capacity") as stage:
-        stage.entry(0, "chain 1", [Figure("fails 2", "bad")])
-        stage.entry(0, "chain 2", [Figure("fails 0", "good")])
-        stage.line(1, "medial axis of 1200 cells")
+    with console.stage("global") as stage:
+        stage.entry(0, "lattice 1", [Figure("fails 2", "bad")])
+        stage.entry(0, "lattice 2", [Figure("fails 0", "good")])
+        stage.line(1, "8 lattices · 120 nodes")
     text = out.getvalue()
     assert "\x1b[31mfails 2" in text
     assert "\x1b[32mfails 0" in text

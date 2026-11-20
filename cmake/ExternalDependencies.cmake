@@ -6,8 +6,6 @@
 #
 # Licensed under the MIT License
 
-# Declare all external dependencies and make sure that they are available.
-
 include(CMakeDependentOption)
 include(FetchContent)
 set(FETCH_PACKAGES "")
@@ -20,11 +18,7 @@ if(BUILD_MQT_SCPD_BINDINGS)
   find_package(nanobind CONFIG REQUIRED)
 endif()
 
-# FlatBuffers provides the schema-generated data model. The core links only the header-only runtime.
-# The compiler `flatc` is built on request by `uvx nox -s schemas`, which regenerates the committed
-# code under include/mqt-scpd/flatbuffers/ and python/mqt/scpd/flatbuffers/. It is never part of a
-# regular or a wheel build. The version must match the one that generated the committed code, which
-# the generated headers assert at compile time.
+# Match the version in the generated headers. Only schema regeneration builds `flatc`.
 option(MQT_SCPD_BUILD_FLATC "Build the FlatBuffers compiler for schema regeneration" OFF)
 set(FLATBUFFERS_VERSION
     25.12.19
@@ -46,8 +40,6 @@ set(FLATBUFFERS_INSTALL
 FetchContent_Declare(flatbuffers URL ${FLATBUFFERS_URL})
 list(APPEND FETCH_PACKAGES flatbuffers)
 
-# nlohmann/json reads the chip input and, later, writes the metrics and the log. Only the
-# header-only library is used.
 set(NLOHMANN_JSON_VERSION
     3.12.0
     CACHE STRING "nlohmann/json version")
@@ -62,11 +54,15 @@ set(JSON_Install
 FetchContent_Declare(nlohmann_json URL ${NLOHMANN_JSON_URL})
 list(APPEND FETCH_PACKAGES nlohmann_json)
 
-# Boost.Polygon supplies the Voronoi diagram of the capacity stage. It is header-only and needs only
-# Boost.Config, so the build fetches these two libraries of one Boost release, about 5 MB, and not
-# the whole distribution of about 100 MB. Neither is configured: SOURCE_SUBDIR names a directory
-# without a CMakeLists.txt, so FetchContent only unpacks them. A Boost installed on the system is
-# never used.
+# HiGHS versions can choose different layouts with the same objective.
+set(HIGHS_VERSION
+    1.16.0
+    CACHE STRING "HiGHS version")
+set(HIGHS_URL https://github.com/ERGO-Code/HiGHS/archive/refs/tags/v${HIGHS_VERSION}.tar.gz)
+FetchContent_Declare(highs URL ${HIGHS_URL} EXCLUDE_FROM_ALL)
+list(APPEND FETCH_PACKAGES highs)
+
+# SOURCE_SUBDIR skips configuration of the header-only Boost dependencies.
 set(BOOST_VERSION
     1.89.0
     CACHE STRING "Boost version")
@@ -90,25 +86,56 @@ if(BUILD_MQT_SCPD_TESTS)
   list(APPEND FETCH_PACKAGES googletest)
 endif()
 
-# Make all declared dependencies available.
+# Scope the options to dependency configuration so parent-project settings are preserved.
+block(
+  SCOPE_FOR
+  VARIABLES
+  PROPAGATE
+  flatbuffers_SOURCE_DIR
+  nlohmann_json_SOURCE_DIR
+  highs_SOURCE_DIR
+  boost_polygon_SOURCE_DIR
+  boost_config_SOURCE_DIR)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+set(BUILD_TESTING OFF)
+set(BUILD_EXAMPLES OFF)
+set(BUILD_CXX_EXAMPLE OFF)
+set(BUILD_CXX_EXE OFF)
+set(HIGHSINT64 OFF)
+set(ZLIB OFF)
+set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(${FETCH_PACKAGES})
+endblock()
 
-# The header-only FlatBuffers runtime, as a system include so that the project's warnings do not
-# apply to it.
+# HiGHS assertions can stop Debug solves on harmless bound roundoff.
+if(TARGET highs)
+  target_compile_definitions(highs PRIVATE NDEBUG)
+endif()
+
+# System includes keep project warnings out of third-party headers.
 if(NOT TARGET mqt-scpd-flatbuffers)
   add_library(mqt-scpd-flatbuffers INTERFACE)
   target_include_directories(mqt-scpd-flatbuffers SYSTEM
                              INTERFACE $<BUILD_INTERFACE:${flatbuffers_SOURCE_DIR}/include>)
 endif()
 
-# The header-only nlohmann/json library, likewise as a system include.
 if(NOT TARGET mqt-scpd-json)
   add_library(mqt-scpd-json INTERFACE)
   target_include_directories(mqt-scpd-json SYSTEM
                              INTERFACE $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/include>)
 endif()
 
-# Boost.Polygon and Boost.Config, likewise as system includes.
+if(NOT TARGET mqt-scpd-highs)
+  add_library(mqt-scpd-highs INTERFACE)
+  target_link_libraries(mqt-scpd-highs INTERFACE highs::highs)
+  get_target_property(MQT_SCPD_HIGHS_INCLUDES highs::highs INTERFACE_INCLUDE_DIRECTORIES)
+  if(MQT_SCPD_HIGHS_INCLUDES)
+    target_include_directories(mqt-scpd-highs SYSTEM INTERFACE ${MQT_SCPD_HIGHS_INCLUDES})
+  endif()
+endif()
+
 if(NOT TARGET mqt-scpd-polygon)
   add_library(mqt-scpd-polygon INTERFACE)
   target_include_directories(

@@ -40,6 +40,8 @@ if TYPE_CHECKING:
 STAGES: dict[str, str] = {
     "layout": "phase 1",
     "capacity": "phase 3",
+    "global": "phase 3",
+    "assign": "phase 3",
     "detail": "phase 4",
     "final": "phase 4",
     "aligned": "phase 4",
@@ -62,13 +64,21 @@ PORT_COLOR = "#e34948"
 INK = "#1b1a18"
 MUTED = "#55524b"
 FRAME = "#b5b1a8"
+#: The color of every feedline chain: a gray that stays apart from the dark chords and the red
+#: ports. The chains tell apart by their tooltips, not by color.
+FEEDLINE_COLOR = "#8e8e94"
 
-#: The stroke of each planning layer.
+#: The stroke of each planning layer. Feedlines and inner wires run over the metal, so they get a
+#: white casing under them.
 PLANNING_COLORS: dict[str, str] = {
     "partition": "#8b929c",
     "border": "#3f4752",
     "bottleneck": "#eb6834",
     "launcher": "#e34948",
+    "lattice": "#b3afa6",
+    "inner": "#008300",
+    "assignment": "#111111",
+    "ring": "#6b675f",
 }
 
 #: The stroke width of each planning layer, in screen pixels.
@@ -76,17 +86,29 @@ _PLANNING_WIDTHS: dict[str, float] = {
     "partition": 0.8,
     "border": 1.8,
     "bottleneck": 1.6,
+    "lattice": 0.5,
+    "inner": 2.0,
+    "assignment": 1.8,
+    "ring": 1.0,
 }
 
 #: The planning layers each stage leaves out of its picture. The keep-out of the port approaches
-#: and the capacity chains are left out everywhere, and so are the gates. The capacity picture shows
-#: the partitions by their borders alone: an outline traces the keep-out around every port as well.
+#: and the capacity chains are left out everywhere, and so are the gates. The capacity and assign
+#: pictures show the partitions by their borders alone: an outline traces the keep-out around every
+#: port as well. The assign picture leaves out the ring of its ports, which the chords to the feeds
+#: already show.
 _HIDDEN: dict[str, frozenset[str]] = {
+    "global": frozenset({"bottlenecks"}),
     "capacity": frozenset({"bottlenecks", "partitions"}),
+    "assign": frozenset({"bottlenecks", "partitions", "ring"}),
 }
 
 #: The stages whose picture shades every partition in the gray of its tone.
-_TONED = frozenset({"capacity"})
+_TONED = frozenset({"capacity", "assign"})
+
+#: The borders under the chords are only the ground they run on, so the assign picture draws them
+#: light and the dark lines stand out.
+_LIGHT_GROUND = "svg.assign g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
 
 #: Lengths of the decoration, in layout units (micrometers).
 _HOLE_PITCH = 120.0
@@ -185,6 +207,26 @@ def _path_data(points: Sequence[tuple[float, float]]) -> str:
     return "".join(parts) + "Z"
 
 
+def _rectilinear(points: Sequence[tuple[float, float]], center: tuple[float, float]) -> list[tuple[float, float]]:
+    """A polyline turned into one of horizontal and vertical steps.
+
+    Between two points that differ in both coordinates the line turns once. Of the two corners, it
+    takes the one farther from the center of the chip, so a feedline keeps to the outside, where its
+    launchers are.
+
+    Returns:
+        The points of the stepped line, in order.
+    """
+    stepped: list[tuple[float, float]] = []
+    for point in points:
+        if stepped and point[0] != stepped[-1][0] and point[1] != stepped[-1][1]:
+            last = stepped[-1]
+            corners = [(point[0], last[1]), (last[0], point[1])]
+            stepped.append(max(corners, key=lambda c: (c[0] - center[0]) ** 2 + (c[1] - center[1]) ** 2))
+        stepped.append(point)
+    return stepped
+
+
 def _straightened(run: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
     """A border run with its staircase smoothed out.
 
@@ -205,6 +247,7 @@ def _planning_layers(
     to_view: Callable[[float, float], tuple[float, float]],
     radius: float,
     font: float,
+    center: tuple[float, float],
     hidden: frozenset[str],
 ) -> str:
     """Draw the shapes of one planning stage over the chip.
@@ -217,6 +260,7 @@ def _planning_layers(
         to_view: The layout point as a point of the picture.
         radius: The radius of a port marker.
         font: The size of a gate label, in layout units.
+        center: The center of the chip in the picture, which the feedlines keep away from.
         hidden: The layers the stage leaves out.
 
     Returns:
@@ -224,14 +268,15 @@ def _planning_layers(
     """
     parts: list[str] = []
 
-    def polyline(points: Sequence[tuple[float, float]], *, close: bool = False) -> str:
-        view = list(starmap(to_view, points))
+    def polyline(points: Sequence[tuple[float, float]], *, close: bool = False, moved: bool = False) -> str:
+        view = list(points) if moved else list(starmap(to_view, points))
         if close:
             return _path_data(view)
         return "".join(f"{'M' if index == 0 else 'L'}{_number(x)} {_number(y)}" for index, (x, y) in enumerate(view))
 
-    def group(name: str, data: str) -> None:
-        parts.append(f'<g class="l-{name}"><path d="{data}"/></g>')
+    def group(name: str, data: str, *, cased: bool = False) -> None:
+        casing = f'<path class="casing" d="{data}"/>' if cased else ""
+        parts.append(f'<g class="l-{name}">{casing}<path d="{data}"/></g>')
 
     if planning.partitions and "partitions" not in hidden:
         group(
@@ -253,6 +298,15 @@ def _planning_layers(
             for x, y in [to_view((first[0] + second[0]) / 2, (first[1] + second[1]) / 2)]
         )
         parts.append(f'<g class="l-bottleneck"><path d="{data}"/>{labels}</g>')
+    if planning.lattice:
+        group("lattice", "".join(polyline([first, second]) for first, second in planning.lattice))
+    if planning.inner:
+        group("inner", "".join(polyline([first, second]) for first, second in planning.inner), cased=True)
+    if planning.ring and "ring" not in hidden:
+        # The ring is a closed cycle, so it is drawn as one.
+        group("ring", polyline(planning.ring, close=True))
+    if planning.assignments:
+        group("assignment", "".join(polyline([first, second]) for first, second in planning.assignments))
     if planning.launchers:
         circles = "".join(
             f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.7)}"/>'
@@ -260,6 +314,31 @@ def _planning_layers(
             for x, y in [to_view(px, py)]
         )
         parts.append(f'<g class="l-launcher">{circles}</g>')
+    if planning.feedlines:
+        # Over everything else. A feedline is drawn like a coplanar waveguide: a white casing, the
+        # band, and a light center conductor. It runs in horizontal and vertical steps, and it names
+        # its launchers and resonators under the pointer.
+        side = radius * 0.45
+        chains = []
+        for feedline in planning.feedlines:
+            data = polyline(_rectilinear(list(starmap(to_view, feedline.points)), center), moved=True)
+            terminals = "".join(
+                f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius * 0.35)}"/>'
+                for px, py in feedline.terminals
+                for x, y in [to_view(px, py)]
+            )
+            terminations = "".join(
+                f'<rect x="{_number(x - side)}" y="{_number(y - side)}" '
+                f'width="{_number(2 * side)}" height="{_number(2 * side)}"/>'
+                for px, py in feedline.terminations
+                for x, y in [to_view(px, py)]
+            )
+            chains.append(
+                f"<g><title>{escape(feedline.label)}</title>"
+                f'<path class="casing" d="{data}"/><path d="{data}"/><path class="core" d="{data}"/>'
+                f"{terminals}{terminations}</g>"
+            )
+        parts.append(f'<g class="l-feedline">{"".join(chains)}</g>')
     return "".join(parts)
 
 
@@ -277,7 +356,15 @@ def _planning_style(font: float) -> str:
     style += (
         f"g.l-bottleneck>text{{font:600 {_number(font)}px {_FONT};fill:{PLANNING_COLORS['bottleneck']};"
         "text-anchor:middle;paint-order:stroke;stroke:#ffffff;stroke-width:0.25em;stroke-linejoin:round}"
+        "g.l-assignment>path{stroke-dasharray:8 5}"
+        "g.l-inner>path.casing{stroke:#ffffff;stroke-width:4.6}"
         f"g.l-launcher>circle{{fill:none;stroke:{PLANNING_COLORS['launcher']};stroke-width:1.6;"
+        "vector-effect:non-scaling-stroke}"
+        f"g.l-feedline path{{fill:none;stroke:{FEEDLINE_COLOR};stroke-width:6.4;stroke-linejoin:round;"
+        "stroke-linecap:round;vector-effect:non-scaling-stroke}"
+        "g.l-feedline path.casing{stroke:#ffffff;stroke-width:9.6}"
+        "g.l-feedline path.core{stroke:#ffffff;stroke-width:1.3;stroke-opacity:.9}"
+        f"g.l-feedline circle,g.l-feedline rect{{fill:{FEEDLINE_COLOR};stroke:#ffffff;stroke-width:1.2;"
         "vector-effect:non-scaling-stroke}"
     )
     return style
@@ -358,7 +445,12 @@ _LAYERS: tuple[tuple[str, str, str], ...] = (
     ("Partitions", ".l-partition", PLANNING_COLORS["partition"]),
     ("Borders", ".l-border", PLANNING_COLORS["border"]),
     ("Bottlenecks", ".l-bottleneck", PLANNING_COLORS["bottleneck"]),
+    ("Lattice", ".l-lattice", PLANNING_COLORS["lattice"]),
+    ("Inner wires", ".l-inner", PLANNING_COLORS["inner"]),
+    ("Ring", ".l-ring", PLANNING_COLORS["ring"]),
+    ("Assignments", ".l-assignment", PLANNING_COLORS["assignment"]),
     ("Launcher slots", ".l-launcher", PLANNING_COLORS["launcher"]),
+    ("Feedlines", ".l-feedline", FEEDLINE_COLOR),
     ("Frame", ".x-marks", MUTED),
 )
 
@@ -481,6 +573,7 @@ def layout_svg(
     view_height = (max_y - min_y) + 2 * pad
     height = round(width * view_height / view_width)
     box = (pad, pad, pad + (max_x - min_x), pad + (max_y - min_y))
+    center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
     font = view_height / 90
     # The metal is drawn through references to one path, and a reference does not pass
     # vector-effect on, so its edge and rim are given in layout units of one screen pixel at the
@@ -566,7 +659,7 @@ def layout_svg(
         # The grid as the stage saw it: the cells it blocked, under the artwork.
         cells = "".join(_path_data(list(starmap(to_view, ring))) for ring in planning.blocked)
         raster = f'<g class="l-raster"><path d="{cells}"/></g>'
-    overlay = _planning_layers(planning, to_view, radius, 0.8 * font, hidden) if planning is not None else ""
+    overlay = _planning_layers(planning, to_view, radius, 0.8 * font, center, hidden) if planning is not None else ""
     style = (
         f"text{{font:{_number(font)}px {_FONT};fill:{MUTED}}}"
         f".o{{fill:{METAL_FILL};stroke:{METAL_EDGE};stroke-width:{_number(0.9 * pixel)}}}"
@@ -595,7 +688,7 @@ def layout_svg(
         f"g.l-raster>path{{fill:{RASTER_FILL};stroke:none}}"
     )
     if overlay:
-        style += _planning_style(0.8 * font)
+        style += _planning_style(0.8 * font) + _LIGHT_GROUND
     name = escape(title)
     heading = ""
     if title:
