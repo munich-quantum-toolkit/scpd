@@ -99,12 +99,12 @@ struct Chord {
 
 /// The current sweep step, repeated during a long search to check for stops.
 struct SearchProgress {
-  const Report& report;
+  std::reference_wrapper<const Report> report;
   std::string_view task;
   std::size_t done;
   std::size_t total;
 
-  void update() const { report.progress(task, "", done, total); }
+  void update() const { report.get().progress(task, "", done, total); }
 };
 
 /// A cell coordinate back on the grid it came from.
@@ -138,12 +138,12 @@ struct SearchProgress {
                                         const std::string_view kind) {
   const auto corner = grid::layoutToCorner(grid, point);
   // Leave room for round-off at the grid edges.
-  if (!(corner.x() > -0.5 && corner.x() < grid.width + 0.5 &&
-        corner.y() > -0.5 && corner.y() < grid.height + 0.5)) {
-    throw std::invalid_argument(std::format(
-        "the capacity plan has a {} outside the detail grid", kind));
+  if (corner.x() > -0.5 && corner.x() < grid.width + 0.5 && corner.y() > -0.5 &&
+      corner.y() < grid.height + 0.5) {
+    return corner;
   }
-  return corner;
+  throw std::invalid_argument(
+      std::format("the capacity plan has a {} outside the detail grid", kind));
 }
 
 /// Which side of the line through `a` and `b` the point `c` lies on.
@@ -964,7 +964,10 @@ public:
       const auto name = std::format("round {} {}", round + 1,
                                     forward ? "forward" : "backward");
       for (std::size_t step = 0; step < requests.size(); ++step) {
-        const SearchProgress progress{report, name, step, requests.size()};
+        const SearchProgress progress{.report = std::cref(report),
+                                      .task = name,
+                                      .done = step,
+                                      .total = requests.size()};
         progress.update();
         const auto index = forward ? step : requests.size() - 1 - step;
         reroute(corridors, requests, routes, index, forward, sweeps, progress);
@@ -1002,8 +1005,10 @@ public:
     // can only lower the fails.
     std::size_t placed = 0;
     for (std::size_t index = 0; index < requests.size(); ++index) {
-      const SearchProgress progress{report, "free slots", index,
-                                    requests.size()};
+      const SearchProgress progress{.report = std::cref(report),
+                                    .task = "free slots",
+                                    .done = index,
+                                    .total = requests.size()};
       progress.update();
       if (routes[index].has_value()) {
         continue;
