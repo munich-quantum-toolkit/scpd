@@ -32,7 +32,7 @@ releases may include breaking changes.
 - ✨ Add Global routing on Hanan lattices and Assignment of ring ports to
   launchers and feedline chains ([#167]) ([**@FeldmeierMichael**],
   [**@marcelwa**])
-- ➕ Add HiGHS 1.16.0, optional Gurobi support, and the solver configuration
+- ➕ Add HiGHS 1.16.0, the `gurobi` installation extra, and solver configuration
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - 🎨 Draw Global and Assignment artifacts with the stored Capacity raster
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
@@ -73,6 +73,8 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⬆️ Require KLayout 0.30.13 or later in the 0.30 series and enable export tests
+  on Python 3.15 on Linux and macOS ([#167]) ([**@marcelwa**])
 - ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])

@@ -148,8 +148,8 @@ def benchmark_solver(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyP
     """Select the solver for this benchmark case."""
     backend = request.param
     if backend == "gurobi":
-        if sys.version_info >= (3, 16) or (sys.platform == "win32" and platform.machine() == "ARM64"):
-            pytest.skip("Gurobi 14.0 has no wheel for this test environment")
+        if sys.platform == "win32" and platform.machine() == "ARM64":
+            pytest.skip("Gurobi has no Windows ARM64 wheel")
         register()
     monkeypatch.setenv("SCPD_SOLVER", backend)
     yield

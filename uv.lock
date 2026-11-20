@@ -1211,6 +1211,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+gurobi = [
+    { name = "gurobipy" },
+]
 klayout = [
     { name = "klayout" },
 ]
@@ -1224,8 +1227,8 @@ build = [
 ]
 dev = [
     { name = "cmake" },
-    { name = "gurobipy", marker = "(python_full_version < '3.16' and platform_machine != 'ARM64') or (python_full_version < '3.16' and sys_platform != 'win32')" },
-    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')" },
+    { name = "gurobipy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or sys_platform != 'win32'" },
     { name = "nanobind" },
     { name = "nox" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1253,8 +1256,8 @@ docs = [
     { name = "sphinxext-opengraph" },
 ]
 test = [
-    { name = "gurobipy", marker = "(python_full_version < '3.16' and platform_machine != 'ARM64') or (python_full_version < '3.16' and sys_platform != 'win32')" },
-    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')" },
+    { name = "gurobipy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or sys_platform != 'win32'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pytest" },
@@ -1266,11 +1269,12 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "flatbuffers", specifier = "~=25.12.19" },
-    { name = "klayout", marker = "extra == 'klayout'", specifier = "~=0.30.6" },
+    { name = "gurobipy", marker = "extra == 'gurobi'", specifier = "==14" },
+    { name = "klayout", marker = "extra == 'klayout'", specifier = "~=0.30.13" },
     { name = "nanobind-backend", specifier = ">=1" },
     { name = "rich", specifier = ">=14.1" },
 ]
-provides-extras = ["klayout"]
+provides-extras = ["gurobi", "klayout"]
 
 [package.metadata.requires-dev]
 build = [
@@ -1281,8 +1285,8 @@ build = [
 ]
 dev = [
     { name = "cmake", specifier = ">=4.4.1" },
-    { name = "gurobipy", marker = "(python_full_version < '3.16' and platform_machine != 'ARM64') or (python_full_version < '3.16' and sys_platform != 'win32')", specifier = "==14.0.0" },
-    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')", specifier = "~=0.30.6" },
+    { name = "gurobipy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = "==14" },
+    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or sys_platform != 'win32'", specifier = "~=0.30.13" },
     { name = "nanobind", specifier = "~=3.1.0" },
     { name = "nox", specifier = ">=2025.11.12" },
     { name = "numpy", specifier = ">=2.3.2" },
@@ -1307,8 +1311,8 @@ docs = [
     { name = "sphinxext-opengraph", specifier = ">=0.13" },
 ]
 test = [
-    { name = "gurobipy", marker = "(python_full_version < '3.16' and platform_machine != 'ARM64') or (python_full_version < '3.16' and sys_platform != 'win32')", specifier = "==14.0.0" },
-    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or (python_full_version < '3.15' and sys_platform != 'win32')", specifier = "~=0.30.6" },
+    { name = "gurobipy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = "==14" },
+    { name = "klayout", marker = "(python_full_version < '3.15' and platform_machine != 'ARM64') or sys_platform != 'win32'", specifier = "~=0.30.13" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "pytest", specifier = ">=9.0.1" },
     { name = "pytest-cov", specifier = ">=7.1" },

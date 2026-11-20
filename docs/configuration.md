@@ -161,9 +161,9 @@ distinct feeds round to the same cell.
 | `relative_gap` | `0.0`   | The relative gap at which a solve may stop; `0.0` keeps the gap of the backend; not negative  |
 | `threads`      | `0`     | The threads one solve may use; `0` keeps the default of the backend; at most `1024`           |
 
-The Gurobi backend requires `gurobipy` and a usable Gurobi license. Install
-`gurobipy` separately. Run `mqt-scpd doctor` with the configuration to check the
-backend before a step that solves.
+Install the Gurobi backend with `uv pip install "mqt-scpd[gurobi]"`. Gurobi has
+no Windows ARM64 wheel. The package includes a size-limited license. Run
+`mqt-scpd doctor` with the configuration to check the backend before planning.
 
 `optimal` means the gap between the best solution and the best bound is within
 the solver's tolerance. Both backends default to a relative gap of `1e-4`
