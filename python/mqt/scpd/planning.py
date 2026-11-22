@@ -111,6 +111,9 @@ class PlanningGeometry:
     assignments: list[tuple[Point, Point]] = field(default_factory=list)
     #: The outer ring, in the order the assignment consumed it.
     ring: list[Point] = field(default_factory=list)
+    #: Each feedline chain of the assignment, from its first launcher through the feeds of its
+    #: resonators to its last.
+    feedlines: list[Feedline] = field(default_factory=list)
     #: The coarse route of each wire, from its feed over its crossings to its target.
     corridors: list[list[Point]] = field(default_factory=list)
     #: The approach of each routed wire to its target port, from where its corridor ends, the first
@@ -118,9 +121,6 @@ class PlanningGeometry:
     stubs: list[list[Point]] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
-    #: Each feedline chain of the assignment, from its first launcher through the feeds of its
-    #: resonators to its last.
-    feedlines: list[Feedline] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.

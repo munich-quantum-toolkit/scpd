@@ -18,6 +18,7 @@
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
+#include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
@@ -503,19 +504,16 @@ TEST(CorridorRouter, CountsAConnectionWithoutAWayAsAFail) {
   auto connection = std::make_unique<flatbuffers::design::ConnectionT>();
   connection->target = flatbuffers::design::PortRef(0);
   planned.assignment.connections.push_back(std::move(connection));
-  std::optional<std::uint64_t> fails;
-  const Report report(
-      Detail::Summary,
-      {.result = [&fails](const std::vector<Figure>& /*figures*/,
-                          const std::optional<std::uint64_t> count) {
-        fails = count;
-      }});
+  Received received;
 
-  const auto routing = routeMini(planned, report);
+  const auto routing = routeMini(planned, receiving(received, Detail::Summary));
 
   ASSERT_EQ(routing.corridors.size(), planned.assignment.connections.size());
   EXPECT_TRUE(routing.corridors.back()->partitions.empty());
-  EXPECT_EQ(fails, 1U);
+  EXPECT_EQ(unroutedOf(routing), 1U);
+  EXPECT_EQ(received.fails, 1U);
+  ASSERT_EQ(received.summary.size(), 1U);
+  EXPECT_EQ(received.summary.front().first, "round 1 forward");
 }
 
 TEST(CorridorRouter, KeepsTheFeedOfAConnectionWithoutATargetCell) {
@@ -933,6 +931,55 @@ TEST(CorridorRouter, RefusesABorderSampleWithANonfiniteCoordinate) {
       Point(std::numeric_limits<double>::quiet_NaN(), samples.front().y());
 
   EXPECT_NE(refusalOf(planned).find("border sample"), std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesABorderBetweenTheWrongPartitions) {
+  auto planned = planMini();
+  const auto border =
+      std::ranges::find_if(planned.capacity.borders,
+                           [](const auto& item) { return item->budget > 0; });
+  ASSERT_NE(border, planned.capacity.borders.end());
+  const auto unrelated =
+      std::ranges::find_if(planned.capacity.partitions, [&](const auto& part) {
+        return part->label != (*border)->first &&
+               part->label != (*border)->second;
+      });
+  ASSERT_NE(unrelated, planned.capacity.partitions.end());
+  (*border)->second = (*unrelated)->label;
+
+  EXPECT_NE(refusalOf(planned).find("does not separate partitions"),
+            std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesAnOutlineThatCoversABlockedCell) {
+  auto planned = planMini();
+  const auto scene = buildScene(planned.chip, test::miniConfig());
+  const auto& detail = scene.detail;
+  std::size_t cell = 0;
+  while (cell < detail.cells() && !scene.blocked.test(cell)) {
+    ++cell;
+  }
+  ASSERT_LT(cell, detail.cells());
+  ASSERT_FALSE(planned.capacity.partitions.empty());
+  const auto corner = detail.cell(cell);
+  const auto x = static_cast<double>(corner.x());
+  const auto y = static_cast<double>(corner.y());
+  auto ring = std::make_unique<flatbuffers::geometry::PolygonT>();
+  ring->vertices = {grid::cornerToLayout(detail, x, y),
+                    grid::cornerToLayout(detail, x + 1.0, y),
+                    grid::cornerToLayout(detail, x + 1.0, y + 1.0),
+                    grid::cornerToLayout(detail, x, y + 1.0),
+                    grid::cornerToLayout(detail, x, y)};
+  const auto highest =
+      std::ranges::max_element(planned.capacity.partitions, {},
+                               [](const auto& part) { return part->label; });
+  auto partition = std::make_unique<flatbuffers::artifacts::PartitionT>();
+  partition->label = (*highest)->label + 1U;
+  partition->outlines.push_back(std::move(ring));
+  planned.capacity.partitions.push_back(std::move(partition));
+
+  EXPECT_NE(refusalOf(planned).find("covers a blocked cell"),
+            std::string::npos);
 }
 
 TEST(CorridorRouter, RefusesAnOutlineOutsideTheDetailGrid) {

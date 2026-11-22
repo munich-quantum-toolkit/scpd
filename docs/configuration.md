@@ -203,9 +203,10 @@ any other active solves in MQT SCPD finish first.
 
 Corridor alternates forward and backward sweeps. It can remove routes to make
 room and raises the cost of occupied slots for later sweeps. The stage keeps the
-round with the fewest unrouted connections, then tries the remaining connections
-using free slots only. It reports a `free slots` entry if that pass routes a
-connection.
+round with the fewest unrouted connections. Sweeps stop when every connection
+with a partition assigned to each endpoint has a route. Corridor then tries the
+remaining connections using free slots only. It reports a `free slots` entry if
+that pass routes a connection.
 
 With fewer than two connections, Corridor uses zero relaxation. Otherwise, it
 caps `max_relaxation` at half the number of other connections, rounded down,

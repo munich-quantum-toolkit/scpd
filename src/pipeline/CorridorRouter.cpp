@@ -81,6 +81,11 @@ struct Request {
   Place target;
   PartitionLabel feedPartition = LABEL_NONE;
   PartitionLabel targetPartition = LABEL_NONE;
+
+  /// Whether both endpoints belong to partitions.
+  [[nodiscard]] bool hasEndpoints() const {
+    return feedPartition != LABEL_NONE && targetPartition != LABEL_NONE;
+  }
 };
 
 /// The slots a wire crosses and the partitions it runs through. There is
@@ -158,37 +163,6 @@ struct SearchProgress {
   return cross < 0.0 ? -1 : 0;
 }
 
-/// Whether two chords cross each other properly.
-[[nodiscard]] bool crosses(const Place& a, const Place& b, const Place& c,
-                           const Place& d) {
-  return (sideOf(a, b, c) * sideOf(a, b, d)) < 0 &&
-         (sideOf(c, d, a) * sideOf(c, d, b)) < 0;
-}
-
-/// Whether two chords lie along each other over a length rather than meeting
-/// at a point.
-///
-/// Two wires that share a stretch of one corridor are one piece of copper:
-/// the later stage has no room for the second one.
-[[nodiscard]] bool overlaps(const Place& a, const Place& b, const Place& c,
-                            const Place& d) {
-  if (sideOf(a, b, c) != 0 || sideOf(a, b, d) != 0) {
-    return false;
-  }
-  // The two run along one line, so they share a stretch when their spans
-  // overlap in more than an end point. The wider axis decides: a vertical
-  // pair is compared on y and every other pair on x.
-  const auto vertical = std::abs(b.x - a.x) < std::abs(b.y - a.y);
-  const auto first = vertical
-                         ? std::pair{std::min(a.y, b.y), std::max(a.y, b.y)}
-                         : std::pair{std::min(a.x, b.x), std::max(a.x, b.x)};
-  const auto second = vertical
-                          ? std::pair{std::min(c.y, d.y), std::max(c.y, d.y)}
-                          : std::pair{std::min(c.x, d.x), std::max(c.x, d.x)};
-  return std::min(first.second, second.second) >
-         std::max(first.first, second.first);
-}
-
 /// Whether the point `c` lies on the chord from `a` to `b`, between its ends.
 ///
 /// The three points are known to lie on one line, so what is left is whether
@@ -198,43 +172,48 @@ struct SearchProgress {
          std::min(a.y, b.y) <= c.y && c.y <= std::max(a.y, b.y);
 }
 
-/// Whether one chord ends on the other, or the two share an end.
-///
-/// The crossing test does not see it: a chord that stops on another one never
-/// gets to its far side, so the two never cross properly. Every end of a chord
-/// is a fixed point that one wire passes: the point the wire is fed at, the
-/// cell of its target port, or a crossing slot. A second wire drawn over that
-/// point, or ending on it as well, puts two wires on one point of the chip. A
-/// wire could otherwise run along a whole line of feed points without one
-/// crossing.
-///
-/// The rule is stricter than the drawing needs. In a partition that is not
-/// convex, a straight chord can run over a slot at an inward corner of the
-/// border, and the wire through that slot need not cross the other wire.
-[[nodiscard]] bool touches(const Chord& a, const Chord& b) {
-  const auto over = [](const Chord& chord, const Place& end) {
-    return sideOf(chord.from, chord.to, end) == 0 &&
-           between(chord.from, chord.to, end);
-  };
-  const auto endsOn = [&over](const Chord& chord, const Chord& other) {
-    return over(chord, other.from) || over(chord, other.to);
-  };
-  return endsOn(a, b) || endsOn(b, a);
+/// Whether two chords intersect, including at an endpoint.
+[[nodiscard]] bool meets(const Chord& a, const Chord& b) {
+  if (std::max(a.from.x, a.to.x) < std::min(b.from.x, b.to.x) ||
+      std::max(b.from.x, b.to.x) < std::min(a.from.x, a.to.x) ||
+      std::max(a.from.y, a.to.y) < std::min(b.from.y, b.to.y) ||
+      std::max(b.from.y, b.to.y) < std::min(a.from.y, a.to.y)) {
+    return false;
+  }
+  const auto aFrom = sideOf(a.from, a.to, b.from);
+  const auto aTo = sideOf(a.from, a.to, b.to);
+  const auto bFrom = sideOf(b.from, b.to, a.from);
+  const auto bTo = sideOf(b.from, b.to, a.to);
+  return (aFrom * aTo < 0 && bFrom * bTo < 0) ||
+         (aFrom == 0 && between(a.from, a.to, b.from)) ||
+         (aTo == 0 && between(a.from, a.to, b.to)) ||
+         (bFrom == 0 && between(b.from, b.to, a.from)) ||
+         (bTo == 0 && between(b.from, b.to, a.to));
 }
 
-/// Whether two chords may not both be drawn.
-///
-/// A proper crossing is what the plan has to rule out, so that the later
-/// stage can draw it. Two chords that run along each other are ruled out as
-/// well, because they put two wires in one place, and so is a chord drawn
-/// over a point where another chord ends.
-///
-/// The chords are straight lines between where a wire enters and leaves a
-/// partition. They stand in for the wires, and they decide exactly only in a
-/// convex partition, where every chord stays inside.
-[[nodiscard]] bool meets(const Chord& a, const Chord& b) {
-  return crosses(a.from, a.to, b.from, b.to) ||
-         overlaps(a.from, a.to, b.from, b.to) || touches(a, b);
+/// Whether a sample lies on the shared edge of cells with the border labels.
+[[nodiscard]] bool separates(const grid::GridMetrics& detail,
+                             const std::span<const PartitionLabel> labels,
+                             const grid::PartitionBorder& border,
+                             const grid::Point& sample) {
+  const auto x = static_cast<std::int64_t>(std::floor(sample.x()));
+  const auto y = static_cast<std::int64_t>(std::floor(sample.y()));
+  const auto vertical = sample.x() == static_cast<double>(x);
+  const auto horizontal = sample.y() == static_cast<double>(y);
+  const auto otherX = x - (vertical ? 1 : 0);
+  const auto otherY = y - (horizontal ? 1 : 0);
+  if (horizontal == vertical || !detail.contains(x, y) ||
+      !detail.contains(otherX, otherY)) {
+    return false;
+  }
+  const auto labelAt = [&](const std::int64_t cellX, const std::int64_t cellY) {
+    return labels[detail.index(static_cast<std::uint32_t>(cellX),
+                               static_cast<std::uint32_t>(cellY))];
+  };
+  const auto first = labelAt(x, y);
+  const auto second = labelAt(otherX, otherY);
+  return (first == border.first && second == border.second) ||
+         (first == border.second && second == border.first);
 }
 
 /// The partition graph of one run, with the wires committed to it.
@@ -242,22 +221,45 @@ class Corridors {
 public:
   /// Builds the graph of a plan.
   ///
-  /// @throws std::invalid_argument When a border of the plan offers another
-  /// number of slots than its budget, which a plan made with another
-  /// crossing pitch, or by a version that picks the slots another way, does.
+  /// @throws std::invalid_argument If a border does not separate its two
+  /// partitions or offers a different number of slots than its budget.
   Corridors(const CapacityPlanT& plan, const CapacityScene& scene,
-            const double pitch)
+            const std::span<const PartitionLabel> labels, const double pitch,
+            const Report& report)
       : detailGrid(scene.detail) {
     const auto& detail = scene.detail;
+    std::size_t samples = 0;
     for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
-      const auto& border = *plan.borders[index];
+      const auto* entry = plan.borders[index].get();
+      if (entry == nullptr) {
+        throw std::invalid_argument(
+            std::format("the capacity plan has no border {}", index));
+      }
+      const auto& border = *entry;
       grid::PartitionBorder geometry{.first = checkedLabel(border.first),
                                      .second = checkedLabel(border.second),
                                      .samples = {}};
+      const auto borderError = [&] {
+        return std::invalid_argument(
+            std::format("border {} of the capacity plan does not separate "
+                        "partitions {} and {}",
+                        index, border.first, border.second));
+      };
+      if (geometry.first == geometry.second) {
+        throw borderError();
+      }
       geometry.samples.reserve(border.samples.size());
       for (const auto& sample : border.samples) {
+        if (samples++ % 1024 == 0) {
+          report.progress("building crossing slots", "", index,
+                          plan.borders.size());
+        }
         const auto corner = checkedCorner(detail, sample, "border sample");
-        geometry.samples.emplace_back(onGrid(corner.x()), onGrid(corner.y()));
+        auto& point = geometry.samples.emplace_back(onGrid(corner.x()),
+                                                    onGrid(corner.y()));
+        if (!separates(detail, labels, geometry, point)) {
+          throw borderError();
+        }
       }
       const auto slots = crossingSlots(geometry, scene, pitch);
       if (slots.size() != border.budget) {
@@ -277,7 +279,7 @@ public:
                             .border = index});
       }
     }
-    findNearby(pitch);
+    findNearby(pitch, report);
     slotOwner.assign(slotList.size(), NO_OWNER);
     slotHistory.assign(slotList.size(), 0.0);
   }
@@ -297,8 +299,8 @@ public:
   /// With no `displacement` the search uses only what is free. Given one, it
   /// may take a slot that another wire holds or cross a chord that another
   /// wire drew, and pays that price once per step that does so, however many
-  /// wires the step displaces. The search therefore takes as few blocked
-  /// steps as it can. A sweep asks for a displacing route only for a wire
+  /// wires the step displaces. The path cost adds this penalty to distance
+  /// and slot history. A sweep asks for a displacing route only for a wire
   /// that the free search did not place, so the price never trades a free
   /// way for a shorter blocked one.
   ///
@@ -311,8 +313,7 @@ public:
   [[nodiscard]] std::optional<Route>
   route(const Request& request, const SearchProgress& progress,
         const double displacement = 0.0) const {
-    if (request.feedPartition == LABEL_NONE ||
-        request.targetPartition == LABEL_NONE) {
+    if (!request.hasEndpoints()) {
       return std::nullopt;
     }
     // A clear direct route has no slot cost and is already the shortest.
@@ -446,7 +447,7 @@ private:
   /// another, and each has a slot near the corner. Two wires that crossed
   /// there would run closer than the pitch. One wire may cross at both, as it
   /// does when it passes the corner from one partition into the next.
-  void findNearby(const double pitch) {
+  void findNearby(const double pitch, const Report& report) {
     nearbySlots.assign(slotList.size(), {});
     // Keep the bucket indices bounded even when the pitch is tiny.
     const auto width = std::max(pitch, detailGrid.cellWidth);
@@ -466,6 +467,9 @@ private:
       buckets[bucketOf(layout.back())].push_back(slot);
     }
     for (std::size_t slot = 0; slot < slotList.size(); ++slot) {
+      if (slot % 128 == 0) {
+        report.progress("checking crossing pitch", "", slot, slotList.size());
+      }
       const auto& here = layout[slot];
       const auto [column, row] = bucketOf(here);
       for (std::int64_t dy = -1; dy <= 1; ++dy) {
@@ -806,43 +810,99 @@ void requireSameGrid(const CapacityPlanT& plan,
   }
 }
 
-/// The labels of the partitions of the plan, back on the detail grid.
-///
-/// @throws std::invalid_argument When a partition falls apart into pieces
-/// that do not touch. The search treats a partition as one region, and would
-/// otherwise draw a chord from one piece to the other.
-[[nodiscard]] std::vector<PartitionLabel> labelsOf(const CapacityPlanT& plan,
-                                                   const CapacityScene& scene) {
+/// Checks that each partition is four-connected and contains only free cells.
+void requireConnectedLabels(const std::span<const PartitionLabel> labels,
+                            const CapacityScene& scene, const Report& report) {
   const auto& detail = scene.detail;
+  std::vector<bool> seen(labels.size(), false);
+  std::vector<bool> seenLabels(std::numeric_limits<PartitionLabel>::max(),
+                               false);
+  std::vector<std::size_t> pending;
+  std::size_t visited = 0;
+  const auto checkProgress = [&] {
+    if (visited++ % 1024 == 0) {
+      report.progress("checking partition connectivity", "", 0, 0);
+    }
+  };
+
+  for (std::size_t start = 0; start < labels.size(); ++start) {
+    checkProgress();
+    const auto label = labels[start];
+    if (label == LABEL_NONE || seen[start]) {
+      continue;
+    }
+    if (seenLabels[label]) {
+      throw std::invalid_argument(
+          std::format("partition {} of the capacity plan falls apart into "
+                      "pieces that do not touch",
+                      label));
+    }
+    seenLabels[label] = true;
+    const auto add = [&](const std::size_t cell) {
+      if (!seen[cell] && labels[cell] == label) {
+        seen[cell] = true;
+        pending.push_back(cell);
+      }
+    };
+    add(start);
+    while (!pending.empty()) {
+      checkProgress();
+      const auto cell = pending.back();
+      pending.pop_back();
+      if (scene.blocked.test(cell)) {
+        throw std::invalid_argument(std::format(
+            "partition {} of the capacity plan covers a blocked cell", label));
+      }
+      const auto x = cell % detail.width;
+      if (x > 0) {
+        add(cell - 1);
+      }
+      if (x + 1 < detail.width) {
+        add(cell + 1);
+      }
+      if (cell >= detail.width) {
+        add(cell - detail.width);
+      }
+      if (cell + detail.width < labels.size()) {
+        add(cell + detail.width);
+      }
+    }
+  }
+}
+
+/// Rebuilds and validates the Capacity partition labels on the detail grid.
+[[nodiscard]] std::vector<PartitionLabel> labelsOf(const CapacityPlanT& plan,
+                                                   const CapacityScene& scene,
+                                                   const Report& report) {
+  const auto& detail = scene.detail;
+  const auto progress = [&] {
+    report.progress("rasterizing the partitions", "", 0, 0);
+  };
   std::vector<grid::PartitionOutline> outlines;
   for (const auto& partition : plan.partitions) {
+    if (partition == nullptr) {
+      throw std::invalid_argument("the capacity plan has a missing partition");
+    }
+    const auto label = checkedLabel(partition->label);
     for (const auto& ring : partition->outlines) {
-      grid::PartitionOutline outline{.label = checkedLabel(partition->label),
-                                     .ring = {}};
+      if (ring == nullptr) {
+        throw std::invalid_argument(
+            std::format("partition {} has a missing outline", label));
+      }
+      grid::PartitionOutline outline{.label = label, .ring = {}};
       outline.ring.reserve(ring->vertices.size());
       for (const auto& vertex : ring->vertices) {
+        if (outline.ring.size() % 1024 == 0) {
+          progress();
+        }
         outline.ring.push_back(
             checkedCorner(detail, vertex, "partition outline"));
       }
       outlines.push_back(std::move(outline));
     }
   }
-  auto labels = grid::rasterizePartitions(outlines, detail);
-
-  auto highest = grid::FIRST_PARTITION_LABEL;
-  for (const auto label : labels) {
-    highest = std::max(highest, label);
-  }
-  auto pieces = labels;
-  if (grid::separatePartitionPieces(scene.blocked, pieces, detail,
-                                    grid::nextPartitionLabel(highest)) !=
-      grid::nextPartitionLabel(highest)) {
-    const auto cell = std::ranges::mismatch(labels, pieces).in1;
-    throw std::invalid_argument(
-        std::format("partition {} of the capacity plan falls apart into "
-                    "pieces that do not touch",
-                    *cell));
-  }
+  auto labels = grid::rasterizePartitions(outlines, detail, progress);
+  requireConnectedLabels(labels, scene, report);
   return labels;
 }
 
@@ -925,11 +985,14 @@ public:
           "configuration; run the capacity step again");
     }
     requirePortsOfChip(assignment, chip);
-    const auto labels = labelsOf(capacity, scene);
+    const auto labels = labelsOf(capacity, scene, report);
 
     const auto requests = requestsOf(scene, assignment, labels);
-
-    Corridors corridors(capacity, scene, crossingPitch(config));
+    const auto missingEndpoints = static_cast<std::size_t>(
+        std::ranges::count_if(requests, [](const Request& request) {
+          return !request.hasEndpoints();
+        }));
+    Corridors corridors(capacity, scene, labels, crossingPitch(config), report);
 
     if (report.wants(Detail::Steps)) {
       report.line(
@@ -983,11 +1046,9 @@ public:
         bestLeft = left;
         bestRound = rounds;
       }
-      // Only a round that routes everything ends the sweeps. A round in which
-      // nothing moved is not the end: a wire that found no way charged the
-      // slots it wanted, and it takes several such rounds before the charge
-      // is high enough to move the wire that stands on one.
-      if (left == 0) {
+      // Requests without both endpoint partitions cannot improve in later
+      // sweeps. Keep their failures in the result.
+      if (left == missingEndpoints) {
         break;
       }
     }
@@ -1123,8 +1184,7 @@ private:
                       const std::size_t index, const bool forward,
                       const Sweeps& sweeps, const SearchProgress& progress) {
     const auto& request = requests[index];
-    if (request.feedPartition == LABEL_NONE ||
-        request.targetPartition == LABEL_NONE) {
+    if (!request.hasEndpoints()) {
       return;
     }
     const auto before = routes[index];
@@ -1171,9 +1231,9 @@ private:
     }
 
     // The sweep takes out whoever stands beside this wire on the ring, which
-    // is rarely who stands in its way. The route with the fewest blocked
-    // steps names the wires that hold a slot it wants and the ones whose
-    // chords it would cross. Those come out one at a time. The sweep gives a
+    // is rarely who stands in its way. The lowest-cost route with
+    // displacement allowed identifies blockers by their slots and chords.
+    // The blockers come out one at a time. The sweep gives a
     // way of its own to each of them that it has not passed yet; one that it
     // has passed waits for the next round or the free-slot pass.
     std::vector<std::pair<std::size_t, Route>> displaced;

@@ -27,7 +27,9 @@ Assignment placeholders from the original configuration and chip. To add
 Corridor to an existing run with current artifacts, run
 `mqt-scpd plan -o <run-dir> --stage corridor`. Set `[run] stop_after = "assign"`
 to keep Assignment as the last stage of a full run. `plan` exits with code 1 if
-Corridor leaves any connection unrouted.
+Corridor leaves any connection unrouted. Rerun Capacity if Corridor reports that
+a saved partition covers a blocked cell or that a border sample does not join
+its recorded partitions.
 
 Assignment uses a sliding window to enforce the feedline utilization limit. The
 bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning

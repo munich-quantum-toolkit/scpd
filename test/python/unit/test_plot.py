@@ -418,6 +418,15 @@ def test_the_tone_of_a_partition_leaves_its_hole_open() -> None:
     assert (path.get("d") or "").count("M") == 2
 
 
+def test_planning_geometry_accepts_feedlines_in_the_existing_positional_slot() -> None:
+    """A positional feedline argument still populates the feedline layer."""
+    feedline = Feedline(points=[(0.0, 0.0), (10.0, 0.0)])
+    geometry = PlanningGeometry([], [], [], [], [], [], [], [], [], [], [], [], [], [feedline])
+
+    assert geometry.feedlines == [feedline]
+    assert "l-feedline" in _groups(layout_svg(_mini(), stage="assign", planning=geometry))
+
+
 def test_the_assign_picture_shows_its_chords_over_the_plan_without_the_ring() -> None:
     """The chords are thick black dashes over the toned partitions; the ring of the ports is left out."""
     square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]

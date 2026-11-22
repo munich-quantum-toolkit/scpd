@@ -17,6 +17,7 @@
 #include "mqt-scpd/grid/mqt_scpd_grid_export.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -186,6 +187,18 @@ freeCellSeeds(const BitGrid& blocked, const GridMetrics& detail,
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<PartitionLabel>
 rasterizePartitions(std::span<const PartitionOutline> outlines,
                     const GridMetrics& grid);
+
+/**
+ * @brief Fills partition outlines and calls @p progress periodically.
+ * @param outlines The rings in cell coordinates.
+ * @param grid The metrics of the grid.
+ * @param progress A callback that may throw to cancel rasterization.
+ * @return The label of every cell, row-major.
+ */
+[[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<PartitionLabel>
+rasterizePartitions(std::span<const PartitionOutline> outlines,
+                    const GridMetrics& grid,
+                    const std::function<void()>& progress);
 
 /**
  * @brief Returns the crossing slots of a border: the places a wire may cross

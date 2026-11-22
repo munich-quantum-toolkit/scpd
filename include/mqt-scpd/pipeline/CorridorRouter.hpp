@@ -38,8 +38,9 @@ namespace mqt::scpd::pipeline {
  * only in a convex partition.
  *
  * Where wires compete, the router rips some up and routes them again, for at
- * most `[stages.corridor] rounds` rounds; it stops after a round that routes
- * every wire. It keeps the round with the fewest wires without a way. A last
+ * most `[stages.corridor] rounds` rounds. Sweeps stop when every connection
+ * with a partition assigned to each endpoint has a route. The router keeps
+ * the round with the fewest unrouted connections. A last
  * pass then offers each such wire the free slots of that plan and rips up
  * nothing.
  *
