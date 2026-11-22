@@ -183,6 +183,8 @@ freeCellSeeds(const BitGrid& blocked, const GridMetrics& detail,
  * @param grid The metrics of the grid.
  * @return The label of every cell, row-major. A cell that no ring encloses
  * keeps LABEL_NONE.
+ * @throws std::invalid_argument If an outline being filled has a nonfinite
+ * coordinate.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<PartitionLabel>
 rasterizePartitions(std::span<const PartitionOutline> outlines,
@@ -194,6 +196,8 @@ rasterizePartitions(std::span<const PartitionOutline> outlines,
  * @param grid The metrics of the grid.
  * @param progress A callback that may throw to cancel rasterization.
  * @return The label of every cell, row-major.
+ * @throws std::invalid_argument If an outline being filled has a nonfinite
+ * coordinate.
  */
 [[nodiscard]] MQT_SCPD_GRID_EXPORT std::vector<PartitionLabel>
 rasterizePartitions(std::span<const PartitionOutline> outlines,

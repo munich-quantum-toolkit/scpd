@@ -482,6 +482,12 @@ rasterizePartitions(const std::span<const PartitionOutline> outlines,
   for (const auto& [label, rings] : byLabel) {
     edges.clear();
     for (const auto* ring : rings) {
+      if (std::ranges::any_of(ring->ring, [](const Point& point) {
+            return !std::isfinite(point.x()) || !std::isfinite(point.y());
+          })) {
+        throw std::invalid_argument(
+            "a partition outline has a nonfinite vertex");
+      }
       for (std::size_t i = 0; i + 1 < ring->ring.size(); ++i) {
         const auto& from = ring->ring[i];
         const auto& to = ring->ring[i + 1];
