@@ -524,7 +524,7 @@ rasterizePartitions(const std::span<const PartitionOutline> outlines,
         const auto t =
             (scan - edge->from.y()) / (edge->to.y() - edge->from.y());
         crossings.push_back(edge->from.x() +
-                            t * (edge->to.x() - edge->from.x()));
+                            (t * (edge->to.x() - edge->from.x())));
       }
       std::ranges::sort(crossings);
       for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {

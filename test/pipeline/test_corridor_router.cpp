@@ -19,6 +19,7 @@
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/geometry/Geometry.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
+#include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
