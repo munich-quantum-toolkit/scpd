@@ -60,10 +60,7 @@ email = "michael.feldmeier@tum.de"
 
 [project.optional-dependencies]
 gurobi = [ "gurobipy==14" ]
-klayout = [
-  "klayout>=0.30.13",
-  "klayout>=0.30.14; python_version>='3.15'",
-]
+klayout = [ "klayout>=0.30.14" ]
 
 [project.urls]
 Homepage = "https://github.com/munich-quantum-toolkit/scpd"
@@ -83,8 +80,7 @@ dev = [
 ]
 test = [
   "gurobipy==14; sys_platform!='win32' or platform_machine!='ARM64'",
-  "klayout>=0.30.13; sys_platform!='win32' or platform_machine!='ARM64'",
-  "klayout>=0.30.14; python_version>='3.15' and (sys_platform!='win32' or platform_machine!='ARM64')",
+  "klayout>=0.30.14; sys_platform!='win32' or platform_machine!='ARM64'",
   "numpy>=2.3.2",
   "numpy>=2.5.2; python_version>='3.15'",
   "pytest>=9.0.1",

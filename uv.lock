@@ -1274,8 +1274,7 @@ test = [
 requires-dist = [
     { name = "flatbuffers", specifier = "~=25.12.19" },
     { name = "gurobipy", marker = "extra == 'gurobi'", specifier = "==14" },
-    { name = "klayout", marker = "python_full_version >= '3.15' and extra == 'klayout'", specifier = ">=0.30.14" },
-    { name = "klayout", marker = "extra == 'klayout'", specifier = ">=0.30.13" },
+    { name = "klayout", marker = "extra == 'klayout'", specifier = ">=0.30.14" },
     { name = "nanobind-backend", specifier = ">=1" },
     { name = "rich", specifier = ">=14.1" },
 ]
@@ -1291,8 +1290,7 @@ build = [
 dev = [
     { name = "cmake", specifier = ">=4.4.1" },
     { name = "gurobipy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = "==14" },
-    { name = "klayout", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=0.30.13" },
-    { name = "klayout", marker = "(python_full_version >= '3.15' and platform_machine != 'ARM64') or (python_full_version >= '3.15' and sys_platform != 'win32')", specifier = ">=0.30.14" },
+    { name = "klayout", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=0.30.14" },
     { name = "nanobind", specifier = "~=3.1.0" },
     { name = "nox", specifier = ">=2025.11.12" },
     { name = "numpy", specifier = ">=2.3.2" },
@@ -1319,8 +1317,7 @@ docs = [
 ]
 test = [
     { name = "gurobipy", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = "==14" },
-    { name = "klayout", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=0.30.13" },
-    { name = "klayout", marker = "(python_full_version >= '3.15' and platform_machine != 'ARM64') or (python_full_version >= '3.15' and sys_platform != 'win32')", specifier = ">=0.30.14" },
+    { name = "klayout", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=0.30.14" },
     { name = "numpy", specifier = ">=2.3.2" },
     { name = "numpy", marker = "python_full_version >= '3.15'", specifier = ">=2.5.2" },
     { name = "pytest", specifier = ">=9.0.1" },
