@@ -33,7 +33,7 @@ nox.needs_version = ">=2025.10.16"
 nox.options.default_venv_backend = "uv"
 
 
-PYTHON_ALL_VERSIONS = ["3.11", "3.12", "3.13", "3.14"]
+PYTHON_ALL_VERSIONS = ["3.11", "3.12", "3.13", "3.14", "3.15"]
 
 SCHEMA_DIR = Path("schemas")
 GENERATED_CPP_DIR = Path("include") / "mqt-scpd" / "flatbuffers"

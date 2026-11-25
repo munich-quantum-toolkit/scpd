@@ -60,8 +60,7 @@ email = "michael.feldmeier@tum.de"
 
 [project.optional-dependencies]
 gurobi = [ "gurobipy==14" ]
-# KLayout 0.30.13 adds Python 3.15 wheels on Linux and macOS.
-klayout = [ "klayout~=0.30.13" ]
+klayout = [ "klayout>=0.30.14" ]
 
 [project.urls]
 Homepage = "https://github.com/munich-quantum-toolkit/scpd"
@@ -80,12 +79,10 @@ dev = [
   "nox>=2025.11.12",
 ]
 test = [
-  # Gurobi has no Windows ARM64 wheel.
   "gurobipy==14; sys_platform!='win32' or platform_machine!='ARM64'",
-  # Windows wheels cover x86-64 through Python 3.14.
-  "klayout~=0.30.13; sys_platform!='win32' or (platform_machine!='ARM64' and python_version<'3.15')",
-  # Exercise the NumPy path in the FlatBuffers bindings.
+  "klayout>=0.30.14; sys_platform!='win32' or platform_machine!='ARM64'",
   "numpy>=2.3.2",
+  "numpy>=2.5.2; python_version>='3.15'",
   "pytest>=9.0.1",
   "pytest-cov>=7.1",
   "pytest-sugar>=1.1.1",
