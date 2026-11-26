@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
-__all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
+__all__ = ["PLANNING_STAGES", "CorridorPath", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
 
 #: The planning stages that can be drawn, and the artifact each is read from.
 PLANNING_STAGES: dict[str, str] = dict(STAGE_FILES)
@@ -73,11 +73,21 @@ class Feedline:
 
 
 @dataclass
+class CorridorPath:
+    """The geometry of one routed connection."""
+
+    #: The coarse route, from its feed over its crossings to its target cell.
+    points: list[Point]
+    #: The illustrative approach from the target cell into the target port, when available.
+    approach: list[Point] = field(default_factory=list)
+
+
+@dataclass
 class PlanningGeometry:
     """The shapes one planning stage produced, in layout units.
 
-    Each list is one layer of the picture, so a renderer can give it a color or a GDS layer of its
-    own without knowing what a partition or a capacity chain is.
+    The lists group the shapes by their role in the picture. A renderer can give each group a
+    color or a GDS layer.
     """
 
     #: The outline of every partition of the free space, as its closed rings. A partition with a
@@ -114,11 +124,8 @@ class PlanningGeometry:
     #: Each feedline chain of the assignment, from its first launcher through the feeds of its
     #: resonators to its last.
     feedlines: list[Feedline] = field(default_factory=list)
-    #: The coarse route of each wire, from its feed over its crossings to its target.
-    corridors: list[list[Point]] = field(default_factory=list)
-    #: The approach of each routed wire to its target port, from where its corridor ends, the first
-    #: cell beyond the band of the port: across to the axis of the port, then along it into the port.
-    stubs: list[list[Point]] = field(default_factory=list)
+    #: The coarse route and port approach of each routed wire.
+    corridors: list[CorridorPath] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
 
@@ -142,7 +149,6 @@ class PlanningGeometry:
             self.assignments,
             self.ring,
             self.corridors,
-            self.stubs,
             self.slots,
             self.feedlines,
         ))
@@ -613,7 +619,11 @@ def _stub(chip: ChipT, index: int, start: Point) -> list[Point]:
 
 
 def _corridor(
-    routing: CorridorRoutingT, chip: ChipT, assignment: AssignmentT | None, geometry: PlanningGeometry
+    routing: CorridorRoutingT,
+    chip: ChipT,
+    plan: CapacityPlanT | None,
+    assignment: AssignmentT | None,
+    geometry: PlanningGeometry,
 ) -> None:
     """Fill the layers a corridor routing carries.
 
@@ -621,7 +631,8 @@ def _corridor(
     assignment supplies the exact feed and the target port for each corridor.
 
     Raises:
-        PlanningError: If the routing and assignment have different numbers of connections.
+        PlanningError: If the routing and assignment have different numbers of connections, or a
+            slot references a border outside the Capacity plan.
     """
     routes = routing.corridors or []
     connections: list[Any] = assignment.connections or [] if assignment is not None else []
@@ -630,6 +641,9 @@ def _corridor(
         raise PlanningError(msg)
 
     for border in _entries(routing.slots):
+        if plan is not None and border.border >= len(plan.borders or []):
+            msg = f"crossing slot border {border.border} is outside the Capacity plan"
+            raise PlanningError(msg)
         geometry.slots.extend(_point(position) for position in _entries(border.positions))
     feeds = assignment.feeds or [] if assignment is not None else []
     for index, corridor in enumerate(routes):
@@ -648,13 +662,10 @@ def _corridor(
             route.insert(0, position)
         route.extend(_point(crossing) for crossing in _entries(corridor.crossings))
         route.append(_point(corridor.target))
-        geometry.corridors.append(route)
         connection = connections[index] if index < len(connections) else None
-        if connection is None or connection.target is None:
-            continue
-        stub = _stub(chip, int(connection.target.index), route[-1])
-        if stub:
-            geometry.stubs.append(stub)
+        target = connection.target if connection is not None else None
+        approach = _stub(chip, int(target.index), route[-1]) if target is not None else []
+        geometry.corridors.append(CorridorPath(route, approach))
 
 
 def _plan_of(capacity: bytes) -> CapacityPlanT:
@@ -716,8 +727,8 @@ def planning_geometry(
         The geometry, in layout units.
 
     Raises:
-        PlanningError: If the stage or its artifact is invalid, or the Corridor artifact and
-            the assignment have different numbers of connections.
+        PlanningError: If the stage or its artifact is invalid, or the Corridor artifact has an
+            inconsistent connection count or border reference.
     """
     if stage not in PLANNING_STAGES:
         msg = f"'{stage}' is not a planning stage; the planning stages are {', '.join(PLANNING_STAGES)}"
@@ -759,10 +770,11 @@ def planning_geometry(
             msg = "the artifact is not a corridor routing"
             raise PlanningError(msg)
         chosen = _assignment_of(assignment) if assignment is not None else None
-        _corridor(output, chip, chosen, geometry)
+        plan = _plan_of(capacity) if capacity is not None else None
+        _corridor(output, chip, plan, chosen, geometry)
         # A corridor is a way through the partitions, so the partitions make the picture readable.
-        if capacity is not None:
-            _capacity(_plan_of(capacity), geometry)
+        if plan is not None:
+            _capacity(plan, geometry)
         # The wire of a resonator starts at its feed, which its feedline passes.
         if chosen is not None:
             _feedlines(chosen, chip, geometry)

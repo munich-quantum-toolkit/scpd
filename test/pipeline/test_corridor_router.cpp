@@ -952,16 +952,10 @@ TEST(CorridorRouter, RefusesABorderBetweenTheWrongPartitions) {
             std::string::npos);
 }
 
-TEST(CorridorRouter, RefusesAnOutlineThatCoversABlockedCell) {
-  auto planned = planMini();
-  const auto scene = buildScene(planned.chip, test::miniConfig());
-  const auto& detail = scene.detail;
-  std::size_t cell = 0;
-  while (cell < detail.cells() && !scene.blocked.test(cell)) {
-    ++cell;
-  }
-  ASSERT_LT(cell, detail.cells());
-  ASSERT_FALSE(planned.capacity.partitions.empty());
+/// Adds a one-cell partition to a Capacity plan.
+void addPartitionAt(CapacityPlanT& plan, const grid::GridMetrics& detail,
+                    const std::size_t cell) {
+  ASSERT_FALSE(plan.partitions.empty());
   const auto corner = detail.cell(cell);
   const auto x = static_cast<double>(corner.x());
   const auto y = static_cast<double>(corner.y());
@@ -971,15 +965,51 @@ TEST(CorridorRouter, RefusesAnOutlineThatCoversABlockedCell) {
                     grid::cornerToLayout(detail, x + 1.0, y + 1.0),
                     grid::cornerToLayout(detail, x, y + 1.0),
                     grid::cornerToLayout(detail, x, y)};
-  const auto highest =
-      std::ranges::max_element(planned.capacity.partitions, {},
-                               [](const auto& part) { return part->label; });
+  const auto highest = std::ranges::max_element(
+      plan.partitions, {}, [](const auto& part) { return part->label; });
   auto partition = std::make_unique<flatbuffers::artifacts::PartitionT>();
   partition->label = (*highest)->label + 1U;
   partition->outlines.push_back(std::move(ring));
-  planned.capacity.partitions.push_back(std::move(partition));
+  plan.partitions.push_back(std::move(partition));
+}
+
+TEST(CorridorRouter, RefusesAnOutlineThatCoversABlockedCell) {
+  auto planned = planMini();
+  const auto scene = buildScene(planned.chip, test::miniConfig());
+  const auto& detail = scene.detail;
+  std::size_t cell = 0;
+  while (cell < detail.cells() && !scene.blocked.test(cell)) {
+    ++cell;
+  }
+  ASSERT_LT(cell, detail.cells());
+  addPartitionAt(planned.capacity, detail, cell);
 
   EXPECT_NE(refusalOf(planned).find("covers a blocked cell"),
+            std::string::npos);
+}
+
+TEST(CorridorRouter, RefusesAnOutlineThatCoversAReopenedPortApproach) {
+  const auto config = test::miniConfig();
+  auto text = test::miniChipText();
+  const std::string anchor = R"("obstacles": [)";
+  const auto at = text.find(anchor);
+  ASSERT_NE(at, std::string::npos);
+  text.insert(at + anchor.size(), R"(
+    {"polygon": [[1500.0, 150.0], [1560.0, 150.0], [1560.0, 250.0],
+                 [1500.0, 250.0]]},)");
+  Planned planned{
+      .chip = io::loadChip(text, config), .capacity = {}, .assignment = {}};
+  planned.capacity = makeWatershedPlanner()->run(planned.chip, config, {});
+  const auto scene = buildScene(planned.chip, config);
+  std::size_t cell = 0;
+  while (cell < scene.detail.cells() &&
+         (!scene.reserved.test(cell) || scene.blocked.test(cell))) {
+    ++cell;
+  }
+  ASSERT_LT(cell, scene.detail.cells());
+  addPartitionAt(planned.capacity, scene.detail, cell);
+
+  EXPECT_NE(refusalOf(planned, config).find("covers a reserved port approach"),
             std::string::npos);
 }
 
@@ -1115,19 +1145,20 @@ TEST(CorridorRouter, ReportsProgressDuringASearch) {
       std::runtime_error);
 }
 
-TEST(CorridorRouter, SweepsTwelveRoundsWithoutACorridorSection) {
+TEST(CorridorRouter, UsesSchemaDefaultsWithoutACorridorSection) {
+  const auto planned = planMini();
   auto config = test::miniConfig();
-  config.stages->corridor.reset();
+  Received withDefaults;
+  const auto expected =
+      routeMini(planned, receiving(withDefaults, Detail::Steps), config);
   Received received;
 
+  config.stages->corridor.reset();
   const auto routing =
-      routeMini(planMini(), receiving(received, Detail::Steps), config);
+      routeMini(planned, receiving(received, Detail::Steps), config);
 
-  EXPECT_NE(std::ranges::find(received.steps,
-                              std::format("rounds 12{}max relaxation 2 of 4",
-                                          FIGURE_SEPARATOR)),
-            received.steps.end());
-  EXPECT_EQ(unroutedOf(routing), 0U);
+  EXPECT_EQ(received.steps, withDefaults.steps);
+  EXPECT_EQ(routing, expected);
 }
 
 TEST(CorridorRouter, ReportsEveryConnectionAtTheItemsLevel) {

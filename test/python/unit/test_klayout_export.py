@@ -19,7 +19,7 @@ from mqt.scpd.config import load_config
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
-from mqt.scpd.planning import Feedline, PlanningGeometry
+from mqt.scpd.planning import CorridorPath, Feedline, PlanningGeometry
 
 pytestmark = pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
 
@@ -67,7 +67,7 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
         partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         inner=[((0.0, 0.0), (50.0, 50.0))],
         launchers=[(50.0, 50.0)],
-        corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
+        corridors=[CorridorPath([(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)])],
         slots=[(50.0, 50.0)],
     )
 
@@ -148,8 +148,7 @@ def test_the_stubs_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path)
     geometry = PlanningGeometry(
         blocked=[[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]],
         bottlenecks=[((0.0, 0.0), (100.0, 0.0), 3)],
-        corridors=[[(0.0, 0.0), (50.0, 50.0)]],
-        stubs=[[(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)]],
+        corridors=[CorridorPath([(0.0, 0.0), (50.0, 50.0)], [(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)])],
     )
 
     summary = write_layout(chip, tmp_path / "plan.gds", planning=geometry)

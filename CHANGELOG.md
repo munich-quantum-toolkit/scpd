@@ -17,8 +17,8 @@ releases may include breaking changes.
   partition borders and writes `04-corridor.fb`, which `plot` and `render` can
   draw. The plan reports a failure if any connection has no route. Corridor
   rejects Capacity artifacts whose partition outlines cover blocked cells or
-  whose border samples do not join the stated partitions ([#168])
-  ([**@FeldmeierMichael**], [**@marcelwa**])
+  reserved port approaches, or whose border samples do not join the stated
+  partitions ([#168]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - 📝 Add a reference of every `config.toml` key ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory and

@@ -40,6 +40,9 @@ using design::Problems;
  * partition than it has crossings, or neither for a connection without a
  * way, and a corridor with a way has a source and a target.
  *
+ * The check reads one artifact. Corridor border indices refer to the Capacity
+ * plan, and Corridor entries follow the connections of the Assignment.
+ *
  * @param artifact The artifact to check.
  * @return A problem for an empty producer, one for a missing output or an
  * unknown output type, and every other problem found, empty when the artifact

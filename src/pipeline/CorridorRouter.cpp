@@ -216,68 +216,77 @@ struct SearchProgress {
          (first == border.second && second == border.first);
 }
 
+/// Rebuilds crossing slots from the borders recorded by Capacity.
+///
+/// @throws std::invalid_argument If a border does not separate its two
+/// partitions or offers a different number of slots than its budget.
+[[nodiscard]] std::vector<Slot>
+slotsOf(const CapacityPlanT& plan, const CapacityScene& scene,
+        const std::span<const PartitionLabel> labels, const double pitch,
+        const Report& report) {
+  std::vector<Slot> slots;
+  const auto& detail = scene.detail;
+  std::size_t samples = 0;
+  for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
+    const auto* entry = plan.borders[index].get();
+    if (entry == nullptr) {
+      throw std::invalid_argument(
+          std::format("the capacity plan has no border {}", index));
+    }
+    const auto& border = *entry;
+    grid::PartitionBorder geometry{.first = checkedLabel(border.first),
+                                   .second = checkedLabel(border.second),
+                                   .samples = {}};
+    const auto borderError = [&] {
+      return std::invalid_argument(
+          std::format("border {} of the capacity plan does not separate "
+                      "partitions {} and {}",
+                      index, border.first, border.second));
+    };
+    if (geometry.first == geometry.second) {
+      throw borderError();
+    }
+    geometry.samples.reserve(border.samples.size());
+    for (const auto& sample : border.samples) {
+      if (samples++ % 1024 == 0) {
+        report.progress("building crossing slots", "", index,
+                        plan.borders.size());
+      }
+      const auto corner = checkedCorner(detail, sample, "border sample");
+      auto& point =
+          geometry.samples.emplace_back(onGrid(corner.x()), onGrid(corner.y()));
+      if (!separates(detail, labels, geometry, point)) {
+        throw borderError();
+      }
+    }
+    const auto positions = crossingSlots(geometry, scene, pitch);
+    if (positions.size() != border.budget) {
+      throw std::invalid_argument(std::format(
+          "border {} between partitions {} and {} offers {} crossing slots "
+          "and the plan gives it a budget of {}; the plan was made with "
+          "another crossing pitch or by another version of mqt-scpd, so run "
+          "the capacity step again",
+          index, border.first, border.second, positions.size(), border.budget));
+    }
+    for (const auto& position : positions) {
+      slots.push_back({.place = {.x = position.x(), .y = position.y()},
+                       .first = geometry.first,
+                       .second = geometry.second,
+                       .border = index});
+    }
+  }
+  return slots;
+}
+
 /// The partition graph of one run, with the wires committed to it.
 class Corridors {
 public:
-  /// Builds the graph of a plan.
-  ///
-  /// @throws std::invalid_argument If a border does not separate its two
-  /// partitions or offers a different number of slots than its budget.
-  Corridors(const CapacityPlanT& plan, const CapacityScene& scene,
-            const std::span<const PartitionLabel> labels, const double pitch,
-            const Report& report)
-      : detailGrid(scene.detail) {
-    const auto& detail = scene.detail;
-    std::size_t samples = 0;
-    for (std::uint32_t index = 0; index < plan.borders.size(); ++index) {
-      const auto* entry = plan.borders[index].get();
-      if (entry == nullptr) {
-        throw std::invalid_argument(
-            std::format("the capacity plan has no border {}", index));
-      }
-      const auto& border = *entry;
-      grid::PartitionBorder geometry{.first = checkedLabel(border.first),
-                                     .second = checkedLabel(border.second),
-                                     .samples = {}};
-      const auto borderError = [&] {
-        return std::invalid_argument(
-            std::format("border {} of the capacity plan does not separate "
-                        "partitions {} and {}",
-                        index, border.first, border.second));
-      };
-      if (geometry.first == geometry.second) {
-        throw borderError();
-      }
-      geometry.samples.reserve(border.samples.size());
-      for (const auto& sample : border.samples) {
-        if (samples++ % 1024 == 0) {
-          report.progress("building crossing slots", "", index,
-                          plan.borders.size());
-        }
-        const auto corner = checkedCorner(detail, sample, "border sample");
-        auto& point = geometry.samples.emplace_back(onGrid(corner.x()),
-                                                    onGrid(corner.y()));
-        if (!separates(detail, labels, geometry, point)) {
-          throw borderError();
-        }
-      }
-      const auto slots = crossingSlots(geometry, scene, pitch);
-      if (slots.size() != border.budget) {
-        throw std::invalid_argument(std::format(
-            "border {} between partitions {} and {} offers {} crossing slots "
-            "and the plan gives it a budget of {}; the plan was made with "
-            "another crossing pitch or by another version of mqt-scpd, so run "
-            "the capacity step again",
-            index, border.first, border.second, slots.size(), border.budget));
-      }
-      for (const auto& slot : slots) {
-        slotsByPartition[geometry.first].push_back(slotList.size());
-        slotsByPartition[geometry.second].push_back(slotList.size());
-        slotList.push_back({.place = {.x = slot.x(), .y = slot.y()},
-                            .first = geometry.first,
-                            .second = geometry.second,
-                            .border = index});
-      }
+  Corridors(const grid::GridMetrics& detail, std::vector<Slot> slots,
+            const double pitch, const Report& report)
+      : detailGrid(detail), slotList(std::move(slots)) {
+    for (std::size_t index = 0; index < slotList.size(); ++index) {
+      slotsByPartition[slotList[index].first].push_back(index);
+      slotsByPartition[slotList[index].second].push_back(index);
     }
     findNearby(pitch, report);
     slotOwner.assign(slotList.size(), NO_OWNER);
@@ -729,12 +738,12 @@ private:
 
 /// The tuning the stage reads.
 struct Sweeps {
-  std::uint32_t rounds = 12;
+  std::uint32_t rounds;
   /// The relaxation that the configuration asks for.
-  std::uint32_t askedRelaxation = 4;
+  std::uint32_t askedRelaxation;
   /// The relaxation that the sweeps use: the asked one, but fewer than half
   /// the connections, and at least one where two or more connections compete.
-  std::uint32_t maxRelaxation = 4;
+  std::uint32_t maxRelaxation;
 };
 
 /// Reads the tuning and limits the relaxation to fewer than half of the
@@ -748,20 +757,20 @@ struct Sweeps {
 /// other would keep it in every round.
 [[nodiscard]] Sweeps sweepsOf(const ConfigT& config,
                               const std::size_t connections) {
-  Sweeps sweeps;
-  if (config.stages != nullptr && config.stages->corridor != nullptr) {
-    const auto& params = *config.stages->corridor;
-    sweeps.rounds = params.rounds;
-    sweeps.askedRelaxation = params.max_relaxation;
-  }
-  if (sweeps.rounds == 0) {
-    throw std::invalid_argument("corridor rounds must be at least 1");
+  const flatbuffers::config::CorridorParamsT defaults;
+  const auto& params =
+      config.stages != nullptr && config.stages->corridor != nullptr
+          ? *config.stages->corridor
+          : defaults;
+  if (params.rounds == 0) {
+    throw std::invalid_argument("stages.corridor: rounds must be at least one");
   }
   const auto limit =
       connections < 2 ? 0 : std::max<std::size_t>(1, (connections - 1) / 2);
-  sweeps.maxRelaxation = static_cast<std::uint32_t>(
-      std::min<std::size_t>(sweeps.askedRelaxation, limit));
-  return sweeps;
+  return {.rounds = params.rounds,
+          .askedRelaxation = params.max_relaxation,
+          .maxRelaxation = static_cast<std::uint32_t>(
+              std::min<std::size_t>(params.max_relaxation, limit))};
 }
 
 /// Checks that every connection of an assignment names a port of the chip.
@@ -810,7 +819,8 @@ void requireSameGrid(const CapacityPlanT& plan,
   }
 }
 
-/// Checks that each partition is four-connected and contains only free cells.
+/// Checks that each partition is four-connected and avoids blocked and
+/// reserved cells.
 void requireConnectedLabels(const std::span<const PartitionLabel> labels,
                             const CapacityScene& scene, const Report& report) {
   const auto& detail = scene.detail;
@@ -852,6 +862,11 @@ void requireConnectedLabels(const std::span<const PartitionLabel> labels,
       if (scene.blocked.test(cell)) {
         throw std::invalid_argument(std::format(
             "partition {} of the capacity plan covers a blocked cell", label));
+      }
+      if (scene.reserved.test(cell)) {
+        throw std::invalid_argument(std::format(
+            "partition {} of the capacity plan covers a reserved port approach",
+            label));
       }
       const auto x = cell % detail.width;
       if (x > 0) {
@@ -992,7 +1007,10 @@ public:
         std::ranges::count_if(requests, [](const Request& request) {
           return !request.hasEndpoints();
         }));
-    Corridors corridors(capacity, scene, labels, crossingPitch(config), report);
+    const auto pitch = crossingPitch(config);
+    Corridors corridors(scene.detail,
+                        slotsOf(capacity, scene, labels, pitch, report), pitch,
+                        report);
 
     if (report.wants(Detail::Steps)) {
       report.line(

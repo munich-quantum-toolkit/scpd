@@ -108,7 +108,9 @@ See {doc}`terminal_output` for destinations, failure recovery, and verbosity.
 that the obstacles match for every chip. Port labels use layer 10, with the port
 role as the datatype. Planning layers start at 20. Key layers include
 `plan.partition` (21), `plan.assignment` (28), `plan.corridor` (30), `plan.slot`
-(31), `plan.feedline` (32), `plan.blocked` (33), and `plan.budget` (34).
+(31), `plan.feedline` (32), `plan.blocked` (33), and `plan.budget` (34). Layer
+30 contains the coarse routes and separate paths that illustrate the approaches
+to their target ports.
 
 ## What the Current Release Does
 

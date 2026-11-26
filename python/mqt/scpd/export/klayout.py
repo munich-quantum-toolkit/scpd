@@ -208,10 +208,11 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
     if len(planning.ring) >= 2:
         top.shapes(layer("ring")).insert(path([*planning.ring, planning.ring[0]]))
         written += 1
-    for route in [*planning.corridors, *planning.stubs]:
-        if len(route) >= 2:
-            top.shapes(layer("corridors")).insert(path(route))
-            written += 1
+    for route in planning.corridors:
+        for points in (route.points, route.approach):
+            if len(points) >= 2:
+                top.shapes(layer("corridors")).insert(path(points))
+                written += 1
     for x, y in planning.slots:
         top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))
         written += 1

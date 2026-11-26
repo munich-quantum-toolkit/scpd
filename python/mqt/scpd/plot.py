@@ -24,7 +24,6 @@ not needed.
 from __future__ import annotations
 
 import json
-from collections import defaultdict, deque
 from itertools import pairwise, starmap
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
@@ -352,24 +351,18 @@ def _planning_layers(
             for x, y in [to_view(px, py)]
         )
         parts.append(f'<g class="l-slot">{ticks}</g>')
-    if planning.corridors or planning.stubs:
-        # A corridor continues along the approach of its target port, in one line whose turns into
-        # the port are rounded. Several corridors can end at the same point, so each point keeps its
-        # approaches in the order of the corridors, and each corridor takes the next one.
-        stubs: dict[tuple[float, float], deque[list[tuple[float, float]]]] = defaultdict(deque)
-        for stub in planning.stubs:
-            stubs[stub[0]].append(stub)
-        data = ""
-        for route in planning.corridors:
-            waiting = stubs.get(route[-1])
-            if not waiting:
-                data += polyline(route)
-                continue
-            stub = waiting.popleft()
-            data += _rounded(
-                list(starmap(to_view, [*route, *stub[1:]])), first_turn=len(route) - 1, radius=_STUB_RADIUS
+    if planning.corridors:
+        # Round the turns where a route continues along its port approach.
+        data = "".join(
+            _rounded(
+                list(starmap(to_view, [*route.points, *route.approach[1:]])),
+                first_turn=len(route.points) - 1,
+                radius=_STUB_RADIUS,
             )
-        data += "".join(polyline(stub) for waiting in stubs.values() for stub in waiting)
+            if route.approach
+            else polyline(route.points)
+            for route in planning.corridors
+        )
         group("corridor", data, cased=True)
     if planning.launchers:
         circles = "".join(

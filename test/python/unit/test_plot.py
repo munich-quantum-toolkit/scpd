@@ -27,7 +27,7 @@ from mqt.scpd.flatbuffers.design.Port import PortT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
-from mqt.scpd.planning import Feedline, PlanningGeometry
+from mqt.scpd.planning import CorridorPath, Feedline, PlanningGeometry
 from mqt.scpd.plot import FEEDLINE_COLOR, METAL_FILL, PARTITION_TONES, PORT_COLOR, PlotError, layout_svg, simplify
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "mini"
@@ -162,7 +162,7 @@ def test_a_planning_stage_is_drawn_over_the_chip_on_layers_of_its_own() -> None:
         bottlenecks=[((0.0, 0.0), (10.0, 0.0), 3)],
         inner=[((0.0, 0.0), (50.0, 50.0))],
         assignments=[((50.0, 50.0), (100.0, 0.0))],
-        corridors=[[(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)]],
+        corridors=[CorridorPath([(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)])],
         slots=[(50.0, 50.0)],
     )
 
@@ -272,8 +272,7 @@ def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
     """
     geometry = PlanningGeometry(
         borders=[[(0.0, 50.0), (100.0, 50.0)]],
-        corridors=[[(0.0, 0.0), (50.0, 50.0)]],
-        stubs=[[(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)]],
+        corridors=[CorridorPath([(0.0, 0.0), (50.0, 50.0)], [(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)])],
     )
 
     svg = layout_svg(_mini(), stage="corridor", planning=geometry)
@@ -294,13 +293,12 @@ def test_the_corridors_are_solid_and_the_ground_under_them_light() -> None:
     assert "svg.corridor g.l-border>path" in style.text
 
 
-def test_corridors_that_end_at_one_point_each_continue_along_their_stub() -> None:
-    """Two corridors that end at the same point both join their own stub in one line with rounded turns."""
+def test_corridors_that_share_an_endpoint_keep_their_own_approaches() -> None:
+    """Only the second route continues along its port approach."""
     geometry = PlanningGeometry(
-        corridors=[[(0.0, 0.0), (50.0, 50.0)], [(100.0, 0.0), (50.0, 50.0)]],
-        stubs=[
-            [(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)],
-            [(50.0, 50.0), (50.0, 400.0), (-500.0, 400.0)],
+        corridors=[
+            CorridorPath([(0.0, 0.0), (50.0, 50.0)]),
+            CorridorPath([(100.0, 0.0), (50.0, 50.0)], [(50.0, 50.0), (50.0, 400.0), (-500.0, 400.0)]),
         ],
     )
 
@@ -309,8 +307,10 @@ def test_corridors_that_end_at_one_point_each_continue_along_their_stub() -> Non
     root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
     (layer,) = (group for group in root.iter(f"{SVG}g") if group.get("class") == "l-corridor")
     data = layer.findall(f"{SVG}path")[0].get("d") or ""
-    assert data.count("M") == 2
-    assert data.count("Q") == 4
+    empty, first, second = data.split("M")
+    assert not empty
+    assert "Q" not in first
+    assert second.count("Q") == 2
 
 
 def test_the_panel_lists_the_layers_the_picture_carries() -> None:

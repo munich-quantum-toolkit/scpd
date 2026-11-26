@@ -418,7 +418,7 @@ def test_the_corridor_picture_draws_the_feedlines_of_its_assignment(run: RunDire
 
     assert assigned.feedlines
     assert routed.feedlines == assigned.feedlines
-    assert [route[0] for route in routed.corridors] == [feed for _, feed in assigned.assignments]
+    assert [route.points[0] for route in routed.corridors] == [feed for _, feed in assigned.assignments]
     assert not planning_geometry(corridor, chip, "corridor").feedlines
     with pytest.raises(PlanningError, match="not an assignment"):
         planning_geometry(corridor, chip, "corridor", assignment=run.artifact("capacity").read_bytes())
@@ -441,9 +441,25 @@ def test_the_corridor_picture_draws_every_route_over_the_partitions(run: RunDire
     )
 
     assert len(geometry.corridors) == 5
-    assert all(len(route) >= 2 for route in geometry.corridors)
+    assert all(len(route.points) >= 2 for route in geometry.corridors)
     assert geometry.slots
     assert geometry.partitions
+
+
+def test_a_corridor_picture_rejects_slots_for_an_unknown_border(run: RunDirectory) -> None:
+    """Each crossing slot in an overlay must refer to a border of the Capacity plan."""
+    capacity = run.artifact("capacity").read_bytes()
+    plan = read_artifact(capacity).output
+    artifact = read_artifact(run.artifact("corridor").read_bytes())
+    routing = artifact.output
+    assert isinstance(plan, CapacityPlanT)
+    assert isinstance(routing, CorridorRoutingT)
+    assert routing.slots
+    assert routing.slots[0] is not None
+    routing.slots[0].border = len(plan.borders or [])
+
+    with pytest.raises(PlanningError, match=r"border .* is outside the Capacity plan"):
+        planning_geometry(write_artifact(artifact), chip_of(run), "corridor", capacity=capacity)
 
 
 @pytest.mark.parametrize("partitions", [[0], [0, 1]], ids=["one", "two"])
@@ -468,7 +484,8 @@ def test_a_corridor_through_the_first_partition_is_read_and_drawn(run: RunDirect
     assert read is not None
     assert read.partitions is not None
     assert [int(partition) for partition in read.partitions] == partitions
-    assert geometry.corridors == [[(0.0, 0.0), *((point.x, point.y) for point in crossings), (100.0, 0.0)]]
+    (route,) = geometry.corridors
+    assert route.points == [(0.0, 0.0), *((point.x, point.y) for point in crossings), (100.0, 0.0)]
 
 
 def test_every_routed_wire_approaches_its_target_port(run: RunDirectory) -> None:
@@ -482,25 +499,25 @@ def test_every_routed_wire_approaches_its_target_port(run: RunDirectory) -> None
     chosen = read_artifact(assignment).output
     assert isinstance(chosen, AssignmentT)
     ports = chip.ports or []
-    targets = set()
+    targets = []
     for connection in chosen.connections or []:
         assert connection is not None
         assert connection.target is not None
         center = ports[connection.target.index].center
         assert center is not None
-        targets.add((center.x, center.y))
-    assert len(geometry.stubs) == len(geometry.corridors)
-    assert all(stub[0] == route[-1] for stub, route in zip(geometry.stubs, geometry.corridors, strict=True))
-    assert all(stub[-1] in targets for stub in geometry.stubs)
+        targets.append((center.x, center.y))
+    assert all(route.approach[0] == route.points[-1] for route in geometry.corridors)
+    assert [route.approach[-1] for route in geometry.corridors] == targets
     # The last leg runs along the direction of the port.
     by_center = {(port.center.x, port.center.y): port for port in ports if port is not None and port.center is not None}
-    for stub in geometry.stubs:
+    for route in geometry.corridors:
+        stub = route.approach
         if len(stub) == 3:
             angle = math.radians(by_center[stub[-1]].orientation)
             dx, dy = stub[1][0] - stub[2][0], stub[1][1] - stub[2][1]
             assert abs(dx * math.sin(angle) - dy * math.cos(angle)) < 1e-6
     # Without the assignment no corridor names its port.
-    assert not planning_geometry(corridor, chip, "corridor").stubs
+    assert all(not route.approach for route in planning_geometry(corridor, chip, "corridor").corridors)
 
 
 def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:

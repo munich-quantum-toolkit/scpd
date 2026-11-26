@@ -169,12 +169,12 @@ publication.
 
 Each `-v` adds lines to the ones below it.
 
-| Option | What the run shows in addition                                                              |
-| ------ | ------------------------------------------------------------------------------------------- |
-| none   | The header, the result and the rounds of each stage, the artifact line and the closing line |
-| `-v`   | The parameters of a stage, its steps, the size of each model and how each solve ended       |
-| `-vv`  | One line per item, such as a wire, a feedline chain or a connection                         |
-| `-vvv` | The log of HiGHS; the Gurobi backend solves without a log                                   |
+| Option | What the run shows in addition                                                               |
+| ------ | -------------------------------------------------------------------------------------------- |
+| none   | The header, stage results, round summaries when present, artifact lines and the closing line |
+| `-v`   | The parameters of a stage, its steps, the size of each model and how each solve ended        |
+| `-vv`  | One line per item, such as a wire, a feedline chain or a connection                          |
+| `-vvv` | The log of HiGHS; the Gurobi backend solves without a log                                    |
 
 Warnings and failures show at every level. For example, `-v` prints Capacity's
 individual steps.
@@ -317,10 +317,11 @@ A stage reports through the `Report` it is given and never prints.
 
 1. Report the result exactly once, through `Report::result`. A stage that can
    fail on part of its work passes the number of fails as well.
-2. Report each round of a stage that works in rounds through `Report::entry`,
-   with the label `round <n> forward` or `round <n> backward`, counted from 1. A
-   pass after the rounds that changes the result gets an entry of its own, such
-   as `back to round <n>` and `free slots` in the Corridor stage.
+2. Use `Report::entry` for each round and each later pass that changes the
+   result. Corridor labels its sweeps `round <n> forward` and
+   `round <n> backward`, counted from 1. It reports `back to round <n>` when it
+   restores an earlier result and `free slots` when the final pass places
+   another route.
 3. Build each figure with `counted`, `verdict` or one of the forms above, and
    join figures with `FIGURE_SEPARATOR`.
 4. Report the steps, the parameters and the solves at `Detail::Steps`, and one
@@ -335,9 +336,10 @@ A stage reports through the `Report` it is given and never prints.
    add its artifact to `STAGE_FILES`, the configuration sections it reads to
    `STEP_INPUTS`, the artifacts it reads to `ARTIFACT_INPUTS`, and its core call
    to `RunDirectory.run_stage`. If `plot` and `render` draw the stage, add it to
-   `STAGES` in `python/mqt/scpd/plot.py`, name the artifacts its picture reads
-   in `planning_geometry` in `python/mqt/scpd/planning.py` and in `_drawn` in
-   `python/mqt/scpd/cli.py`, and add its GDS layers to `PLANNING_LAYERS` in
+   `STAGES` in `python/mqt/scpd/plot.py`. Set its layer visibility and style
+   there, and add new layers to `_LAYERS`. Name the artifacts the view reads in
+   `planning_geometry` in `python/mqt/scpd/planning.py` and in `_drawn` in
+   `python/mqt/scpd/cli.py`. Add its GDS layers to `PLANNING_LAYERS` in
    `python/mqt/scpd/export/klayout.py`.
 7. Extend the expected run in `test/python/unit/test_cli.py`, and add the mark
    to the table of this page.
