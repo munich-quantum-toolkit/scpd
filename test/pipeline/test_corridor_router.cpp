@@ -21,6 +21,7 @@
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
 #include "mqt-scpd/io/Artifacts.hpp"
+#include "mqt-scpd/io/Chip.hpp"
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CorridorRouter.hpp"
