@@ -12,6 +12,7 @@ releases may include breaking changes.
 
 ### Added
 
+- 👷 Enable testing on Python 3.15 ([#187]) ([**@denialhaag**])
 - ✨ Add Corridor as the default final stage. It routes connections through
   partition borders and writes `04-corridor.fb`, which `plot` and `render` can
   draw. The plan reports a failure if any connection has no route. Corridor
@@ -124,6 +125,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#187]: https://github.com/munich-quantum-toolkit/scpd/pull/187
 [#178]: https://github.com/munich-quantum-toolkit/scpd/pull/178
 [#168]: https://github.com/munich-quantum-toolkit/scpd/pull/168
 [#167]: https://github.com/munich-quantum-toolkit/scpd/pull/167
