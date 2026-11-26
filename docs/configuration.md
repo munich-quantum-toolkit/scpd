@@ -217,11 +217,45 @@ Corridor checks wire intersections with straight segments inside each partition.
 This check is exact for convex partitions. Routing can leave a connection
 unrouted even if a feasible route exists.
 
+## `[stages.detail]`
+
+| Key                      | Default | Meaning                                                                         |
+| ------------------------ | ------- | ------------------------------------------------------------------------------- |
+| `router`                 | `""`    | The implementation of the step; empty takes `pixel-astar`                       |
+| `corridor_spacings`      | `4`     | How far a wire may move to either side of its path, in wire spacings            |
+| `rounds`                 | `30`    | Maximum number of sweeps under the clearance rule                               |
+| `max_relaxation`         | `30`    | Maximum number of neighboring wires a failed wire may release in a sweep        |
+| `obstacle_penalty_reach` | `185.0` | How far the cost of running beside an obstacle reaches; `0` turns it off        |
+| `obstacle_penalty`       | `10`    | The cost of a step right beside an obstacle, against 10 for a step; at most 255 |
+| `orderings`              | `16`    | How many orders of the pieces of one partition the seed tries                   |
+
+Detail draws every wire as a path of eight-connected cells on the detail grid.
+No two wires share a cell or cross. It first draws a seed: each corridor is cut
+at its crossings into one piece per partition, and each piece is searched inside
+its partition. Detail tries up to `orderings` orders of the pieces of a
+partition and keeps the order that draws the most pieces. It moves the wires in
+the way of a piece without a path, and searches a wire without a path again from
+end to end. The wires of the inner circuit have no corridor. Detail searches
+them last, over the space that the ring leaves.
+
+Detail then keeps the clearance of `min_wire_spacing` between every two wires,
+the inner circuit included. On the detail grid, the clearance is one cell less
+than the cells that `min_wire_spacing` spans, rounded up. Detail sweeps the
+wires forward and backward and routes again each wire that comes too close to
+another, inside a band of `corridor_spacings` wire spacings around its path. A
+wire without a path there releases up to `max_relaxation` neighbors, first along
+the sweep and then against it, and searches again. Sweeps stop when every wire
+keeps the clearance.
+
+Detail counts a fail for each connection with a corridor but without a path, and
+for each wire that comes within the clearance of another wire. A connection
+without a corridor gets an empty path and counts as a Corridor fail only.
+
 ## `[run]`
 
-| Key          | Default | Meaning                                                                                   |
-| ------------ | ------- | ----------------------------------------------------------------------------------------- |
-| `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign` or `corridor`; empty runs them all |
+| Key          | Default | Meaning                                                                                             |
+| ------------ | ------- | --------------------------------------------------------------------------------------------------- |
+| `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign`, `corridor` or `detail`; empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each
 step. `--stop-after` replaces `stop_after` for one run.

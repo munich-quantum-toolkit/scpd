@@ -12,13 +12,19 @@ releases may include breaking changes.
 
 ### Added
 
+- ✨ Add Detail as the default final stage. It draws every wire on the detail
+  grid, keeps the wire clearance between every two wires, and writes
+  `05-detail.fb`, which `plot` and `render` can draw. The plan reports a failure
+  for every corridor that Detail cannot draw and for every wire that comes
+  within the clearance of another ([#188]) ([**@FeldmeierMichael**],
+  [**@marcelwa**])
 - 👷 Enable testing on Python 3.15 ([#187]) ([**@denialhaag**])
-- ✨ Add Corridor as the default final stage. It routes connections through
-  partition borders and writes `04-corridor.fb`, which `plot` and `render` can
-  draw. The plan reports a failure if any connection has no route. Corridor
-  rejects Capacity artifacts whose partition outlines cover blocked cells or
-  reserved port approaches, or whose border samples do not join the stated
-  partitions ([#168]) ([**@FeldmeierMichael**], [**@marcelwa**])
+- ✨ Add the Corridor stage. It routes connections through partition borders and
+  writes `04-corridor.fb`, which `plot` and `render` can draw. The plan reports
+  a failure if any connection has no route. Corridor rejects Capacity artifacts
+  whose partition outlines cover blocked cells or reserved port approaches, or
+  whose border samples do not join the stated partitions ([#168])
+  ([**@FeldmeierMichael**], [**@marcelwa**])
 - 📝 Add a reference of every `config.toml` key ([#166])
   ([**@FeldmeierMichael**])
 - ✨ Add `mqt-scpd plan`, which runs the planning steps into a run directory and
@@ -125,6 +131,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#188]: https://github.com/munich-quantum-toolkit/scpd/pull/188
 [#187]: https://github.com/munich-quantum-toolkit/scpd/pull/187
 [#178]: https://github.com/munich-quantum-toolkit/scpd/pull/178
 [#168]: https://github.com/munich-quantum-toolkit/scpd/pull/168

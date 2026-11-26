@@ -111,6 +111,34 @@ void validateWires(
   }
 }
 
+/// A wire runs over the cells of its path, so two consecutive cells differ by
+/// at most one along each axis.
+void validateDetailWires(
+    const std::vector<std::unique_ptr<flatbuffers::artifacts::DetailWireT>>&
+        wires,
+    const std::string_view what, Problems& problems) {
+  for (std::size_t index = 0; index < wires.size(); ++index) {
+    if (wires[index] == nullptr) {
+      problems.push_back(std::format("{} {}: missing", what, index));
+      continue;
+    }
+    const auto& path = wires[index]->path;
+    for (std::size_t step = 1; step < path.size(); ++step) {
+      const auto& before = path[step - 1];
+      const auto& after = path[step];
+      const auto dx =
+          std::max(before.x(), after.x()) - std::min(before.x(), after.x());
+      const auto dy =
+          std::max(before.y(), after.y()) - std::min(before.y(), after.y());
+      if (dx > 1 || dy > 1) {
+        problems.push_back(std::format("{} {} jumps from ({}, {}) to ({}, {})",
+                                       what, index, before.x(), before.y(),
+                                       after.x(), after.y()));
+      }
+    }
+  }
+}
+
 /// The capacity chains are trees stored flat, and the later stages walk them
 /// by index. Every index has to name a node, and no walk may come back to a
 /// node it left, or the walk would not end. A target lies on one chain only,
@@ -437,8 +465,15 @@ Problems validate(const ArtifactT& artifact) {
     }
     break;
   }
-  case StageOutput::DetailRouting:
+  case StageOutput::DetailRouting: {
+    const auto& routing = *artifact.output.AsDetailRouting();
+    if (routing.grid == nullptr) {
+      problems.emplace_back("grid: missing");
+    }
+    validateDetailWires(routing.wires, "wire", problems);
+    validateDetailWires(routing.inner, "inner wire", problems);
     break;
+  }
   }
   return problems;
 }

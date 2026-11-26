@@ -58,6 +58,11 @@ PLANNING_LAYERS: dict[str, tuple[int, int, str]] = {
     "feedlines": (32, 0, "plan.feedline"),
     "blocked": (33, 0, "plan.blocked"),
     "budgets": (34, 0, "plan.budget"),
+    # The Detail stage: the wires by kind, and the clearance they keep.
+    "wires": (40, 0, "route.wire"),
+    "resonators": (41, 0, "route.resonator"),
+    "inner_wires": (42, 0, "route.inner-wire"),
+    "clearance": (44, 0, "route.clearance"),
 }
 
 #: The width of a planning line, in layout units. A path needs a width to be a shape at all; this
@@ -212,6 +217,22 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         for points in (route.points, route.approach):
             if len(points) >= 2:
                 top.shapes(layer("corridors")).insert(path(points))
+                written += 1
+    for name, routes in (
+        ("wires", planning.wires),
+        ("resonators", planning.resonators),
+        ("inner_wires", planning.inner_wires),
+    ):
+        for route in routes:
+            if len(route) >= 2:
+                top.shapes(layer(name)).insert(path(route))
+                written += 1
+    # The clearance every wire keeps, as a path one clearance wide. Two wires closer than that are
+    # two of these paths that overlap, which a boolean on this layer finds.
+    if planning.clearance > 0:
+        for route in (*planning.wires, *planning.resonators, *planning.inner_wires):
+            if len(route) >= 2:
+                top.shapes(layer("clearance")).insert(kdb.DPath(list(starmap(kdb.DPoint, route)), planning.clearance))
                 written += 1
     for x, y in planning.slots:
         top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))

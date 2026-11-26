@@ -101,6 +101,10 @@ threads = 4
 [stages.corridor]
 rounds = 6
 
+[stages.detail]
+corridor_spacings = 3
+obstacle_penalty_reach = 90.0
+
 [run]
 stop_after = "assign"
 """
@@ -246,6 +250,16 @@ def test_the_stage_and_run_sections_default_when_the_file_leaves_them_out() -> N
     assert stages.solver.threads == 0
     assert stages.corridor is not None
     assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (12, 4)
+    assert stages.detail is not None
+    assert (
+        stages.detail.router,
+        stages.detail.corridorSpacings,
+        stages.detail.rounds,
+        stages.detail.maxRelaxation,
+        stages.detail.obstaclePenalty,
+        stages.detail.orderings,
+    ) == ("", 4, 30, 30, 10, 16)
+    assert stages.detail.obstaclePenaltyReach == pytest.approx(185.0)
     assert config.run is not None
     assert (config.run.stopAfter,) == ("",)
 
@@ -268,6 +282,9 @@ def test_a_stage_section_sets_what_it_names() -> None:
     assert stages.solver.threads == 4
     assert stages.corridor is not None
     assert (stages.corridor.rounds, stages.corridor.maxRelaxation) == (6, 4)
+    assert stages.detail is not None
+    assert (stages.detail.corridorSpacings, stages.detail.rounds) == (3, 30)
+    assert stages.detail.obstaclePenaltyReach == pytest.approx(90.0)
     assert config.run is not None
     assert config.run.stopAfter == "assign"
 
@@ -301,7 +318,7 @@ def test_the_grid_reads_the_detail_factor() -> None:
     ("text", "message"),
     [
         (MANUAL + "\n[stages.capacity]\nsloppy = 1\n", "[stages.capacity] has the unknown key 'sloppy'"),
-        (MANUAL + "\n[stages.detail]\nrounds = 3\n", "[stages] has the unknown key 'detail'"),
+        (MANUAL + "\n[stages.final]\nrounds = 3\n", "[stages] has the unknown key 'final'"),
         (MANUAL + "\n[stages.global]\ninternal_bridges = 1\n", "internal_bridges must be true or false"),
         (MANUAL + "\n[stages.assignment]\nlauncher_target = -1\n", "between 0 and 4294967295"),
         (MANUAL + "\n[stages.solver]\nthreads = -2\n", "[stages.solver] threads must be between 0 and 4294967295"),
@@ -316,7 +333,7 @@ def test_the_grid_reads_the_detail_factor() -> None:
         ),
         (
             MANUAL + '\n[run]\nstop_after = "outer"\n',
-            "[run] stop_after must be empty or one of 'capacity', 'global', 'assign', 'corridor'",
+            "[run] stop_after must be empty or one of 'capacity', 'global', 'assign', 'corridor', 'detail'",
         ),
         (MANUAL + "\n[run]\nstop = 1\n", "[run] has the unknown key 'stop'"),
     ],

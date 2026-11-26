@@ -327,7 +327,7 @@ def test_a_resumed_run_equals_an_uninterrupted_one(tmp_path: Path) -> None:
     resumed = RunDirectory(tmp_path / "resumed")
     resumed.prepare(CONFIG)
     run_through(resumed, ["capacity", "global"])
-    for step in ("assign", "corridor"):
+    for step in ("assign", "corridor", "detail"):
         run_through(RunDirectory(tmp_path / "resumed"), [step])
 
     for stage, name in STAGE_FILES.items():
@@ -347,7 +347,7 @@ def artifacts_of(directory: RunDirectory) -> dict[str, bytes]:
     Returns:
         The bytes of every file a step wrote.
     """
-    return {path.name: path.read_bytes() for path in directory.path.glob("0[1-4]-*")}
+    return {path.name: path.read_bytes() for path in directory.path.glob("0[1-5]-*")}
 
 
 @pytest.mark.parametrize(

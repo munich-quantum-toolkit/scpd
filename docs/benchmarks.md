@@ -59,6 +59,7 @@ A run writes one artifact per step into its directory, in this order:
 | global   | `02-global.fb`   | Solves the inner circuit and the port ring that the assignment works on                    |
 | assign   | `03-assign.fb`   | Assigns the ring ports to launchers and feedline chains                                    |
 | corridor | `04-corridor.fb` | Routes every connection through the partitions                                             |
+| detail   | `05-detail.fb`   | Draws every wire on the detail grid and keeps the wire clearance between every two wires   |
 
 Global determines which bridge ports join the outer ring. Assignment uses that
 ring. The run saves its inputs as `config.toml` and `00-chip.json`. Check those
@@ -85,6 +86,7 @@ Use `plot` for SVG or `render` for GDSII or OASIS.
 
 ```console
 mqt-scpd plot --run-dir runs/33q --stage corridor -o 33q-corridor.svg
+mqt-scpd plot --run-dir runs/33q --stage detail -o 33q-detail.svg
 mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 ```
 
@@ -93,11 +95,13 @@ inner wires. Assignment adds the feed points and feedline chains. Dashed lines
 connect ring ports to their feeds. A square marks a chain termination. All views
 use the blocked cells saved by Capacity. Corridor shows routes from the exact
 feed points to the target cells, with an illustrative approach to each port. It
-also shows the available crossing slots. In a browser, use the SVG's **Layers**
-panel to show or hide individual layers.
+also shows the available crossing slots. Detail draws every wire as a coplanar
+waveguide over a band as wide as the clearance that the stage keeps. Two bands
+that overlap mark two wires that come too close. In a browser, use the SVG's
+**Layers** panel to show or hide individual layers.
 
-SVGs omit gates. The Capacity, Assignment, and Corridor views also omit the
-borders of fully enclosed partitions.
+SVGs omit gates. The Capacity, Assignment, Corridor, and Detail views also omit
+the borders of fully enclosed partitions.
 
 See {doc}`terminal_output` for destinations, failure recovery, and verbosity.
 
@@ -110,9 +114,10 @@ role as the datatype. Planning layers start at 20. Key layers include
 `plan.partition` (21), `plan.assignment` (28), `plan.corridor` (30), `plan.slot`
 (31), `plan.feedline` (32), `plan.blocked` (33), and `plan.budget` (34). Layer
 30 contains the coarse routes and separate paths that illustrate the approaches
-to their target ports.
+to their target ports. Detail writes `route.wire` (40), `route.resonator` (41),
+`route.inner-wire` (42), and `route.clearance` (44).
 
 ## What the Current Release Does
 
-MQT SCPD currently plans through Corridor. The published routed layouts and
-Table I metrics come from the research prototype.
+MQT SCPD currently plans through Detail. The published routed layouts and Table
+I metrics come from the research prototype.

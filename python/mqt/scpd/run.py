@@ -77,6 +77,7 @@ STAGE_FILES: dict[str, str] = {
     "global": "02-global.fb",
     "assign": "03-assign.fb",
     "corridor": "04-corridor.fb",
+    "detail": "05-detail.fb",
 }
 
 
@@ -87,6 +88,7 @@ STEP_INPUTS: dict[str, tuple[str, ...]] = {
     "global": ("[ports]", "[design_rules]", "[grid]", "[stages.global]", "[stages.solver]", RUN_CHIP),
     "assign": ("[ports]", "[design_rules]", "[grid]", "[stages.assignment]", "[stages.solver]", RUN_CHIP),
     "corridor": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", "[stages.corridor]", RUN_CHIP),
+    "detail": ("[ports]", "[design_rules]", "[grid]", "[stages.capacity]", "[stages.detail]", RUN_CHIP),
 }
 
 
@@ -96,6 +98,7 @@ ARTIFACT_INPUTS: dict[str, tuple[str, ...]] = {
     "global": ("capacity",),
     "assign": ("capacity", "global"),
     "corridor": ("capacity", "assign"),
+    "detail": ("capacity", "global", "assign", "corridor"),
 }
 
 
@@ -140,6 +143,7 @@ def input_digests(config: ConfigT, chip: bytes) -> dict[str, str]:
         "[stages.assignment]": stages.assignment if stages is not None else None,
         "[stages.solver]": stages.solver if stages is not None else None,
         "[stages.corridor]": stages.corridor if stages is not None else None,
+        "[stages.detail]": stages.detail if stages is not None else None,
     }
     digests = {
         name: hashlib.sha256(json.dumps(_plain(section), sort_keys=True).encode("utf-8")).hexdigest()
@@ -681,6 +685,9 @@ class RunDirectory:
             "global": lambda: pyscpd.route_global(chip, inputs[0], packed, producer, reporter, level),
             "assign": lambda: pyscpd.assign(chip, inputs[0], inputs[1], packed, producer, reporter, level),
             "corridor": lambda: pyscpd.route_corridor(chip, inputs[0], inputs[1], packed, producer, reporter, level),
+            "detail": lambda: pyscpd.route_detail(
+                chip, inputs[0], inputs[1], inputs[2], inputs[3], packed, producer, reporter, level
+            ),
         }
         if stage not in calls:
             msg = f"no core call runs the {stage} step"

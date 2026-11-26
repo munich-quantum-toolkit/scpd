@@ -219,7 +219,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         RunError: If the artifact of the stage is missing from the run, or if it or an earlier
             artifact was made from inputs the run no longer holds.
     """
-    if STAGES[args.stage] not in {"phase 1", "phase 3"}:
+    if args.stage != "layout" and args.stage not in PLANNING_STAGES:
         msg = f"stage '{args.stage}' arrives with {STAGES[args.stage]}"
         raise PlotError(msg)
     if args.run_dir is None:
@@ -237,6 +237,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
     data = artifact.read_bytes()
     verified = directory.check_current(args.stage, input_digests(config, chip_bytes), data=data)
     del verified[args.stage]
+    # The detail picture draws the clearance that the stage keeps around every wire.
     geometry = planning_geometry(
         data,
         decode_chip(chip_bytes),
@@ -244,6 +245,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         capacity=verified.get("capacity"),
         global_routing=verified.get("global"),
         assignment=verified.get("assign"),
+        clearance=config.rules.minWireSpacing if config.rules is not None else 0.0,
     )
     return chip_bytes, title, geometry
 

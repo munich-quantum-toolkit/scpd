@@ -90,6 +90,7 @@ TEST(ShippedRegistries, ShipOneImplementationPerStage) {
   EXPECT_EQ(assigners().names(), (std::vector<std::string>{"ordered-milp"}));
   EXPECT_EQ(corridorRouters().names(),
             (std::vector<std::string>{"partition-astar"}));
+  EXPECT_EQ(detailRouters().names(), (std::vector<std::string>{"pixel-astar"}));
 }
 
 TEST(ShippedRegistries, FallBackToTheDefaultWhenAConfigurationSelectsNothing) {
@@ -98,6 +99,7 @@ TEST(ShippedRegistries, FallBackToTheDefaultWhenAConfigurationSelectsNothing) {
   EXPECT_EQ(selectedGlobalRouter(bare), "hanan-milp");
   EXPECT_EQ(selectedAssigner(bare), "ordered-milp");
   EXPECT_EQ(selectedCorridorRouter(bare), "partition-astar");
+  EXPECT_EQ(selectedDetailRouter(bare), "pixel-astar");
 
   ConfigT empty;
   empty.stages = std::make_unique<flatbuffers::config::StageParamsT>();
@@ -108,10 +110,12 @@ TEST(ShippedRegistries, FallBackToTheDefaultWhenAConfigurationSelectsNothing) {
       std::make_unique<flatbuffers::config::AssignmentParamsT>();
   empty.stages->corridor =
       std::make_unique<flatbuffers::config::CorridorParamsT>();
+  empty.stages->detail = std::make_unique<flatbuffers::config::DetailParamsT>();
   EXPECT_EQ(selectedCapacityPlanner(empty), "watershed");
   EXPECT_EQ(selectedGlobalRouter(empty), "hanan-milp");
   EXPECT_EQ(selectedAssigner(empty), "ordered-milp");
   EXPECT_EQ(selectedCorridorRouter(empty), "partition-astar");
+  EXPECT_EQ(selectedDetailRouter(empty), "pixel-astar");
 }
 
 TEST(ShippedRegistries, HonorAConfiguredName) {
@@ -131,16 +135,20 @@ TEST(ShippedRegistries, HonorAConfiguredName) {
   config.stages->corridor =
       std::make_unique<flatbuffers::config::CorridorParamsT>();
   config.stages->corridor->router = "other-corridors";
+  config.stages->detail =
+      std::make_unique<flatbuffers::config::DetailParamsT>();
+  config.stages->detail->router = "other-details";
   EXPECT_EQ(selectedCapacityPlanner(config), "other-planner");
   EXPECT_EQ(selectedGlobalRouter(config), "other-router");
   EXPECT_EQ(selectedAssigner(config), "other-assigner");
   EXPECT_EQ(selectedCorridorRouter(config), "other-corridors");
+  EXPECT_EQ(selectedDetailRouter(config), "other-details");
 }
 
 /// The planning steps of a run that takes them all. A function rather than a
 /// constant, so that building the list cannot throw before main().
 std::vector<std::string> allSteps() {
-  return {"capacity", "global", "assign", "corridor"};
+  return {"capacity", "global", "assign", "corridor", "detail"};
 }
 
 /// Whether one of the problems starts with a given text.
@@ -161,9 +169,12 @@ TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
   config.stages->global->router = "other-router";
   config.stages->assignment->assigner = "other-assigner";
   config.stages->corridor->router = "other-corridors";
+  config.stages->detail =
+      std::make_unique<flatbuffers::config::DetailParamsT>();
+  config.stages->detail->router = "other-details";
 
   const auto problems = planProblems(test::miniChip(), config, allSteps());
-  EXPECT_EQ(problems.size(), 3U);
+  EXPECT_EQ(problems.size(), 4U);
   EXPECT_TRUE(mentions(problems,
                        "[stages.global] router 'other-router' is not a "
                        "known implementation; the registered ones "
@@ -171,6 +182,7 @@ TEST(PlanProblems, NameAnImplementationThatIsNotRegistered) {
   EXPECT_TRUE(
       mentions(problems, "[stages.assignment] assigner 'other-assigner'"));
   EXPECT_TRUE(mentions(problems, "[stages.corridor] router 'other-corridors'"));
+  EXPECT_TRUE(mentions(problems, "[stages.detail] router 'other-details'"));
   EXPECT_EQ(
       planProblems(test::miniChip(), config, {"capacity", "global"}).size(),
       1U);
@@ -327,6 +339,7 @@ TEST(PlanProblems, RefuseADetailGridAboveTheLimit) {
   EXPECT_TRUE(planProblems(test::miniChip(), config, {"global"}).empty());
   EXPECT_EQ(planProblems(test::miniChip(), config, {"assign"}).size(), 1U);
   EXPECT_EQ(planProblems(test::miniChip(), config, {"corridor"}).size(), 1U);
+  EXPECT_EQ(planProblems(test::miniChip(), config, {"detail"}).size(), 1U);
 }
 
 TEST(PlanProblems, RecommendsFinerCapacityCellsWhenHeightIsDerived) {

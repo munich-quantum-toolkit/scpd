@@ -8,8 +8,8 @@
 
 """The shapes that the planning stages produced, read back out of their artifacts.
 
-This module is the one place that knows how a capacity plan, a global routing, an assignment and a
-corridor routing turn into geometry. Both renderers use it: ``plot`` draws the shapes as SVG, and
+This module is the one place that knows how a capacity plan, a global routing, an assignment, a
+corridor routing and a detail routing turn into geometry. Both renderers use it: ``plot`` draws the shapes as SVG, and
 ``render`` writes them to GDSII or OASIS on layers of their own. Neither reaches into the
 pipeline; both read the artifacts of a run directory, so either can draw a run that stopped early.
 """
@@ -27,11 +27,13 @@ from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
+from .flatbuffers.design.AssignedRole import AssignedRole
 from .run import STAGE_FILES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
@@ -128,6 +130,17 @@ class PlanningGeometry:
     corridors: list[CorridorPath] = field(default_factory=list)
     #: Every crossing slot a border offers, taken or not.
     slots: list[Point] = field(default_factory=list)
+    #: Each plain wire of the ring as the Detail stage drew it, as the polyline through its bends.
+    wires: list[list[Point]] = field(default_factory=list)
+    #: Each resonator wire of the ring, in the same form. The assignment tells a resonator from a
+    #: plain wire.
+    resonators: list[list[Point]] = field(default_factory=list)
+    #: Each wire of the inner circuit, in the same form.
+    inner_wires: list[list[Point]] = field(default_factory=list)
+    #: The clearance that the Detail stage keeps between two wires, in layout units, or zero when
+    #: the caller names no design rule. It is ``min_wire_spacing`` converted to whole cells, which is
+    #: what the stage keeps, not the rule itself.
+    clearance: float = 0.0
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -151,6 +164,9 @@ class PlanningGeometry:
             self.corridors,
             self.slots,
             self.feedlines,
+            self.wires,
+            self.resonators,
+            self.inner_wires,
         ))
 
 
@@ -668,6 +684,82 @@ def _corridor(
         geometry.corridors.append(CorridorPath(route, approach))
 
 
+def _bends(path: list[Any], to_layout: Callable[[int, int], Point]) -> list[Point]:
+    """One drawn wire as its bends, in layout units.
+
+    A wire is stored cell by cell, and a run of cells in one direction is a straight line, so only
+    the cells where the direction changes are kept.
+
+    Returns:
+        The corners of the polyline, ends included.
+    """
+    if not path:
+        return []
+    kept = [0]
+    for index in range(1, len(path) - 1):
+        before, here, after = path[index - 1], path[index], path[index + 1]
+        if (here.x - before.x, here.y - before.y) != (after.x - here.x, after.y - here.y):
+            kept.append(index)
+    if len(path) > 1:
+        kept.append(len(path) - 1)
+    return [to_layout(path[index].x, path[index].y) for index in kept]
+
+
+def _detail_clearance(wire_spacing: float, cell: float) -> float:
+    """The clearance that the Detail stage keeps for a rule of ``wire_spacing`` on cells of ``cell``.
+
+    The rule spans ``ceil(wire_spacing / cell)`` cells, and the stage keeps one cell less than that
+    clear. As in the core, a ratio that exceeds a whole number by less than a relative 1e-12 counts
+    as that whole number.
+
+    Returns:
+        The clearance in layout units, or zero when the rule or the cell is not positive.
+    """
+    if wire_spacing <= 0 or cell <= 0:
+        return 0.0
+    ratio = wire_spacing / cell
+    return max(0, math.ceil(ratio - ratio * 1e-12) - 1) * cell
+
+
+def _resonator_slots(assignment: AssignmentT | None) -> set[int]:
+    """The connections of an assignment that carry a resonator.
+
+    Returns:
+        The indices into the connections of the assignment.
+    """
+    if assignment is None:
+        return set()
+    return {
+        index
+        for index, connection in enumerate(_entries(assignment.connections))
+        if int(connection.sourceRole or 0) == AssignedRole.ResonatorSource
+    }
+
+
+def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float, resonators: set[int]) -> None:
+    """Fill the layers a detail routing carries."""
+    grid = routing.grid
+    if grid is None or grid.origin is None:
+        return
+    geometry.clearance = _detail_clearance(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
+
+    def to_layout(x: int, y: int) -> Point:
+        # The origin of the grid is the center of cell (0, 0).
+        return (
+            float(grid.origin.x) + x * float(grid.cellWidth),
+            float(grid.origin.y) + y * float(grid.cellHeight),
+        )
+
+    for index, wire in enumerate(_entries(routing.wires)):
+        points = _bends(_entries(wire.path), to_layout)
+        if len(points) >= 2:
+            (geometry.resonators if index in resonators else geometry.wires).append(points)
+    for wire in _entries(routing.inner):
+        points = _bends(_entries(wire.path), to_layout)
+        if len(points) >= 2:
+            geometry.inner_wires.append(points)
+
+
 def _plan_of(capacity: bytes) -> CapacityPlanT:
     """The capacity plan of a run, for a stage that is drawn over it.
 
@@ -708,6 +800,7 @@ def planning_geometry(
     global_routing: bytes | None = None,
     *,
     assignment: bytes | None = None,
+    clearance: float = 0.0,
 ) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -717,11 +810,16 @@ def planning_geometry(
         stage: The stage the artifact is drawn as.
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
             free space they had to fit into: the global stage over the cells the grid blocked, and
-            the assign and corridor stages over the partitions their chords and wires run through.
+            the assign, corridor and detail stages over the partitions their chords and wires run
+            through.
         global_routing: The global artifact of the same run, for the assign and corridor stages,
             which are drawn with the lattice edges that the inner circuit selected.
         assignment: The assignment artifact of the same run. Corridor uses it to draw feedlines and
-            the approach of each wire to its target port.
+            the approach of each wire to its target port, and Detail to tell a resonator wire from
+            a plain one.
+        clearance: The design rule ``min_wire_spacing``, in layout units. The detail stage converts
+            it to the whole cells it keeps clear, and a picture draws a band of that width around
+            every wire, so that two wires that come too close show as two bands that overlap.
 
     Returns:
         The geometry, in layout units.
@@ -765,6 +863,15 @@ def planning_geometry(
         # The inner circuit decided which ports joined the ring, so its wires belong in the picture.
         if global_routing is not None:
             _global(_routing_of(global_routing), geometry, lattice=False)
+    elif stage == "detail":
+        if not isinstance(output, DetailRoutingT):
+            msg = "the artifact is not a detail routing"
+            raise PlanningError(msg)
+        chosen = _assignment_of(assignment) if assignment is not None else None
+        _detail(output, geometry, clearance, _resonator_slots(chosen))
+        # The seed of every wire stayed inside its partitions, so they make a drawn wire readable.
+        if capacity is not None:
+            _capacity(_plan_of(capacity), geometry)
     else:
         if not isinstance(output, CorridorRoutingT):
             msg = "the artifact is not a corridor routing"

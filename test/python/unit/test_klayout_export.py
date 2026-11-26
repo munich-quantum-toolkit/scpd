@@ -168,3 +168,32 @@ def test_the_stubs_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path)
     assert budget.text_string == "3"
     assert (budget.text_dpos.x, budget.text_dpos.y) == pytest.approx((50.0, 0.0))
     assert len({number for number, _, _ in PLANNING_LAYERS.values()}) == len(PLANNING_LAYERS)
+
+
+def test_the_detail_wires_and_their_clearance_are_written(tmp_path: Path) -> None:
+    """Each kind of detail wire is a path on its own layer, and its clearance a path as wide as it."""
+    config_path = FIXTURE / "config.toml"
+    chip = decode_chip(load_chip(load_config(config_path), config_path))
+    geometry = PlanningGeometry(
+        wires=[[(0.0, 0.0), (300.0, 0.0)]],
+        resonators=[[(0.0, 500.0), (400.0, 500.0)]],
+        inner_wires=[[(600.0, 0.0), (600.0, 200.0)]],
+        clearance=160.0,
+    )
+
+    summary = write_layout(chip, tmp_path / "detail.gds", planning=geometry)
+
+    assert summary.planning == 6
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    top = layout.top_cell()
+
+    def shapes(name: str) -> list[kdb.Shape]:
+        number, datatype, _ = PLANNING_LAYERS[name]
+        return list(top.shapes(layout.layer(number, datatype)).each())
+
+    for name in ("wires", "resonators", "inner_wires"):
+        assert [shape.is_path() for shape in shapes(name)] == [True]
+    bands = shapes("clearance")
+    assert len(bands) == 3
+    assert all(shape.path_dwidth == pytest.approx(160.0) for shape in bands)

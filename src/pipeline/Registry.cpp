@@ -13,6 +13,7 @@
 #include "mqt-scpd/pipeline/Assigner.hpp"
 #include "mqt-scpd/pipeline/CapacityPlanner.hpp"
 #include "mqt-scpd/pipeline/CorridorRouter.hpp"
+#include "mqt-scpd/pipeline/DetailRouter.hpp"
 #include "mqt-scpd/pipeline/GlobalRouter.hpp"
 #include "mqt-scpd/pipeline/Stages.hpp"
 
@@ -34,6 +35,7 @@ constexpr std::string_view DEFAULT_CAPACITY_PLANNER = "watershed";
 constexpr std::string_view DEFAULT_GLOBAL_ROUTER = "hanan-milp";
 constexpr std::string_view DEFAULT_ASSIGNER = "ordered-milp";
 constexpr std::string_view DEFAULT_CORRIDOR_ROUTER = "partition-astar";
+constexpr std::string_view DEFAULT_DETAIL_ROUTER = "pixel-astar";
 
 /// A configured name, or the default when the configuration leaves it empty.
 std::string_view orDefault(const std::string& configured,
@@ -97,6 +99,15 @@ const Registry<ICorridorRouter>& corridorRouters() {
   return REGISTRY;
 }
 
+const Registry<IDetailRouter>& detailRouters() {
+  static const auto REGISTRY = [] {
+    Registry<IDetailRouter> made;
+    made.add(std::string(DEFAULT_DETAIL_ROUTER), makePixelAStarRouter);
+    return made;
+  }();
+  return REGISTRY;
+}
+
 std::string_view selectedCapacityPlanner(const ConfigT& config) {
   if (config.stages != nullptr && config.stages->capacity != nullptr) {
     return orDefault(config.stages->capacity->planner,
@@ -126,6 +137,13 @@ std::string_view selectedCorridorRouter(const ConfigT& config) {
   return DEFAULT_CORRIDOR_ROUTER;
 }
 
+std::string_view selectedDetailRouter(const ConfigT& config) {
+  if (config.stages != nullptr && config.stages->detail != nullptr) {
+    return orDefault(config.stages->detail->router, DEFAULT_DETAIL_ROUTER);
+  }
+  return DEFAULT_DETAIL_ROUTER;
+}
+
 std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
                                       const std::vector<std::string>& steps) {
   const auto takes = [&steps](const std::string_view step) {
@@ -141,9 +159,10 @@ std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
     note(unknownName(capacityPlanners(), selectedCapacityPlanner(config),
                      "[stages.capacity] planner"));
   }
-  // The capacity and corridor steps build the detail grid, and the assignment
-  // places the launcher slots on it.
-  if (takes("capacity") || takes("assign") || takes("corridor")) {
+  // The capacity, corridor and detail steps build the detail grid, and the
+  // assignment places the launcher slots on it.
+  if (takes("capacity") || takes("assign") || takes("corridor") ||
+      takes("detail")) {
     note(detailGridProblem(chip, config));
     note(orientationProblem(chip));
     note(launcherProblem(chip));
@@ -160,6 +179,10 @@ std::vector<std::string> planProblems(const ChipT& chip, const ConfigT& config,
   if (takes("corridor")) {
     note(unknownName(corridorRouters(), selectedCorridorRouter(config),
                      "[stages.corridor] router"));
+  }
+  if (takes("detail")) {
+    note(unknownName(detailRouters(), selectedDetailRouter(config),
+                     "[stages.detail] router"));
   }
   if (!takes("assign")) {
     return problems;

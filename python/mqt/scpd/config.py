@@ -26,6 +26,7 @@ from .flatbuffers.config.BridgeRule import BridgeRuleT
 from .flatbuffers.config.CapacityParams import CapacityParamsT
 from .flatbuffers.config.Config import ConfigT
 from .flatbuffers.config.CorridorParams import CorridorParamsT
+from .flatbuffers.config.DetailParams import DetailParamsT
 from .flatbuffers.config.GlobalParams import GlobalParamsT
 from .flatbuffers.config.GridParams import GridParamsT
 from .flatbuffers.config.PortConfig import PortConfigT
@@ -84,6 +85,15 @@ STAGE_DEFAULTS: dict[str, dict[str, object]] = {
     "assignment": {"assigner": "", "launcher_target": 0},
     "solver": {"backend": "", "time_limit": 0.0, "relative_gap": 0.0, "threads": 0},
     "corridor": {"router": "", "rounds": 12, "max_relaxation": 4},
+    "detail": {
+        "router": "",
+        "corridor_spacings": 4,
+        "rounds": 30,
+        "max_relaxation": 30,
+        "obstacle_penalty_reach": 185.0,
+        "obstacle_penalty": 10,
+        "orderings": 16,
+    },
 }
 
 #: The keys of ``[run]`` with the defaults of the schema.
@@ -301,6 +311,17 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
     stages.corridor.rounds = take(corridor, "rounds", int)
     stages.corridor.maxRelaxation = take(corridor, "max_relaxation", int)
     corridor.finish()
+
+    detail = part("detail")
+    stages.detail = DetailParamsT()
+    stages.detail.router = take(detail, "router", str)
+    stages.detail.corridorSpacings = take(detail, "corridor_spacings", int)
+    stages.detail.rounds = take(detail, "rounds", int)
+    stages.detail.maxRelaxation = take(detail, "max_relaxation", int)
+    stages.detail.obstaclePenaltyReach = take(detail, "obstacle_penalty_reach", float)
+    stages.detail.obstaclePenalty = take(detail, "obstacle_penalty", int)
+    stages.detail.orderings = take(detail, "orderings", int)
+    detail.finish()
 
     section.finish()
     return stages

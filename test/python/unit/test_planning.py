@@ -14,7 +14,6 @@ import math
 import sys
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -28,6 +27,8 @@ from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
 from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailWire import DetailWireT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from mqt.scpd.flatbuffers.artifacts.GridExtent import GridExtentT
@@ -36,16 +37,15 @@ from mqt.scpd.flatbuffers.artifacts.Partition import PartitionT
 from mqt.scpd.flatbuffers.artifacts.PartitionBorder import PartitionBorderT
 from mqt.scpd.flatbuffers.artifacts.StageOutput import StageOutput
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
+from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.Connection import ConnectionT
 from mqt.scpd.flatbuffers.design.PortRef import PortRefT
+from mqt.scpd.flatbuffers.geometry.DCoord import DCoordT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
 from mqt.scpd.flatbuffers.geometry.Polygon import PolygonT
 from mqt.scpd.planning import Feedline, PlanningError, PlanningGeometry, planning_geometry
 from mqt.scpd.run import RunDirectory
 from mqt.scpd.steps import STEPS
-
-if TYPE_CHECKING:
-    from mqt.scpd.flatbuffers.design.Chip import ChipT
 
 CONFIG = Path(__file__).resolve().parents[2] / "fixtures" / "mini" / "config.toml"
 
@@ -524,8 +524,10 @@ def test_an_artifact_of_another_stage_is_refused(run: RunDirectory) -> None:
     """The artifact has to be the one of the stage it is drawn as."""
     with pytest.raises(PlanningError, match="not a global routing"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "global")
-    with pytest.raises(PlanningError, match="not a planning stage"):
+    with pytest.raises(PlanningError, match="not a detail routing"):
         planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "detail")
+    with pytest.raises(PlanningError, match="not a planning stage"):
+        planning_geometry(run.artifact("capacity").read_bytes(), chip_of(run), "final")
 
 
 def capacity_plan(*, cyclic: bool = False, chains: list[int] | None = None) -> bytes:
@@ -657,12 +659,77 @@ def test_the_assign_and_corridor_pictures_draw_the_selected_edges_of_the_inner_c
         ("capacity", "global", "not a capacity plan"),
         ("assign", "capacity", "not an assignment"),
         ("corridor", "capacity", "not a corridor routing"),
+        ("detail", "corridor", "not a detail routing"),
     ],
 )
 def test_every_stage_refuses_the_artifact_of_another(run: RunDirectory, stage: str, drawn: str, expected: str) -> None:
     """Each planning stage draws its own artifact only."""
     with pytest.raises(PlanningError, match=expected):
         planning_geometry(run.artifact(drawn).read_bytes(), chip_of(run), stage)
+
+
+def test_the_detail_picture_draws_every_wire_over_the_partitions(run: RunDirectory) -> None:
+    """Every connection of the ring is one drawn wire, told apart by its role, over the partitions."""
+    assignment = read_artifact(run.artifact("assign").read_bytes()).output
+    assert isinstance(assignment, AssignmentT)
+    resonators = sum(
+        int(connection.sourceRole or 0) == AssignedRole.ResonatorSource
+        for connection in assignment.connections or []
+        if connection is not None
+    )
+    geometry = planning_geometry(
+        run.artifact("detail").read_bytes(),
+        chip_of(run),
+        "detail",
+        capacity=run.artifact("capacity").read_bytes(),
+        assignment=run.artifact("assign").read_bytes(),
+        clearance=185.0,
+    )
+
+    assert len(geometry.wires) + len(geometry.resonators) == len(assignment.connections or [])
+    assert len(geometry.resonators) == resonators
+    assert all(len(wire) >= 2 for wire in [*geometry.wires, *geometry.resonators])
+    assert geometry.partitions
+    assert not geometry.corridors
+    # The clearance is the rule converted to whole cells of the detail grid, less one cell.
+    plan = read_artifact(run.artifact("capacity").read_bytes()).output
+    assert isinstance(plan, CapacityPlanT)
+    assert plan.detailGrid is not None
+    cell = min(plan.detailGrid.cellWidth, plan.detailGrid.cellHeight)
+    assert geometry.clearance == pytest.approx((math.ceil(185.0 / cell) - 1) * cell)
+
+
+def test_the_detail_picture_without_an_assignment_draws_plain_wires(run: RunDirectory) -> None:
+    """Without the assignment no wire is known to be a resonator, and without a rule there is no band."""
+    geometry = planning_geometry(run.artifact("detail").read_bytes(), chip_of(run), "detail")
+
+    assert geometry.wires
+    assert not geometry.resonators
+    assert not geometry.clearance
+
+
+def test_a_detail_wire_is_drawn_through_its_bends() -> None:
+    """A run of cells in one direction is one straight line, so only the cells where it turns are kept."""
+    grid = GridExtentT(width=10, height=10, origin=PointT(100.0, 200.0), cellWidth=10.0, cellHeight=10.0)
+    straight_then_diagonal = [DCoordT(0, 0), DCoordT(1, 0), DCoordT(2, 0), DCoordT(3, 1), DCoordT(4, 2)]
+    data = write_artifact(
+        ArtifactT(
+            producer="test",
+            outputType=StageOutput.DetailRouting,
+            output=DetailRoutingT(
+                grid=grid,
+                wires=[DetailWireT(path=straight_then_diagonal), DetailWireT(path=[])],
+                inner=[DetailWireT(path=[DCoordT(5, 5), DCoordT(5, 6)])],
+            ),
+        )
+    )
+
+    geometry = planning_geometry(data, ChipT(), "detail")
+
+    # The origin of the grid is the center of cell (0, 0).
+    assert geometry.wires == [[(100.0, 200.0), (120.0, 200.0), (140.0, 220.0)]]
+    assert geometry.inner_wires == [[(150.0, 250.0), (150.0, 260.0)]]
+    assert not geometry.is_empty()
 
 
 def test_a_capacity_artifact_has_to_be_a_capacity_plan(run: RunDirectory) -> None:

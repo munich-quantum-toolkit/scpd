@@ -54,6 +54,7 @@ STAGE_STYLES: dict[str, StageStyle] = {
     "global": StageStyle("🔳", "[+]", "blue"),
     "assign": StageStyle("📌", "[>]", "magenta"),
     "corridor": StageStyle("🧭", "[~]", "yellow"),
+    "detail": StageStyle("🧵", "[-]", "green"),
 }
 
 #: Symbols with a plain form for an output that cannot encode them.
