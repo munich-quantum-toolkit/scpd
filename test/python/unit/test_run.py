@@ -97,6 +97,12 @@ def test_a_stop_that_is_no_step_is_refused() -> None:
         steps_until("outer")
 
 
+def test_artifact_refuses_an_unknown_stage(tmp_path: Path) -> None:
+    """An unknown stage cannot name an artifact in the run directory."""
+    with pytest.raises(RunError, match="'unknown' is not a planning step"):
+        RunDirectory(tmp_path).artifact("unknown")
+
+
 def test_preparing_copies_the_inputs_into_the_run(tmp_path: Path) -> None:
     """The run keeps its own configuration and chip, so a later step reads them from there."""
     elsewhere = tmp_path / "inputs"
