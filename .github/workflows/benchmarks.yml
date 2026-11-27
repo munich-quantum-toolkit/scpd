@@ -39,7 +39,6 @@ jobs:
     runs-on: ubuntu-26.04
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,15 +54,7 @@ jobs:
       - name: Check every chip
         run: uvx nox -s benchmarks
         env:
-          CMAKE_ARGS: -DENABLE_COVERAGE=ON -DENABLE_IPO=OFF
           MQT_SCPD_BENCHMARKS: ${{ github.workspace }}/planar-superconducting-pd
-      - name: Upload C++ coverage from the routing benchmarks
-        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          fail_ci_if_error: true
-          flags: cpp
-          plugins: gcov
-          use_oidc: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
       - name: Check the grid on the benchmark chips
         shell: bash
         run: |
