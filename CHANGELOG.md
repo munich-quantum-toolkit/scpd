@@ -85,6 +85,9 @@ releases may include breaking changes.
 
 ### Changed
 
+- 🔧 Use `GetRootAs` to read generated Python tables. Reject unknown grid keys
+  and list only supported stages in `plot` and `render` ([#189])
+  ([**@marcelwa**])
 - ⚡️ Reduce Detail routing work by applying clearance in row spans and reusing
   the search band when releasing neighbors. Store the search state and parent
   direction in one word per grid cell ([#188]) ([**@marcelwa**])
@@ -93,8 +96,6 @@ releases may include breaking changes.
 - ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])
-- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
-  ([**@FeldmeierMichael**])
 - 🎨 Change the output and the exit codes of the commands to the format of
   `docs/terminal_output.md` ([#166]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with
@@ -104,9 +105,8 @@ releases may include breaking changes.
   every compiler and target; MSVC does not contract since Visual Studio 2022,
   and the configuration warns for an older MSVC ([#134])
   ([**@FeldmeierMichael**])
-- ♻️ Make `[ports.sequences]` required and drop the `detection` and
-  `start_component` keys of the configuration schema; the outer port ring is
-  configuration only ([#111]) ([**@FeldmeierMichael**])
+- ♻️ Require `[ports.sequences]` to define the outer port ring ([#111])
+  ([**@FeldmeierMichael**])
 - 💥 Drop support for x86 macOS and stop publishing the respective wheels
   ([#89]) ([**@denialhaag**])
 - ⬆️ Raise the macOS deployment target to 13.3 to enable `std::format` in libc++
@@ -133,6 +133,7 @@ releases may include breaking changes.
 
 <!-- PR links -->
 
+[#189]: https://github.com/munich-quantum-toolkit/scpd/pull/189
 [#188]: https://github.com/munich-quantum-toolkit/scpd/pull/188
 [#187]: https://github.com/munich-quantum-toolkit/scpd/pull/187
 [#178]: https://github.com/munich-quantum-toolkit/scpd/pull/178

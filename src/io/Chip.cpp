@@ -47,8 +47,7 @@ using flatbuffers::design::PortT;
 using flatbuffers::design::UnassignedRole;
 using flatbuffers::geometry::Point;
 using flatbuffers::geometry::PolygonT;
-// The prototype's JSON writer keeps the ports in insertion order. Keeping
-// that order fixes the PortRef of every port to its position in the file.
+// A PortRef indexes ports in the order they appear in the input file.
 using json = nlohmann::ordered_json;
 
 /// A file with thousands of bad vertices should not produce a message with

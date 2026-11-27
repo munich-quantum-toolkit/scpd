@@ -6,9 +6,8 @@
 //
 // Licensed under the MIT License
 
-// The stage artifacts of a run directory, 01-capacity.fb through
-// 07-geometry.fb. Owned by MQT::ScpdIO. A reader rebuilds any grid or router
-// state that is not part of the stored stage output.
+// MQT::ScpdIO owns the stage artifacts of a run directory. A reader rebuilds
+// grid and router state that the stage outputs omit.
 
 include "design.fbs";
 

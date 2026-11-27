@@ -14,7 +14,7 @@ from mqt.scpd.flatbuffers.config.SolverParams import SolverParams
 from typing import Optional
 np = import_numpy()
 
-# The parameters of the stages that are implemented.
+# Algorithm and solver parameters for the planning stages.
 class StageParams(object):
     __slots__ = ['_tab']
 
@@ -25,10 +25,6 @@ class StageParams(object):
         x.Init(buf, n + offset)
         return x
 
-    @classmethod
-    def GetRootAsStageParams(cls, buf, offset=0):
-        """This method is deprecated. Please switch to GetRootAs."""
-        return cls.GetRootAs(buf, offset)
     # StageParams
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)

@@ -80,9 +80,6 @@ cell into a finer detail grid.
 | `capacity_cells_y` | `0`     | The cells of the capacity grid across the height of the chip; `0` takes the aspect ratio, any other value is at least two |
 | `detail_factor`    | `30`    | The detail cells per capacity cell along each axis; at least one                                                          |
 
-Remove the deprecated `launcher_offset_x` and `launcher_offset_y` keys. `doctor`
-and `plan` warn when these keys are present.
-
 Multiply each capacity grid dimension by `detail_factor` to get the detail grid.
 The limit is 25,000,000 detail cells. Capacity uses about 120 bytes per cell, or
 about 3 GB at the limit. The 69q benchmark uses 1500 × 1500 cells.

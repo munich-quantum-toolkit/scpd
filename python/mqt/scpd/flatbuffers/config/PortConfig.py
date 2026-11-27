@@ -21,10 +21,6 @@ class PortConfig(object):
         x.Init(buf, n + offset)
         return x
 
-    @classmethod
-    def GetRootAsPortConfig(cls, buf, offset=0):
-        """This method is deprecated. Please switch to GetRootAs."""
-        return cls.GetRootAs(buf, offset)
     # PortConfig
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)

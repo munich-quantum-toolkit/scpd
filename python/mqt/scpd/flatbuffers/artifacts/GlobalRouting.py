@@ -24,10 +24,6 @@ class GlobalRouting(object):
         return x
 
     @classmethod
-    def GetRootAsGlobalRouting(cls, buf, offset=0):
-        """This method is deprecated. Please switch to GetRootAs."""
-        return cls.GetRootAs(buf, offset)
-    @classmethod
     def GlobalRoutingBufferHasIdentifier(cls, buf, offset, size_prefixed=False):
         return flatbuffers.util.BufferHasIdentifier(buf, offset, b"\x53\x43\x50\x32", size_prefixed=size_prefixed)
 

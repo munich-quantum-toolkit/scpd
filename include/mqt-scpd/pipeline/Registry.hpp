@@ -28,11 +28,6 @@ namespace mqt::scpd::pipeline {
 /**
  * @brief The implementations of one stage interface, by name.
  *
- * Swapping an algorithm is a stated requirement of a research tool, and this
- * is the whole mechanism: a name, a factory and a list. The first release
- * registers one implementation per stage; a second one becomes a new file
- * rather than a refactor.
- *
  * @tparam Interface The stage interface.
  */
 template <typename Interface> class Registry {
