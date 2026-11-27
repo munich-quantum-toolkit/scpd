@@ -15,6 +15,7 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/config.hpp"
 #include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
@@ -36,6 +37,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -366,6 +368,98 @@ struct Spoken {
                             const std::uint64_t /*total*/) { ++progressed; }}};
   }
 };
+
+/// Builds one open square partition with wire endpoints on its boundary.
+Planned
+planSquare(const ConfigT& config,
+           const std::initializer_list<std::pair<DCoord, DCoord>> endpoints) {
+  using flatbuffers::artifacts::CorridorT;
+  using flatbuffers::artifacts::GridExtentT;
+  using flatbuffers::artifacts::PartitionT;
+  using flatbuffers::design::ConnectionT;
+  using flatbuffers::design::PortT;
+  using flatbuffers::design::UnassignedRole;
+  using flatbuffers::geometry::Point;
+  using flatbuffers::geometry::PolygonT;
+
+  Planned planned;
+  auto launcher = std::make_unique<PortT>();
+  launcher->center = Point(0.0, 0.0);
+  launcher->role = UnassignedRole::Launcher;
+  planned.chip.ports.push_back(std::move(launcher));
+  auto opposite = std::make_unique<PortT>();
+  opposite->center = Point(1200.0, 1200.0);
+  opposite->role = UnassignedRole::Launcher;
+  planned.chip.ports.push_back(std::move(opposite));
+
+  const auto scene = buildScene(planned.chip, config);
+  const auto& grid = scene.detail;
+  auto extent = std::make_unique<GridExtentT>();
+  extent->width = grid.width;
+  extent->height = grid.height;
+  extent->origin = grid.origin;
+  extent->cell_width = grid.cellWidth;
+  extent->cell_height = grid.cellHeight;
+  planned.capacity.detail_grid = std::move(extent);
+  planned.capacity.blocked_words = scene.blocked.words();
+  auto partition = std::make_unique<PartitionT>();
+  partition->label = 1;
+  auto outline = std::make_unique<PolygonT>();
+  outline->vertices = {grid::cornerToLayout(grid, 0, 0),
+                       grid::cornerToLayout(grid, grid.width, 0),
+                       grid::cornerToLayout(grid, grid.width, grid.height),
+                       grid::cornerToLayout(grid, 0, grid.height)};
+  partition->outlines.push_back(std::move(outline));
+  planned.capacity.partitions.push_back(std::move(partition));
+
+  for (const auto& [from, to] : endpoints) {
+    planned.assignment.connections.push_back(std::make_unique<ConnectionT>());
+    auto corridor = std::make_unique<CorridorT>();
+    corridor->partitions = {1};
+    corridor->source =
+        std::make_unique<Point>(grid.toLayout(from.x(), from.y()));
+    corridor->target = std::make_unique<Point>(grid.toLayout(to.x(), to.y()));
+    planned.corridor.corridors.push_back(std::move(corridor));
+  }
+  return planned;
+}
+
+TEST(DetailRouter, ReportsAConnectionThatWouldHaveToCrossAnotherWire) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  const auto planned = planSquare(
+      config, {{DCoord(0, 0), DCoord(12, 12)}, {DCoord(0, 12), DCoord(12, 0)}});
+  Spoken spoken;
+
+  const auto routing = drawMini(planned, spoken.report(), config);
+
+  EXPECT_EQ(undrawnOf(routing), 1U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 1U);
+  expectFreeConnectedPaths(routing, buildScene(planned.chip, config));
+  expectNoWireMeetsAnother(routing, routing.grid->width);
+}
+
+TEST(DetailRouter, CountsTheWiresWithConflictingFixedEndpoints) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  config.stages->detail =
+      std::make_unique<flatbuffers::config::DetailParamsT>();
+  config.stages->detail->rounds = 2;
+  const auto planned = planSquare(config, {{DCoord(0, 5), DCoord(12, 5)},
+                                           {DCoord(0, 6), DCoord(12, 6)},
+                                           {DCoord(0, 10), DCoord(12, 10)}});
+  Spoken spoken;
+
+  const auto routing = drawMini(planned, spoken.report(), config);
+
+  EXPECT_EQ(undrawnOf(routing), 0U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 2U);
+  expectNoWireMeetsAnother(routing, routing.grid->width);
+}
 
 TEST(DetailRouter, CountsACorridorWhoseFeedIsOutsideTheGrid) {
   auto planned = planMini();
