@@ -39,9 +39,6 @@ class CapacityParams(object):
     # A place on the medial axis is a bottleneck only where the free radius
     # around it is below this many wire pitches. A pitch is one wire spacing
     # plus one obstacle spacing.
-    #
-    # The default gives the bottleneck count of the research prototype on the
-    # 4-qubit and the 9-qubit chip.
     # CapacityParams
     def BottleneckClearance(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
@@ -59,9 +56,6 @@ class CapacityParams(object):
     # cross a border closer than one pitch to the target cell or the feed of
     # another wire. Where a wire runs inside a partition, and the clearance of
     # the drawn wire, the later routing stages decide.
-    #
-    # The default is the figure of the research prototype: its wire spacing
-    # less 20 layout units.
     # CapacityParams
     def CrossingPitch(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))

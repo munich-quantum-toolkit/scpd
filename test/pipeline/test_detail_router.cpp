@@ -425,6 +425,29 @@ planSquare(const ConfigT& config,
   return planned;
 }
 
+TEST(DetailRouter, DrawsAStraightWireInEachGridDirection) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  const DCoord start(6, 6);
+  for (const int dx : {-1, 0, 1}) {
+    for (const int dy : {-1, 0, 1}) {
+      if (dx == 0 && dy == 0) {
+        continue;
+      }
+      const DCoord middle(static_cast<std::uint32_t>(6 + dx),
+                          static_cast<std::uint32_t>(6 + dy));
+      const DCoord goal(static_cast<std::uint32_t>(6 + 2 * dx),
+                        static_cast<std::uint32_t>(6 + 2 * dy));
+      const auto planned = planSquare(config, {{start, goal}});
+      const auto routing = drawMini(planned, {}, config);
+      ASSERT_EQ(routing.wires.size(), 1U);
+      EXPECT_EQ(routing.wires.front()->path,
+                (std::vector<DCoord>{start, middle, goal}));
+    }
+  }
+}
+
 TEST(DetailRouter, ReportsAConnectionThatWouldHaveToCrossAnotherWire) {
   auto config = test::miniConfig();
   config.grid->capacity_cells_x = 13;

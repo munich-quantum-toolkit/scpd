@@ -173,12 +173,12 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _check_list(output.corridors, "corridors", _corridor_problems, problems)
         _check_list(output.slots, "slots", _border_slots_problems, problems)
     elif isinstance(output, DetailRoutingT):
-        if output.grid is None and (output.wires or output.inner):
+        if output.grid is None:
             problems.append("grid is missing")
-        elif output.grid is not None:
+        else:
             problems.extend(f"grid: {problem}" for problem in _grid_problems(output.grid))
-        _check_list(output.wires or [], "wires", _detail_wire_problems, problems)
-        _check_list(output.inner or [], "inner", _detail_wire_problems, problems)
+        _check_list(output.wires, "wires", _detail_wire_problems, problems)
+        _check_list(output.inner, "inner", _detail_wire_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)

@@ -45,7 +45,7 @@ mqt-scpd render -c inputs/33q/config.toml -o 33q.gds    # write it as GDSII
 ## Planning a Chip
 
 The benchmark configurations already include the launcher target, component
-pattern, and coupler bridge rules needed to run all four planning stages.
+pattern, and coupler bridge rules needed to run through Detail.
 
 ```console
 mqt-scpd plan -c inputs/33q/config.toml -o runs/33q
@@ -59,7 +59,7 @@ A run writes one artifact per step into its directory, in this order:
 | global   | `02-global.fb`   | Solves the inner circuit and the port ring that the assignment works on                    |
 | assign   | `03-assign.fb`   | Assigns the ring ports to launchers and feedline chains                                    |
 | corridor | `04-corridor.fb` | Routes every connection through the partitions                                             |
-| detail   | `05-detail.fb`   | Draws every wire on the detail grid and keeps the wire clearance between every two wires   |
+| detail   | `05-detail.fb`   | Draws every wire on the detail grid and checks clearance between routed cells              |
 
 Global determines which bridge ports join the outer ring. Assignment uses that
 ring. The run saves its inputs as `config.toml` and `00-chip.json`. Check those
@@ -119,7 +119,5 @@ role as the datatype. Planning layers start at 20. Key layers include
 to their target ports. Detail writes `route.wire` (40), `route.resonator` (41),
 `route.inner-wire` (42), and `route.clearance` (44).
 
-## What the Current Release Does
-
-MQT SCPD currently plans through Detail. The published routed layouts and Table
-I metrics come from the research prototype.
+The published routed layouts and Table I metrics come from the research
+prototype.

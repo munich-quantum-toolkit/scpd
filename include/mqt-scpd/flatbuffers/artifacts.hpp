@@ -2324,7 +2324,7 @@ struct DetailRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_INNER = 8
   };
   /// The grid the cells are counted on, so a reader can place them without
-  /// rebuilding the run. Earlier empty SCP2 Detail outputs have no grid.
+  /// rebuilding the run.
   const mqt::scpd::flatbuffers::artifacts::GridExtent *grid() const {
     return GetPointer<const mqt::scpd::flatbuffers::artifacts::GridExtent *>(VT_GRID);
   }
@@ -2337,12 +2337,12 @@ struct DetailRouting FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyOffset(verifier, VT_GRID) &&
+           VerifyOffsetRequired(verifier, VT_GRID) &&
            verifier.VerifyTable(grid()) &&
-           VerifyOffset(verifier, VT_WIRES) &&
+           VerifyOffsetRequired(verifier, VT_WIRES) &&
            verifier.VerifyVector(wires()) &&
            verifier.VerifyVectorOfTables(wires()) &&
-           VerifyOffset(verifier, VT_INNER) &&
+           VerifyOffsetRequired(verifier, VT_INNER) &&
            verifier.VerifyVector(inner()) &&
            verifier.VerifyVectorOfTables(inner()) &&
            verifier.EndTable();
@@ -2372,6 +2372,9 @@ struct DetailRoutingBuilder {
   ::flatbuffers::Offset<DetailRouting> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<DetailRouting>(end);
+    fbb_.Required(o, DetailRouting::VT_GRID);
+    fbb_.Required(o, DetailRouting::VT_WIRES);
+    fbb_.Required(o, DetailRouting::VT_INNER);
     return o;
   }
 };
@@ -3770,8 +3773,8 @@ inline ::flatbuffers::Offset<DetailRouting> DetailRouting::Pack(::flatbuffers::F
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DetailRoutingT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _grid = _o->grid ? CreateGridExtent(_fbb, _o->grid.get(), _rehasher) : 0;
-  auto _wires = _o->wires.size() ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> (_o->wires.size(), [](size_t i, _VectorArgs *__va) { return CreateDetailWire(*__va->__fbb, __va->__o->wires[i].get(), __va->__rehasher); }, &_va ) : 0;
-  auto _inner = _o->inner.size() ? _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> (_o->inner.size(), [](size_t i, _VectorArgs *__va) { return CreateDetailWire(*__va->__fbb, __va->__o->inner[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _wires = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> (_o->wires.size(), [](size_t i, _VectorArgs *__va) { return CreateDetailWire(*__va->__fbb, __va->__o->wires[i].get(), __va->__rehasher); }, &_va );
+  auto _inner = _fbb.CreateVector<::flatbuffers::Offset<mqt::scpd::flatbuffers::artifacts::DetailWire>> (_o->inner.size(), [](size_t i, _VectorArgs *__va) { return CreateDetailWire(*__va->__fbb, __va->__o->inner[i].get(), __va->__rehasher); }, &_va );
   return mqt::scpd::flatbuffers::artifacts::CreateDetailRouting(
       _fbb,
       _grid,

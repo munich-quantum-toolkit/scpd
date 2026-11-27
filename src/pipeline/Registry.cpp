@@ -29,8 +29,7 @@
 namespace mqt::scpd::pipeline {
 namespace {
 
-/// The name a stage falls back to when the configuration selects none. Each
-/// is the one implementation this release ships.
+/// The default implementation of each stage.
 constexpr std::string_view DEFAULT_CAPACITY_PLANNER = "watershed";
 constexpr std::string_view DEFAULT_GLOBAL_ROUTER = "hanan-milp";
 constexpr std::string_view DEFAULT_ASSIGNER = "ordered-milp";

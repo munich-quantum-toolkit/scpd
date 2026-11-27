@@ -86,14 +86,13 @@ releases may include breaking changes.
 ### Changed
 
 - ⚡️ Reduce Detail routing work by applying clearance in row spans and reusing
-  the search band when releasing neighbors ([#188]) ([**@marcelwa**])
+  the search band when releasing neighbors. Store the search state and parent
+  direction in one word per grid cell ([#188]) ([**@marcelwa**])
 - ⬆️ Require KLayout 0.30.13 or later in the 0.30 series for Python 3.15 wheels
   on Linux and macOS ([#167]) ([**@marcelwa**])
 - ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])
-- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
-  ([**@FeldmeierMichael**])
 - 🎨 Change the output and the exit codes of the commands to the format of
   `docs/terminal_output.md` ([#166]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with

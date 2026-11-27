@@ -108,8 +108,6 @@ CapacityPlanT emptyPlan() {
 }
 
 TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
-  // The outputs of the stages that are not implemented yet are empty tables.
-  // Each still travels behind the Artifact root with its own tag.
   const ArtifactT capacity = readArtifact(writeArtifact(wrap(emptyPlan())));
   EXPECT_EQ(capacity.output.type, StageOutput::CapacityPlan);
   EXPECT_NE(capacity.output.AsCapacityPlan(), nullptr);
@@ -263,10 +261,9 @@ TEST(ArtifactSchema, DetailRoutingRoundTrips) {
   EXPECT_EQ(read.inner[0]->path.size(), 2U);
 }
 
-TEST(ArtifactSchema, ReadsAnEmptyDetailPlaceholder) {
-  const auto artifact = readArtifact(writeArtifact(wrap(DetailRoutingT{})));
-  ASSERT_NE(artifact.output.AsDetailRouting(), nullptr);
-  EXPECT_EQ(artifact.output.AsDetailRouting()->grid, nullptr);
+TEST(ArtifactSchema, RequiresTheDetailGridEvenWhenThereAreNoWires) {
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(DetailRoutingT{}))),
+               std::invalid_argument);
 }
 
 TEST(ArtifactSchema, RefusesACellOutsideTheDetailGridAndARepeatedCell) {
@@ -817,13 +814,6 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnArtifactWithoutItsProducer) {
   }
 }
 
-TEST(ArtifactSchema, ReadArtifactRejectsThePreviousSchemaVersion) {
-  auto bytes = writeArtifact(wrap(GlobalRoutingT{}));
-  constexpr std::array<std::uint8_t, 4> previous{'S', 'C', 'P', '1'};
-  std::ranges::copy(previous, std::next(bytes.begin(), 4));
-  EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
-}
-
 TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
   std::vector<std::uint8_t> bytes = writeArtifact(wrap(GlobalRoutingT{}));
 
@@ -838,11 +828,9 @@ TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
 }
 
-TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
-  // A newer schema may append an output type under the same identifier. The
-  // verifier lets it pass, so the read has to refuse it.
+TEST(ArtifactSchema, RefusesAnUnknownOutputType) {
   flatbuffers::FlatBufferBuilder builder;
-  const auto producer = builder.CreateString("mqt-scpd newer");
+  const auto producer = builder.CreateString("mqt-scpd test");
   const flatbuffers::Offset<void> output(
       builder.EndTable(builder.StartTable()));
   // The tag is written as a plain byte, because the enum of this schema has
@@ -863,8 +851,7 @@ TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
     static_cast<void>(readArtifact(bytes));
     FAIL() << "the read accepted an unknown output type";
   } catch (const std::invalid_argument& error) {
-    EXPECT_STREQ(error.what(), "artifact is not valid: output type 8 is "
-                               "unknown to this version of mqt-scpd");
+    EXPECT_STREQ(error.what(), "artifact is not valid: unknown output type 8");
   }
 }
 

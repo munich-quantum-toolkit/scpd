@@ -325,12 +325,10 @@ Problems validate(const ArtifactT& artifact) {
   if (artifact.producer.empty()) {
     problems.emplace_back("producer is empty");
   }
-  // The verifier lets an output type pass that a newer schema appended, and
-  // the object model then holds no output to check.
+  // The FlatBuffers verifier accepts unknown union tags.
   if (artifact.output.type > StageOutput::MAX) {
-    problems.push_back(
-        std::format("output type {} is unknown to this version of mqt-scpd",
-                    static_cast<unsigned>(artifact.output.type)));
+    problems.push_back(std::format(
+        "unknown output type {}", static_cast<unsigned>(artifact.output.type)));
     return problems;
   }
   switch (artifact.output.type) {
@@ -482,7 +480,7 @@ Problems validate(const ArtifactT& artifact) {
     const auto& routing = *artifact.output.AsDetailRouting();
     if (routing.grid != nullptr) {
       validateDetailGrid(*routing.grid, problems);
-    } else if (!routing.wires.empty() || !routing.inner.empty()) {
+    } else {
       problems.emplace_back("grid: missing");
     }
     validateDetailWires(routing.wires, routing.grid.get(), "wire", problems);

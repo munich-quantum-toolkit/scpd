@@ -199,9 +199,7 @@ public:
         cellOwners(blockedCells.size(), NO_OWNER),
         crowding(blockedCells.size(), 0), guardedCells(blockedCells.size(), 0),
         guardCount(blockedCells.size(), 0), searchCost(blockedCells.size(), 0),
-        searchParent(blockedCells.size(), NOWHERE),
-        searchSeen(blockedCells.size(), 0),
-        searchClosed(blockedCells.size(), 0) {}
+        searchState(blockedCells.size(), 0) {}
 
   [[nodiscard]] const grid::GridMetrics& metrics() const { return gridMetrics; }
   [[nodiscard]] std::uint32_t width() const { return gridMetrics.width; }
@@ -300,10 +298,10 @@ public:
       return std::vector<std::uint32_t>{query.start};
     }
 
-    if (++generation == 0) {
-      std::ranges::fill(searchSeen, 0);
-      std::ranges::fill(searchClosed, 0);
-      ++generation;
+    generation += GENERATION_STEP;
+    if (generation == 0) {
+      std::ranges::fill(searchState, 0);
+      generation = GENERATION_STEP;
     }
     const auto width = static_cast<std::int64_t>(gridMetrics.width);
     const auto height = static_cast<std::int64_t>(gridMetrics.height);
@@ -320,18 +318,18 @@ public:
     using Entry = std::pair<std::uint64_t, std::uint32_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
     searchCost[query.start] = 0;
-    searchParent[query.start] = NOWHERE;
-    searchSeen[query.start] = generation;
+    searchState[query.start] = generation;
     open.emplace(heuristic(columnOf(query.start), rowOf(query.start)),
                  query.start);
 
     while (!open.empty()) {
       const auto cell = open.top().second;
       open.pop();
-      if (searchClosed[cell] == generation) {
+      if ((searchState[cell] & CLOSED_BIT) != 0) {
         continue;
       }
-      searchClosed[cell] = generation;
+      searchState[cell] |= CLOSED_BIT;
+      const auto cost = searchCost[cell];
       if (cell == query.goal) {
         return trace(query.start, query.goal);
       }
@@ -344,7 +342,10 @@ public:
           continue;
         }
         const auto next = static_cast<std::uint32_t>((ny * width) + nx);
-        if (!admits(query, next)) {
+        const auto state = searchState[next];
+        // The octile heuristic is consistent and each edge surcharge is
+        // nonnegative, so a closed cell already has its lowest cost.
+        if (state >= (generation | CLOSED_BIT) || !admits(query, next)) {
           continue;
         }
         // A diagonal step between two cells of one wire crosses that wire in
@@ -384,13 +385,12 @@ public:
             charge += query.displacement;
           }
         }
-        const auto reached = searchCost[cell] + STEP_COST[step] + charge;
-        if (searchSeen[next] == generation && reached >= searchCost[next]) {
+        const auto reached = cost + STEP_COST[step] + charge;
+        if (state >= generation && reached >= searchCost[next]) {
           continue;
         }
         searchCost[next] = reached;
-        searchParent[next] = cell;
-        searchSeen[next] = generation;
+        searchState[next] = generation | static_cast<std::uint32_t>(step);
         open.emplace(reached + heuristic(nx, ny), next);
       }
     }
@@ -522,11 +522,15 @@ private:
   [[nodiscard]] std::vector<std::uint32_t>
   trace(const std::uint32_t start, const std::uint32_t goal) const {
     std::vector<std::uint32_t> path;
-    for (auto cell = goal; cell != NOWHERE; cell = searchParent[cell]) {
+    for (auto cell = goal;;) {
       path.push_back(cell);
       if (cell == start) {
         break;
       }
+      const auto step = searchState[cell] & DIRECTION_MASK;
+      cell = static_cast<std::uint32_t>(
+          static_cast<std::int64_t>(cell) - STEP_X[step] -
+          static_cast<std::int64_t>(gridMetrics.width) * STEP_Y[step]);
     }
     std::ranges::reverse(path);
     return path;
@@ -597,13 +601,15 @@ private:
   std::vector<std::uint8_t> guardedCells;
   std::vector<std::uint32_t> guardCount;
 
-  // The working arrays of the search. A cell counts as visited only while its
-  // stamp equals the current generation, so no array is cleared between two
-  // searches.
+  /// The low three bits store the step from the parent. The next bit marks
+  /// a closed cell. Higher bits identify the search that visited the cell.
+  static constexpr std::uint32_t CLOSED_BIT = 1U << 3U;
+  static constexpr std::uint32_t DIRECTION_MASK = CLOSED_BIT - 1;
+  static constexpr std::uint32_t GENERATION_STEP = 2 * CLOSED_BIT;
+  static_assert(STEP_X.size() == CLOSED_BIT && STEP_Y.size() == CLOSED_BIT &&
+                STEP_COST.size() == CLOSED_BIT);
   std::vector<std::uint64_t> searchCost;
-  std::vector<std::uint32_t> searchParent;
-  std::vector<std::uint32_t> searchSeen;
-  std::vector<std::uint32_t> searchClosed;
+  std::vector<std::uint32_t> searchState;
   std::uint32_t generation = 0;
 };
 
@@ -768,7 +774,7 @@ labelsOf(const CapacityPlanT& plan, const grid::GridMetrics& detail,
   return grid::rasterizePartitions(outlines, detail, progress);
 }
 
-/// The detail router of the first release.
+/// The pixel A* detail router.
 class PixelAStarRouter final : public IDetailRouter {
 public:
   [[nodiscard]] DetailRoutingT

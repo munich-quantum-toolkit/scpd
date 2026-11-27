@@ -43,7 +43,7 @@ namespace mqt::scpd::pipeline {
                  const flatbuffers::geometry::Point& place);
 
 /**
- * @brief Creates the detail router of the first release.
+ * @brief Creates the pixel A* detail router.
  *
  * The router runs an eight-connected A* search on the detail grid. No two
  * wires share a cell, and no diagonal step passes between two cells of one

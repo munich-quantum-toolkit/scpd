@@ -28,12 +28,6 @@ constraints of superconducting quantum technologies.
   </a>
 </p>
 
-## Key Features
-
-> [!NOTE]
-> MQT SCPD is still under development. This section will be expanded in the
-> future.
-
 If you have any questions, feel free to create a
 [discussion](https://github.com/munich-quantum-toolkit/scpd/discussions) or an
 [issue](https://github.com/munich-quantum-toolkit/scpd/issues) on
@@ -94,10 +88,6 @@ MQT SCPD is available via [PyPI](https://pypi.org/project/mqt.scpd/).
 uv pip install mqt.scpd
 ```
 
-> [!NOTE]
-> MQT SCPD is still under development. This section will be expanded in the
-> future.
-
 The command line is the product. A chip is described by a `config.toml` and the
 chip input it names; the doctor checks both, `plot` draws the chip, and `render`
 writes it as GDSII or OASIS (install `mqt.scpd[klayout]` for that). The eight
@@ -119,7 +109,7 @@ mqt-scpd plan -c planar-superconducting-pd/inputs/9q/config.toml -o runs/9q
 
 The
 [benchmark guide](https://mqt.readthedocs.io/projects/scpd/en/latest/benchmarks.html)
-describes the chips and what the current release does with them.
+describes the chips and how to plan and draw them.
 
 **Detailed documentation and examples are available at
 [ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**
@@ -155,12 +145,6 @@ When discussing the overall MQT project or its ecosystem, cite the MQT Handbook:
   addendum     = {A live version of this document is available at \url{https://mqt.readthedocs.io}}
 }
 ```
-
-### Peer-Reviewed Research
-
-> [!NOTE]
-> MQT SCPD is still under development. This section will be expanded in the
-> future.
 
 ---
 

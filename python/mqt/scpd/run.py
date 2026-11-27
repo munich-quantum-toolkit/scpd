@@ -163,12 +163,12 @@ def steps_until(stop_after: str | None) -> list[str]:
         The steps, in order.
 
     Raises:
-        RunError: If the name is not a step of this release.
+        RunError: If the name is not a planning step.
     """
     if not stop_after:
         return list(STEPS)
     if stop_after not in STEPS:
-        msg = f"'{stop_after}' is not a step of this release; the steps are {', '.join(STEPS)}"
+        msg = f"'{stop_after}' is not a planning step; the steps are {', '.join(STEPS)}"
         raise RunError(msg)
     return list(STEPS[: STEPS.index(stop_after) + 1])
 
@@ -265,10 +265,10 @@ class RunDirectory:
             The path, whether or not the file exists.
 
         Raises:
-            RunError: If the name is not a step of this release.
+            RunError: If the name is not a planning step.
         """
         if stage not in STAGE_FILES:
-            msg = f"'{stage}' is not a step of this release; the steps are {', '.join(STEPS)}"
+            msg = f"'{stage}' is not a planning step; the steps are {', '.join(STEPS)}"
             raise RunError(msg)
         return self.path / STAGE_FILES[stage]
 
@@ -658,7 +658,7 @@ class RunDirectory:
             What the step wrote.
 
         Raises:
-            RunError: If the name is not a step of this release, if an input of the step is missing, or
+            RunError: If the name is not a planning step, if an input of the step is missing, or
                 if an input of an earlier step has changed since that step wrote its artifact. A
                 refused step leaves the directory as it was.
         """

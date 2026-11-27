@@ -187,15 +187,6 @@ def test_read_rejects_foreign_bytes() -> None:
         read_artifact(IDENTIFIER)
 
 
-def test_read_rejects_the_previous_schema_identifier() -> None:
-    """An artifact using the previous schema must be rebuilt."""
-    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, _global_routing())))
-    data[4:8] = b"SCP1"
-
-    with pytest.raises(ArtifactError, match=r"identifier.*SCP2"):
-        read_artifact(bytes(data))
-
-
 def test_assignment_round_trips() -> None:
     """The connections of an assignment survive with their roles."""
     assignment = AssignmentT(
@@ -499,10 +490,25 @@ def test_read_rejects_bytes_that_do_not_decode() -> None:
         read_artifact(b"\xff\xff\xff\xff" + IDENTIFIER)
 
 
-def test_detail_writer_checks_wire_cells_and_accepts_empty_placeholders() -> None:
-    """Earlier empty Detail outputs remain readable, and each routed cell must lie on its grid."""
-    placeholder = wrap(StageOutput.DetailRouting, DetailRoutingT())
-    assert isinstance(read_artifact(write_artifact(placeholder)).output, DetailRoutingT)
+def test_detail_writer_requires_the_grid_and_both_wire_lists() -> None:
+    """A Detail artifact carries its grid and both wire lists, even for an empty routing."""
+    with pytest.raises(ArtifactError, match="grid is missing; wires is missing; inner is missing"):
+        write_artifact(wrap(StageOutput.DetailRouting, DetailRoutingT()))
+
+
+@pytest.mark.parametrize("field", ["grid", "wires", "inner"])
+def test_detail_reader_checks_each_required_field(field: str) -> None:
+    """Even with no routes, the serialized artifact must contain each field."""
+    routing = DetailRoutingT(grid=GridExtentT(origin=PointT(0.0, 0.0)), wires=[], inner=[])
+    setattr(routing, field, None)
+    builder = flatbuffers.Builder()
+    builder.Finish(wrap(StageOutput.DetailRouting, routing).Pack(builder), file_identifier=IDENTIFIER)
+    with pytest.raises(ArtifactError, match="verification failed"):
+        read_artifact(bytes(builder.Output()))
+
+
+def test_detail_writer_checks_wire_cells() -> None:
+    """Every routed cell lies on its grid."""
     grid = GridExtentT(width=2, height=2, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
     routing = DetailRoutingT(grid=grid, wires=[DetailWireT(path=[DCoordT(2, 1)])], inner=[])
     with pytest.raises(ArtifactError, match="leaves the detail grid"):
