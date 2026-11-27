@@ -19,7 +19,7 @@ from mqt.scpd.config import load_config
 from mqt.scpd.export import HAS_KLAYOUT
 from mqt.scpd.flatbuffers.design.Chip import ChipT
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
-from mqt.scpd.planning import Feedline, PlanningGeometry
+from mqt.scpd.planning import CorridorPath, Feedline, PlanningGeometry
 
 pytestmark = pytest.mark.skipif(not HAS_KLAYOUT, reason="the export needs KLayout")
 
@@ -67,11 +67,13 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
         partitions=[[[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)]]],
         inner=[((0.0, 0.0), (50.0, 50.0))],
         launchers=[(50.0, 50.0)],
+        corridors=[CorridorPath([(0.0, 0.0), (50.0, 50.0), (100.0, 0.0)])],
+        slots=[(50.0, 50.0)],
     )
 
     summary = write_layout(chip, tmp_path / "plan.gds", planning=geometry)
 
-    assert summary.planning == 3
+    assert summary.planning == 5
     assert min(number for number, _, _ in PLANNING_LAYERS.values()) >= 20
     layout = kdb.Layout()
     layout.read(str(summary.path))
@@ -79,6 +81,8 @@ def test_a_planning_stage_is_written_on_layers_of_its_own(tmp_path: Path) -> Non
     for name in ("partitions", "inner", "launchers"):
         number, datatype, _ = PLANNING_LAYERS[name]
         assert top.shapes(layout.layer(number, datatype)).size() == 1, name
+    assert top.shapes(layout.layer(30, 0)).size() == 1
+    assert top.shapes(layout.layer(31, 0)).size() == 1
     assert top.shapes(layout.layer(*OBSTACLE_LAYER)).size() == 4
 
 
@@ -137,18 +141,19 @@ def test_every_feedline_chain_is_one_path_on_the_feedline_layer(tmp_path: Path) 
     assert all(shape.is_path() for shape in shapes.each())
 
 
-def test_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path) -> None:
-    """A blocked cell and a wire budget each go on a layer of their own."""
+def test_the_stubs_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path) -> None:
+    """A stub goes on the corridor layer, a blocked cell and a wire budget each on a layer of their own."""
     config_path = FIXTURE / "config.toml"
     chip = decode_chip(load_chip(load_config(config_path), config_path))
     geometry = PlanningGeometry(
         blocked=[[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]],
         bottlenecks=[((0.0, 0.0), (100.0, 0.0), 3)],
+        corridors=[CorridorPath([(0.0, 0.0), (50.0, 50.0)], [(50.0, 50.0), (50.0, 500.0), (600.0, 500.0)])],
     )
 
     summary = write_layout(chip, tmp_path / "plan.gds", planning=geometry)
 
-    assert summary.planning == 3
+    assert summary.planning == 5
     layout = kdb.Layout()
     layout.read(str(summary.path))
     top = layout.top_cell()
@@ -157,6 +162,7 @@ def test_the_blocked_cells_and_the_budgets_are_written(tmp_path: Path) -> None:
         number, datatype, _ = PLANNING_LAYERS[name]
         return list(top.shapes(layout.layer(number, datatype)).each())
 
+    assert [shape.is_path() for shape in shapes("corridors")] == [True, True]
     assert [shape.is_polygon() or shape.is_box() for shape in shapes("blocked")] == [True]
     (budget,) = shapes("budgets")
     assert budget.text_string == "3"

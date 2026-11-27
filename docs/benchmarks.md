@@ -45,7 +45,7 @@ mqt-scpd render -c inputs/33q/config.toml -o 33q.gds    # write it as GDSII
 ## Planning a Chip
 
 The benchmark configurations already include the launcher target, component
-pattern, and coupler bridge rules needed to run all three planning stages.
+pattern, and coupler bridge rules needed to run all four planning stages.
 
 ```console
 mqt-scpd plan -c inputs/33q/config.toml -o runs/33q
@@ -58,6 +58,7 @@ A run writes one artifact per step into its directory, in this order:
 | capacity | `01-capacity.fb` | Partitions the free space at its bottlenecks and budgets the wires of every capacity chain |
 | global   | `02-global.fb`   | Solves the inner circuit and the port ring that the assignment works on                    |
 | assign   | `03-assign.fb`   | Assigns the ring ports to launchers and feedline chains                                    |
+| corridor | `04-corridor.fb` | Routes every connection through the partitions                                             |
 
 Global determines which bridge ports join the outer ring. Assignment uses that
 ring. The run saves its inputs as `config.toml` and `00-chip.json`. Check those
@@ -69,7 +70,7 @@ saved inputs, use `--stage`. A successful rerun removes outputs from later
 stages.
 
 ```console
-mqt-scpd plan -o runs/33q --stage assign
+mqt-scpd plan -o runs/33q --stage corridor
 ```
 
 Each stage records its input and artifact digests in a file such as
@@ -83,18 +84,20 @@ is outside these records and can change a rerun's result.
 Use `plot` for SVG or `render` for GDSII or OASIS.
 
 ```console
-mqt-scpd plot --run-dir runs/33q --stage assign -o 33q-assign.svg
+mqt-scpd plot --run-dir runs/33q --stage corridor -o 33q-corridor.svg
 mqt-scpd render --run-dir runs/33q --stage capacity -o 33q-capacity.gds
 ```
 
 Capacity shows partition borders. Global shows the Hanan lattices and selected
 inner wires. Assignment adds the feed points and feedline chains. Dashed lines
 connect ring ports to their feeds. A square marks a chain termination. All views
-use the blocked cells saved by Capacity. In a browser, use the SVG's **Layers**
+use the blocked cells saved by Capacity. Corridor shows routes from the exact
+feed points to the target cells, with an illustrative approach to each port. It
+also shows the available crossing slots. In a browser, use the SVG's **Layers**
 panel to show or hide individual layers.
 
-SVGs omit gates. The Capacity and Assignment views also omit the borders of
-fully enclosed partitions.
+SVGs omit gates. The Capacity, Assignment, and Corridor views also omit the
+borders of fully enclosed partitions.
 
 See {doc}`terminal_output` for destinations, failure recovery, and verbosity.
 
@@ -104,10 +107,12 @@ See {doc}`terminal_output` for destinations, failure recovery, and verbosity.
 `layouts/unrouted/gds/33q_unrouted.gds` in KLayout. The benchmark job checks
 that the obstacles match for every chip. Port labels use layer 10, with the port
 role as the datatype. Planning layers start at 20. Key layers include
-`plan.partition` (21), `plan.assignment` (28), `plan.feedline` (32),
-`plan.blocked` (33), and `plan.budget` (34).
+`plan.partition` (21), `plan.assignment` (28), `plan.corridor` (30), `plan.slot`
+(31), `plan.feedline` (32), `plan.blocked` (33), and `plan.budget` (34). Layer
+30 contains the coarse routes and separate paths that illustrate the approaches
+to their target ports.
 
 ## What the Current Release Does
 
-MQT SCPD currently plans through Assignment. The published routed layouts and
+MQT SCPD currently plans through Corridor. The published routed layouts and
 Table I metrics come from the research prototype.

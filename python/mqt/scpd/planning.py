@@ -8,8 +8,8 @@
 
 """The shapes that the planning stages produced, read back out of their artifacts.
 
-This module is the one place that knows how a capacity plan, a global routing and an assignment turn
-into geometry. Both renderers use it: ``plot`` draws the shapes as SVG, and
+This module is the one place that knows how a capacity plan, a global routing, an assignment and a
+corridor routing turn into geometry. Both renderers use it: ``plot`` draws the shapes as SVG, and
 ``render`` writes them to GDSII or OASIS on layers of their own. Neither reaches into the
 pipeline; both read the artifacts of a run directory, so either can draw a run that stopped early.
 """
@@ -26,6 +26,7 @@ from .artifacts import read_artifact
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityElement import CapacityElement
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
+from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
 from .run import STAGE_FILES
 
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.design.Chip import ChipT
 
-__all__ = ["PLANNING_STAGES", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
+__all__ = ["PLANNING_STAGES", "CorridorPath", "Feedline", "PlanningError", "PlanningGeometry", "planning_geometry"]
 
 #: The planning stages that can be drawn, and the artifact each is read from.
 PLANNING_STAGES: dict[str, str] = dict(STAGE_FILES)
@@ -72,11 +73,21 @@ class Feedline:
 
 
 @dataclass
+class CorridorPath:
+    """The geometry of one routed connection."""
+
+    #: The coarse route, from its feed over its crossings to its target cell.
+    points: list[Point]
+    #: The illustrative approach from the target cell into the target port, when available.
+    approach: list[Point] = field(default_factory=list)
+
+
+@dataclass
 class PlanningGeometry:
     """The shapes one planning stage produced, in layout units.
 
-    Each list is one layer of the picture, so a renderer can give it a color or a GDS layer of its
-    own without knowing what a partition or a capacity chain is.
+    The lists group the shapes by their role in the picture. A renderer can give each group a
+    color or a GDS layer.
     """
 
     #: The outline of every partition of the free space, as its closed rings. A partition with a
@@ -113,6 +124,10 @@ class PlanningGeometry:
     #: Each feedline chain of the assignment, from its first launcher through the feeds of its
     #: resonators to its last.
     feedlines: list[Feedline] = field(default_factory=list)
+    #: The coarse route and port approach of each routed wire.
+    corridors: list[CorridorPath] = field(default_factory=list)
+    #: Every crossing slot a border offers, taken or not.
+    slots: list[Point] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Whether the stage produced nothing to draw.
@@ -133,6 +148,8 @@ class PlanningGeometry:
             self.inner,
             self.assignments,
             self.ring,
+            self.corridors,
+            self.slots,
             self.feedlines,
         ))
 
@@ -579,6 +596,78 @@ def _feedlines(assignment: AssignmentT, chip: ChipT, geometry: PlanningGeometry)
         )
 
 
+def _stub(chip: ChipT, index: int, start: Point) -> list[Point]:
+    """The approach from where a corridor ends to its target port.
+
+    A wire enters a port along the direction of the port, so the approach turns once: across to the
+    axis of the port, then along it into the port.
+
+    Returns:
+        The points of the approach, or nothing when the index names no port.
+    """
+    port = _center(chip, index)
+    if port is None or port == start:
+        return []
+    ports: list[Any] = chip.ports or []
+    angle = math.radians(float(ports[index].orientation))
+    direction = (math.cos(angle), math.sin(angle))
+    along = max((start[0] - port[0]) * direction[0] + (start[1] - port[1]) * direction[1], 0.0)
+    corner = (port[0] + along * direction[0], port[1] + along * direction[1])
+    if math.dist(corner, start) < 1e-6 or math.dist(corner, port) < 1e-6:
+        return [start, port]
+    return [start, corner, port]
+
+
+def _corridor(
+    routing: CorridorRoutingT,
+    chip: ChipT,
+    plan: CapacityPlanT | None,
+    assignment: AssignmentT | None,
+    geometry: PlanningGeometry,
+) -> None:
+    """Fill the layers a corridor routing carries.
+
+    The routing holds one corridor per connection of the assignment, in its order, so the
+    assignment supplies the exact feed and the target port for each corridor.
+
+    Raises:
+        PlanningError: If the routing and assignment have different numbers of connections, or a
+            slot references a border outside the Capacity plan.
+    """
+    routes = routing.corridors or []
+    connections: list[Any] = assignment.connections or [] if assignment is not None else []
+    if assignment is not None and len(connections) != len(routes):
+        msg = "the corridor routing and assignment have different numbers of connections"
+        raise PlanningError(msg)
+
+    for border in _entries(routing.slots):
+        if plan is not None and border.border >= len(plan.borders or []):
+            msg = f"crossing slot border {border.border} is outside the Capacity plan"
+            raise PlanningError(msg)
+        geometry.slots.extend(_point(position) for position in _entries(border.positions))
+    feeds = assignment.feeds or [] if assignment is not None else []
+    for index, corridor in enumerate(routes):
+        if (
+            corridor is None
+            or corridor.partitions is None
+            or len(corridor.partitions) == 0
+            or corridor.source is None
+            or corridor.target is None
+        ):
+            continue
+        source = _point(corridor.source)
+        feed = feeds[index] if index < len(feeds) else None
+        route = [source]
+        if feed is not None and (position := _point(feed)) != source:
+            route.insert(0, position)
+        route.extend(_point(crossing) for crossing in _entries(corridor.crossings))
+        route.append(_point(corridor.target))
+        connection = connections[index] if index < len(connections) else None
+        target = connection.target if connection is not None else None
+        approach = _stub(chip, int(target.index), route[-1]) if target is not None else []
+        geometry.corridors.append(CorridorPath(route, approach))
+
+
 def _plan_of(capacity: bytes) -> CapacityPlanT:
     """The capacity plan of a run, for a stage that is drawn over it.
 
@@ -595,12 +684,30 @@ def _plan_of(capacity: bytes) -> CapacityPlanT:
     return plan
 
 
+def _assignment_of(assignment: bytes) -> AssignmentT:
+    """The assignment of a run, for a stage that is drawn with its feedlines.
+
+    Returns:
+        The assignment.
+
+    Raises:
+        PlanningError: If the bytes do not hold an assignment.
+    """
+    chosen = read_artifact(assignment).output
+    if not isinstance(chosen, AssignmentT):
+        msg = "the assignment artifact is not an assignment"
+        raise PlanningError(msg)
+    return chosen
+
+
 def planning_geometry(
     data: bytes,
     chip: ChipT,
     stage: str,
     capacity: bytes | None = None,
     global_routing: bytes | None = None,
+    *,
+    assignment: bytes | None = None,
 ) -> PlanningGeometry:
     """Read one planning artifact into the shapes it describes.
 
@@ -610,15 +717,18 @@ def planning_geometry(
         stage: The stage the artifact is drawn as.
         capacity: The capacity artifact of the same run, for the stages that are drawn over the
             free space they had to fit into: the global stage over the cells the grid blocked, and
-            the assign stage over the partitions its chords run through.
-        global_routing: The global artifact of the same run, for the assign stage, which is drawn
-            with the lattice edges that the inner circuit selected.
+            the assign and corridor stages over the partitions their chords and wires run through.
+        global_routing: The global artifact of the same run, for the assign and corridor stages,
+            which are drawn with the lattice edges that the inner circuit selected.
+        assignment: The assignment artifact of the same run. Corridor uses it to draw feedlines and
+            the approach of each wire to its target port.
 
     Returns:
         The geometry, in layout units.
 
     Raises:
-        PlanningError: If the stage is not a planning stage, or the artifact is not its output.
+        PlanningError: If the stage or its artifact is invalid, or the Corridor artifact has an
+            inconsistent connection count or border reference.
     """
     if stage not in PLANNING_STAGES:
         msg = f"'{stage}' is not a planning stage; the planning stages are {', '.join(PLANNING_STAGES)}"
@@ -644,7 +754,7 @@ def planning_geometry(
             geometry.blocked = _blocked(plan)
             _bottlenecks(plan, geometry)
             _keepout(plan, geometry)
-    else:
+    elif stage == "assign":
         if not isinstance(output, AssignmentT):
             msg = "the artifact is not an assignment"
             raise PlanningError(msg)
@@ -653,6 +763,22 @@ def planning_geometry(
             _capacity(_plan_of(capacity), geometry)
         _assignment(output, chip, geometry)
         # The inner circuit decided which ports joined the ring, so its wires belong in the picture.
+        if global_routing is not None:
+            _global(_routing_of(global_routing), geometry, lattice=False)
+    else:
+        if not isinstance(output, CorridorRoutingT):
+            msg = "the artifact is not a corridor routing"
+            raise PlanningError(msg)
+        chosen = _assignment_of(assignment) if assignment is not None else None
+        plan = _plan_of(capacity) if capacity is not None else None
+        _corridor(output, chip, plan, chosen, geometry)
+        # A corridor is a way through the partitions, so the partitions make the picture readable.
+        if plan is not None:
+            _capacity(plan, geometry)
+        # The wire of a resonator starts at its feed, which its feedline passes.
+        if chosen is not None:
+            _feedlines(chosen, chip, geometry)
+        # The corridors route the outer wires; the inner circuit is the rest of the wiring.
         if global_routing is not None:
             _global(_routing_of(global_routing), geometry, lattice=False)
     return geometry

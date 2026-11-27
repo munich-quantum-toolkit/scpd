@@ -243,6 +243,7 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         args.stage,
         capacity=verified.get("capacity"),
         global_routing=verified.get("global"),
+        assignment=verified.get("assign"),
     )
     return chip_bytes, title, geometry
 

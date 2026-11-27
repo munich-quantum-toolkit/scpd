@@ -438,44 +438,93 @@ std::vector<std::size_t> freeCellSeeds(const BitGrid& blocked,
 std::vector<PartitionLabel>
 rasterizePartitions(const std::span<const PartitionOutline> outlines,
                     const GridMetrics& grid) {
+  return rasterizePartitions(outlines, grid, {});
+}
+
+std::vector<PartitionLabel>
+rasterizePartitions(const std::span<const PartitionOutline> outlines,
+                    const GridMetrics& grid,
+                    const std::function<void()>& progress) {
   std::vector<PartitionLabel> labels(grid.cells(), LABEL_NONE);
-  if (grid.width == 0 || grid.height == 0) {
+  if (labels.empty()) {
     return labels;
   }
 
-  // The rings of one label are filled together, so a hole ring cancels the
-  // outer ring that encloses it. Grouping them keeps that per label rather
-  // than across the whole grid.
+  // Check for cancellation while collecting edges and filling rows.
+  std::size_t work = 0;
+  const auto checkpoint = [&] {
+    if (progress && work++ % 1024 == 0) {
+      progress();
+    }
+  };
+
+  // Rings with the same label share the even-odd fill, including holes.
   std::map<PartitionLabel, std::vector<const PartitionOutline*>> byLabel;
   for (const auto& outline : outlines) {
     if (outline.label != LABEL_NONE) {
       byLabel[outline.label].push_back(&outline);
     }
   }
-
+  /// An edge crosses the row centers from `first` up to `past`.
+  struct Edge {
+    std::uint32_t first;
+    std::uint32_t past;
+    Point from;
+    Point to;
+  };
+  const auto rowAt = [&grid](const double y) {
+    return static_cast<std::uint32_t>(
+        std::clamp(std::ceil(y - 0.5), 0.0, static_cast<double>(grid.height)));
+  };
+  std::vector<Edge> edges;
+  std::vector<const Edge*> active;
   std::vector<double> crossings;
   for (const auto& [label, rings] : byLabel) {
-    for (std::uint32_t y = 0; y < grid.height; ++y) {
-      // A ring runs along cell corners, so the row of cells at index y is
-      // the strip between the corner lines y and y + 1, tested at its middle.
-      const auto scan = static_cast<double>(y) + 0.5;
-      crossings.clear();
-      for (const auto* ring : rings) {
-        const auto& points = ring->ring;
-        for (std::size_t i = 0; i + 1 < points.size(); ++i) {
-          const auto& from = points[i];
-          const auto& to = points[i + 1];
-          // A ring is drawn on the grid, so an edge is either horizontal —
-          // and never crossed — or vertical over exactly one cell.
-          if ((from.y() > scan) == (to.y() > scan)) {
-            continue;
-          }
-          const auto t = (scan - from.y()) / (to.y() - from.y());
-          crossings.push_back(from.x() + (t * (to.x() - from.x())));
+    edges.clear();
+    for (const auto* ring : rings) {
+      if (std::ranges::any_of(ring->ring, [](const Point& point) {
+            return !std::isfinite(point.x()) || !std::isfinite(point.y());
+          })) {
+        throw std::invalid_argument(
+            "a partition outline has a nonfinite vertex");
+      }
+      for (std::size_t i = 0; i + 1 < ring->ring.size(); ++i) {
+        const auto& from = ring->ring[i];
+        const auto& to = ring->ring[i + 1];
+        checkpoint();
+        const auto first = rowAt(std::min(from.y(), to.y()));
+        const auto past = rowAt(std::max(from.y(), to.y()));
+        if (first < past) {
+          edges.push_back(
+              {.first = first, .past = past, .from = from, .to = to});
         }
       }
-      if (crossings.empty()) {
-        continue;
+    }
+    // Visit an edge only on the rows it crosses. Capacity outlines use
+    // unit-length cell edges, so each vertical edge crosses one row.
+    std::ranges::sort(edges, {}, &Edge::first);
+    std::size_t next = 0;
+    std::uint32_t row = 0;
+    while (next < edges.size() || !active.empty()) {
+      std::erase_if(active,
+                    [row](const Edge* edge) { return edge->past == row; });
+      if (active.empty()) {
+        if (next == edges.size()) {
+          break;
+        }
+        row = edges[next].first;
+      }
+      while (next < edges.size() && edges[next].first == row) {
+        active.push_back(&edges[next++]);
+      }
+      const auto scan = static_cast<double>(row) + 0.5;
+      crossings.clear();
+      for (const auto* edge : active) {
+        checkpoint();
+        const auto t =
+            (scan - edge->from.y()) / (edge->to.y() - edge->from.y());
+        crossings.push_back(edge->from.x() +
+                            (t * (edge->to.x() - edge->from.x())));
       }
       std::ranges::sort(crossings);
       for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
@@ -487,9 +536,10 @@ rasterizePartitions(const std::span<const PartitionOutline> outlines,
              x <= std::min<std::int64_t>(
                       last, static_cast<std::int64_t>(grid.width) - 1);
              ++x) {
-          labels[grid.index(static_cast<std::uint32_t>(x), y)] = label;
+          labels[grid.index(static_cast<std::uint32_t>(x), row)] = label;
         }
       }
+      ++row;
     }
   }
   return labels;

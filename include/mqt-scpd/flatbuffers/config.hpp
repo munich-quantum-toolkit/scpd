@@ -56,6 +56,10 @@ struct SolverParams;
 struct SolverParamsBuilder;
 struct SolverParamsT;
 
+struct CorridorParams;
+struct CorridorParamsBuilder;
+struct CorridorParamsT;
+
 struct StageParams;
 struct StageParamsBuilder;
 struct StageParamsT;
@@ -86,6 +90,8 @@ bool operator==(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs);
 bool operator!=(const AssignmentParamsT &lhs, const AssignmentParamsT &rhs);
 bool operator==(const SolverParamsT &lhs, const SolverParamsT &rhs);
 bool operator!=(const SolverParamsT &lhs, const SolverParamsT &rhs);
+bool operator==(const CorridorParamsT &lhs, const CorridorParamsT &rhs);
+bool operator!=(const CorridorParamsT &lhs, const CorridorParamsT &rhs);
 bool operator==(const StageParamsT &lhs, const StageParamsT &rhs);
 bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs);
 bool operator==(const RunParamsT &lhs, const RunParamsT &rhs);
@@ -110,6 +116,8 @@ inline const ::flatbuffers::TypeTable *GlobalParamsTypeTable();
 inline const ::flatbuffers::TypeTable *AssignmentParamsTypeTable();
 
 inline const ::flatbuffers::TypeTable *SolverParamsTypeTable();
+
+inline const ::flatbuffers::TypeTable *CorridorParamsTypeTable();
 
 inline const ::flatbuffers::TypeTable *StageParamsTypeTable();
 
@@ -680,10 +688,13 @@ struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// How far apart the places sit where a wire may cross a partition border,
   /// in layout units.
   ///
-  /// It decides how finely a border is divided into crossing slots, and so
-  /// how many wires PartitionBorder.budget lets through: one per slot. Where a
-  /// wire runs inside a partition, and the clearance of the drawn wire, the
-  /// later routing stages decide.
+  /// It decides how finely a border is divided for the Corridor stage, and so
+  /// how many wires PartitionBorder.budget lets through. The Corridor stage
+  /// keeps the crossings of two wires at least one crossing pitch apart, also
+  /// where two borders meet. The pitch applies to crossings only: a wire may
+  /// cross a border closer than one pitch to the target cell or the feed of
+  /// another wire. Where a wire runs inside a partition, and the clearance of
+  /// the drawn wire, the later routing stages decide.
   ///
   /// The default is the figure of the research prototype: its wire spacing
   /// less 20 layout units.
@@ -1063,12 +1074,130 @@ inline ::flatbuffers::Offset<SolverParams> CreateSolverParamsDirect(
 
 ::flatbuffers::Offset<SolverParams> CreateSolverParams(::flatbuffers::FlatBufferBuilder &_fbb, const SolverParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct CorridorParamsT : public ::flatbuffers::NativeTable {
+  typedef CorridorParams TableType;
+  std::string router{};
+  uint32_t rounds = 12;
+  uint32_t max_relaxation = 4;
+};
+
+/// What the Corridor stage may do.
+struct CorridorParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CorridorParamsT NativeTableType;
+  typedef CorridorParamsBuilder Builder;
+  struct Traits;
+  static const ::flatbuffers::TypeTable *MiniReflectTypeTable() {
+    return CorridorParamsTypeTable();
+  }
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ROUTER = 4,
+    VT_ROUNDS = 6,
+    VT_MAX_RELAXATION = 8
+  };
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  const ::flatbuffers::String *router() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_ROUTER);
+  }
+  /// Sweeps over the connections, alternating forward and backward.
+  ///
+  /// The sweeps exist so that a connection without a way can take room that
+  /// a later one has not claimed yet, and so that the order of the
+  /// connections does not decide the result on its own. A sweep can take a
+  /// way from a connection that had one; the stage keeps the round with the
+  /// fewest connections without a way. One last pass then offers every
+  /// connection still without a way the free slots of that round, and rips
+  /// up nothing. It must be at least one.
+  uint32_t rounds() const {
+    return GetField<uint32_t>(VT_ROUNDS, 12);
+  }
+  /// How many neighboring connections a failed one may rip up in a sweep,
+  /// counted along the sweep direction, and how many wires in its way it may
+  /// move aside. The step that moves them also raises the price of the slots
+  /// in the way of the failed connection that another wire holds, so with
+  /// zero no price rises. The stage uses a value below half the number of
+  /// connections, however many this asks for, but at least one when there
+  /// are two or more connections.
+  uint32_t max_relaxation() const {
+    return GetField<uint32_t>(VT_MAX_RELAXATION, 4);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_ROUTER) &&
+           verifier.VerifyString(router()) &&
+           VerifyField<uint32_t>(verifier, VT_ROUNDS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_MAX_RELAXATION, 4) &&
+           verifier.EndTable();
+  }
+  CorridorParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CorridorParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CorridorParams> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CorridorParamsBuilder {
+  typedef CorridorParams Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_router(::flatbuffers::Offset<::flatbuffers::String> router) {
+    fbb_.AddOffset(CorridorParams::VT_ROUTER, router);
+  }
+  void add_rounds(uint32_t rounds) {
+    fbb_.AddElement<uint32_t>(CorridorParams::VT_ROUNDS, rounds, 12);
+  }
+  void add_max_relaxation(uint32_t max_relaxation) {
+    fbb_.AddElement<uint32_t>(CorridorParams::VT_MAX_RELAXATION, max_relaxation, 4);
+  }
+  explicit CorridorParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CorridorParams> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CorridorParams>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CorridorParams> CreateCorridorParams(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::String> router = 0,
+    uint32_t rounds = 12,
+    uint32_t max_relaxation = 4) {
+  CorridorParamsBuilder builder_(_fbb);
+  builder_.add_max_relaxation(max_relaxation);
+  builder_.add_rounds(rounds);
+  builder_.add_router(router);
+  return builder_.Finish();
+}
+
+struct CorridorParams::Traits {
+  using type = CorridorParams;
+  static auto constexpr Create = CreateCorridorParams;
+};
+
+inline ::flatbuffers::Offset<CorridorParams> CreateCorridorParamsDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const char *router = nullptr,
+    uint32_t rounds = 12,
+    uint32_t max_relaxation = 4) {
+  auto router__ = router ? _fbb.CreateString(router) : 0;
+  return mqt::scpd::flatbuffers::config::CreateCorridorParams(
+      _fbb,
+      router__,
+      rounds,
+      max_relaxation);
+}
+
+::flatbuffers::Offset<CorridorParams> CreateCorridorParams(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct StageParamsT : public ::flatbuffers::NativeTable {
   typedef StageParams TableType;
   std::unique_ptr<mqt::scpd::flatbuffers::config::CapacityParamsT> capacity{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::GlobalParamsT> global{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::AssignmentParamsT> assignment{};
   std::unique_ptr<mqt::scpd::flatbuffers::config::SolverParamsT> solver{};
+  std::unique_ptr<mqt::scpd::flatbuffers::config::CorridorParamsT> corridor{};
   StageParamsT() = default;
   StageParamsT(const StageParamsT &o);
   StageParamsT(StageParamsT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1087,7 +1216,8 @@ struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_CAPACITY = 4,
     VT_GLOBAL = 6,
     VT_ASSIGNMENT = 8,
-    VT_SOLVER = 10
+    VT_SOLVER = 10,
+    VT_CORRIDOR = 12
   };
   const mqt::scpd::flatbuffers::config::CapacityParams *capacity() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::CapacityParams *>(VT_CAPACITY);
@@ -1101,6 +1231,9 @@ struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const mqt::scpd::flatbuffers::config::SolverParams *solver() const {
     return GetPointer<const mqt::scpd::flatbuffers::config::SolverParams *>(VT_SOLVER);
   }
+  const mqt::scpd::flatbuffers::config::CorridorParams *corridor() const {
+    return GetPointer<const mqt::scpd::flatbuffers::config::CorridorParams *>(VT_CORRIDOR);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1112,6 +1245,8 @@ struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            verifier.VerifyTable(assignment()) &&
            VerifyOffset(verifier, VT_SOLVER) &&
            verifier.VerifyTable(solver()) &&
+           VerifyOffset(verifier, VT_CORRIDOR) &&
+           verifier.VerifyTable(corridor()) &&
            verifier.EndTable();
   }
   StageParamsT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1135,6 +1270,9 @@ struct StageParamsBuilder {
   void add_solver(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::SolverParams> solver) {
     fbb_.AddOffset(StageParams::VT_SOLVER, solver);
   }
+  void add_corridor(::flatbuffers::Offset<mqt::scpd::flatbuffers::config::CorridorParams> corridor) {
+    fbb_.AddOffset(StageParams::VT_CORRIDOR, corridor);
+  }
   explicit StageParamsBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1151,8 +1289,10 @@ inline ::flatbuffers::Offset<StageParams> CreateStageParams(
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::CapacityParams> capacity = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::GlobalParams> global = 0,
     ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::AssignmentParams> assignment = 0,
-    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::SolverParams> solver = 0) {
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::SolverParams> solver = 0,
+    ::flatbuffers::Offset<mqt::scpd::flatbuffers::config::CorridorParams> corridor = 0) {
   StageParamsBuilder builder_(_fbb);
+  builder_.add_corridor(corridor);
   builder_.add_solver(solver);
   builder_.add_assignment(assignment);
   builder_.add_global(global);
@@ -1809,12 +1949,58 @@ inline ::flatbuffers::Offset<SolverParams> SolverParams::Pack(::flatbuffers::Fla
 }
 
 
+inline bool operator==(const CorridorParamsT &lhs, const CorridorParamsT &rhs) {
+  return
+      (lhs.router == rhs.router) &&
+      (lhs.rounds == rhs.rounds) &&
+      (lhs.max_relaxation == rhs.max_relaxation);
+}
+
+inline bool operator!=(const CorridorParamsT &lhs, const CorridorParamsT &rhs) {
+    return !(lhs == rhs);
+}
+
+
+inline CorridorParamsT *CorridorParams::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::make_unique<CorridorParamsT>();
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CorridorParams::UnPackTo(CorridorParamsT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = router(); if (_e) _o->router = _e->str(); }
+  { auto _e = rounds(); _o->rounds = _e; }
+  { auto _e = max_relaxation(); _o->max_relaxation = _e; }
+}
+
+inline ::flatbuffers::Offset<CorridorParams> CreateCorridorParams(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CorridorParams::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CorridorParams> CorridorParams::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CorridorParamsT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CorridorParamsT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _router = _o->router.empty() ? 0 : _fbb.CreateString(_o->router);
+  auto _rounds = _o->rounds;
+  auto _max_relaxation = _o->max_relaxation;
+  return mqt::scpd::flatbuffers::config::CreateCorridorParams(
+      _fbb,
+      _router,
+      _rounds,
+      _max_relaxation);
+}
+
+
 inline bool operator==(const StageParamsT &lhs, const StageParamsT &rhs) {
   return
       ((lhs.capacity == rhs.capacity) || (lhs.capacity && rhs.capacity && *lhs.capacity == *rhs.capacity)) &&
       ((lhs.global == rhs.global) || (lhs.global && rhs.global && *lhs.global == *rhs.global)) &&
       ((lhs.assignment == rhs.assignment) || (lhs.assignment && rhs.assignment && *lhs.assignment == *rhs.assignment)) &&
-      ((lhs.solver == rhs.solver) || (lhs.solver && rhs.solver && *lhs.solver == *rhs.solver));
+      ((lhs.solver == rhs.solver) || (lhs.solver && rhs.solver && *lhs.solver == *rhs.solver)) &&
+      ((lhs.corridor == rhs.corridor) || (lhs.corridor && rhs.corridor && *lhs.corridor == *rhs.corridor));
 }
 
 inline bool operator!=(const StageParamsT &lhs, const StageParamsT &rhs) {
@@ -1826,7 +2012,8 @@ inline StageParamsT::StageParamsT(const StageParamsT &o)
       : capacity((o.capacity) ? new mqt::scpd::flatbuffers::config::CapacityParamsT(*o.capacity) : nullptr),
         global((o.global) ? new mqt::scpd::flatbuffers::config::GlobalParamsT(*o.global) : nullptr),
         assignment((o.assignment) ? new mqt::scpd::flatbuffers::config::AssignmentParamsT(*o.assignment) : nullptr),
-        solver((o.solver) ? new mqt::scpd::flatbuffers::config::SolverParamsT(*o.solver) : nullptr) {
+        solver((o.solver) ? new mqt::scpd::flatbuffers::config::SolverParamsT(*o.solver) : nullptr),
+        corridor((o.corridor) ? new mqt::scpd::flatbuffers::config::CorridorParamsT(*o.corridor) : nullptr) {
 }
 
 inline StageParamsT &StageParamsT::operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT {
@@ -1834,6 +2021,7 @@ inline StageParamsT &StageParamsT::operator=(StageParamsT o) FLATBUFFERS_NOEXCEP
   std::swap(global, o.global);
   std::swap(assignment, o.assignment);
   std::swap(solver, o.solver);
+  std::swap(corridor, o.corridor);
   return *this;
 }
 
@@ -1850,6 +2038,7 @@ inline void StageParams::UnPackTo(StageParamsT *_o, const ::flatbuffers::resolve
   { auto _e = global(); if (_e) { if(_o->global) { _e->UnPackTo(_o->global.get(), _resolver); } else { _o->global = std::unique_ptr<mqt::scpd::flatbuffers::config::GlobalParamsT>(_e->UnPack(_resolver)); } } else if (_o->global) { _o->global.reset(); } }
   { auto _e = assignment(); if (_e) { if(_o->assignment) { _e->UnPackTo(_o->assignment.get(), _resolver); } else { _o->assignment = std::unique_ptr<mqt::scpd::flatbuffers::config::AssignmentParamsT>(_e->UnPack(_resolver)); } } else if (_o->assignment) { _o->assignment.reset(); } }
   { auto _e = solver(); if (_e) { if(_o->solver) { _e->UnPackTo(_o->solver.get(), _resolver); } else { _o->solver = std::unique_ptr<mqt::scpd::flatbuffers::config::SolverParamsT>(_e->UnPack(_resolver)); } } else if (_o->solver) { _o->solver.reset(); } }
+  { auto _e = corridor(); if (_e) { if(_o->corridor) { _e->UnPackTo(_o->corridor.get(), _resolver); } else { _o->corridor = std::unique_ptr<mqt::scpd::flatbuffers::config::CorridorParamsT>(_e->UnPack(_resolver)); } } else if (_o->corridor) { _o->corridor.reset(); } }
 }
 
 inline ::flatbuffers::Offset<StageParams> CreateStageParams(::flatbuffers::FlatBufferBuilder &_fbb, const StageParamsT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1864,12 +2053,14 @@ inline ::flatbuffers::Offset<StageParams> StageParams::Pack(::flatbuffers::FlatB
   auto _global = _o->global ? CreateGlobalParams(_fbb, _o->global.get(), _rehasher) : 0;
   auto _assignment = _o->assignment ? CreateAssignmentParams(_fbb, _o->assignment.get(), _rehasher) : 0;
   auto _solver = _o->solver ? CreateSolverParams(_fbb, _o->solver.get(), _rehasher) : 0;
+  auto _corridor = _o->corridor ? CreateCorridorParams(_fbb, _o->corridor.get(), _rehasher) : 0;
   return mqt::scpd::flatbuffers::config::CreateStageParams(
       _fbb,
       _capacity,
       _global,
       _assignment,
-      _solver);
+      _solver,
+      _corridor);
 }
 
 
@@ -2145,27 +2336,47 @@ inline const ::flatbuffers::TypeTable *SolverParamsTypeTable() {
   return &tt;
 }
 
+inline const ::flatbuffers::TypeTable *CorridorParamsTypeTable() {
+  static const ::flatbuffers::TypeCode type_codes[] = {
+    { ::flatbuffers::ET_STRING, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 },
+    { ::flatbuffers::ET_UINT, 0, -1 }
+  };
+  static const char * const names[] = {
+    "router",
+    "rounds",
+    "max_relaxation"
+  };
+  static const ::flatbuffers::TypeTable tt = {
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, names
+  };
+  return &tt;
+}
+
 inline const ::flatbuffers::TypeTable *StageParamsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_SEQUENCE, 0, 0 },
     { ::flatbuffers::ET_SEQUENCE, 0, 1 },
     { ::flatbuffers::ET_SEQUENCE, 0, 2 },
-    { ::flatbuffers::ET_SEQUENCE, 0, 3 }
+    { ::flatbuffers::ET_SEQUENCE, 0, 3 },
+    { ::flatbuffers::ET_SEQUENCE, 0, 4 }
   };
   static const ::flatbuffers::TypeFunction type_refs[] = {
     mqt::scpd::flatbuffers::config::CapacityParamsTypeTable,
     mqt::scpd::flatbuffers::config::GlobalParamsTypeTable,
     mqt::scpd::flatbuffers::config::AssignmentParamsTypeTable,
-    mqt::scpd::flatbuffers::config::SolverParamsTypeTable
+    mqt::scpd::flatbuffers::config::SolverParamsTypeTable,
+    mqt::scpd::flatbuffers::config::CorridorParamsTypeTable
   };
   static const char * const names[] = {
     "capacity",
     "global",
     "assignment",
-    "solver"
+    "solver",
+    "corridor"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 4, type_codes, type_refs, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 5, type_codes, type_refs, nullptr, nullptr, names
   };
   return &tt;
 }

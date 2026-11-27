@@ -98,7 +98,11 @@ The longer detail cell step may exceed the shorter one by up to 10%. Use
 | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `planner`              | `""`    | The implementation of the step; empty takes `watershed`                                                                                                 |
 | `bottleneck_clearance` | `1.5`   | A place is a bottleneck only where its free radius is below this many wire pitches; a pitch is `min_wire_spacing` plus `min_obstacle_spacing`; positive |
-| `crossing_pitch`       | `165.0` | The distance between two places on one partition border where a wire may cross it; it decides how many wires a border lets through; positive            |
+| `crossing_pitch`       | `165.0` | Minimum spacing between border crossings of different wires; positive                                                                                   |
+
+Capacity counts the crossing slots on each partition border. Corridor uses the
+same slots and enforces the crossing pitch across different borders. A crossing
+can therefore block a slot on a neighboring border.
 
 ## `[stages.global]`
 
@@ -150,7 +154,8 @@ Global decides which bridge ports stay on the ring and which count as
 resonators. `plan` and `doctor` reject configurations that violate a limit for
 every possible ring. Assignment also requires feed points to respect
 `min_wire_spacing` and map to distinct detail cells. Refine the detail grid if
-distinct feeds round to the same cell.
+distinct feeds round to the same cell. Corridor uses those cells as its wire
+starts.
 
 ## `[stages.solver]`
 
@@ -188,11 +193,35 @@ HiGHS supports concurrent solves from separate calling threads. A callback
 cannot start a nested solve. To change the thread count on a calling thread, let
 any other active solves in MQT SCPD finish first.
 
+## `[stages.corridor]`
+
+| Key              | Default | Meaning                                                       |
+| ---------------- | ------- | ------------------------------------------------------------- |
+| `router`         | `""`    | The implementation of the step; empty takes `partition-astar` |
+| `rounds`         | `12`    | Maximum number of routing sweeps; at least one                |
+| `max_relaxation` | `4`     | Maximum number of connections to remove per reroute attempt   |
+
+Corridor alternates forward and backward sweeps. It can remove routes to make
+room and raises the cost of occupied slots for later sweeps. The stage keeps the
+round with the fewest unrouted connections. Sweeps stop when every connection
+with a partition assigned to each endpoint has a route. Corridor then tries the
+remaining connections using free slots only. It reports a `free slots` entry if
+that pass routes a connection.
+
+With fewer than two connections, Corridor uses zero relaxation. Otherwise, it
+caps `max_relaxation` at half the number of other connections, rounded down,
+with a minimum cap of one. Set `max_relaxation = 0` to disable route removal and
+slot cost increases.
+
+Corridor checks wire intersections with straight segments inside each partition.
+This check is exact for convex partitions. Routing can leave a connection
+unrouted even if a feasible route exists.
+
 ## `[run]`
 
-| Key          | Default | Meaning                                                                       |
-| ------------ | ------- | ----------------------------------------------------------------------------- |
-| `stop_after` | `""`    | The last step of a run: `capacity`, `global` or `assign`; empty runs them all |
+| Key          | Default | Meaning                                                                                   |
+| ------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign` or `corridor`; empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each
 step. `--stop-after` replaces `stop_after` for one run.

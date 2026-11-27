@@ -197,6 +197,41 @@ TEST(RasterizePartitions, CancelsAHoleAgainstTheRingAroundIt) {
   EXPECT_EQ(filled[grid.index(3, 3)], LABEL_NONE);
 }
 
+TEST(RasterizePartitions, KeepsBlankRowsBetweenRings) {
+  const auto grid = unitGrid(7, 8);
+  const BitGrid free(7, 8);
+  std::vector<PartitionLabel> labels(grid.cells(), LABEL_NONE);
+  labels[grid.index(1, 1)] = FIRST_PARTITION_LABEL;
+  labels[grid.index(4, 6)] = FIRST_PARTITION_LABEL;
+
+  const auto partitions = extractPartitions(free, labels, grid);
+  ASSERT_EQ(partitions.outlines.size(), 2U);
+  EXPECT_EQ(rasterizePartitions(partitions.outlines, grid), labels);
+}
+
+TEST(RasterizePartitions, StopsWhenTheProgressCallbackThrows) {
+  const auto grid = unitGrid(3, 3);
+  const std::vector<PartitionOutline> outlines{
+      {.label = FIRST_PARTITION_LABEL,
+       .ring = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}, {0.0, 0.0}}}};
+
+  EXPECT_THROW(
+      static_cast<void>(rasterizePartitions(
+          outlines, grid, [] { throw std::runtime_error("cancelled"); })),
+      std::runtime_error);
+}
+
+TEST(RasterizePartitions, RefusesANonfiniteVertex) {
+  const auto grid = unitGrid(3, 3);
+  const auto nan = std::numeric_limits<double>::quiet_NaN();
+  const std::vector<PartitionOutline> outlines{
+      {.label = FIRST_PARTITION_LABEL,
+       .ring = {{0.0, nan}, {1.0, nan}, {1.0, 1.0}, {0.0, nan}}}};
+
+  EXPECT_THROW(static_cast<void>(rasterizePartitions(outlines, grid)),
+               std::invalid_argument);
+}
+
 TEST(RasterizePartitions, KeepsAPartitionOfOneCell) {
   const auto grid = unitGrid(5, 5);
   BitGrid blocked(5, 5, true);
