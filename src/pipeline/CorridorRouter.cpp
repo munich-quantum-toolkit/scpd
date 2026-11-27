@@ -981,7 +981,7 @@ unrouted(const std::vector<std::optional<Route>>& routes) {
   return {.text = std::format("routed {}/{}", total - left, total)};
 }
 
-/// The partition A* corridor router.
+/// The corridor router of the first release.
 class PartitionAStarRouter final : public ICorridorRouter {
 public:
   [[nodiscard]] CorridorRoutingT run(const ChipT& chip,

@@ -72,6 +72,11 @@ GRID_DEFAULTS: dict[str, int] = {
     "detail_factor": 30,
 }
 
+#: The keys that no stage reads any more, by section. The loader still accepts them, and
+#: ``removed_keys`` names each one, so that a configuration can drop them before a later version
+#: refuses them.
+REMOVED_KEYS: dict[str, tuple[str, ...]] = {"grid": ("launcher_offset_x", "launcher_offset_y")}
+
 #: The keys of each ``[stages.*]`` section with the defaults of the schema. A shipped configuration
 #: carries only what differs from them, the rule the grid section follows.
 STAGE_DEFAULTS: dict[str, dict[str, object]] = {
@@ -249,6 +254,7 @@ def _read_grid(table: dict[str, Any], problems: list[str]) -> GridParamsT:
     grid = GridParamsT()
     grid.capacityCellsX = section.take("capacity_cells_x", int, default=GRID_DEFAULTS["capacity_cells_x"])
     grid.capacityCellsY = section.take("capacity_cells_y", int, default=GRID_DEFAULTS["capacity_cells_y"])
+    section.seen.update(REMOVED_KEYS["grid"])
     grid.detailFactor = section.take("detail_factor", int, default=GRID_DEFAULTS["detail_factor"])
     section.finish()
     return grid
@@ -322,7 +328,7 @@ def _read_stages(table: dict[str, Any], problems: list[str]) -> StageParamsT:
 
 
 def _read_run(table: dict[str, Any], problems: list[str]) -> RunParamsT:
-    """Read how far a run goes; the step must name a planning stage.
+    """Read how far a run goes; the step must be one this release runs.
 
     Returns:
         The run parameters.
@@ -377,6 +383,24 @@ def _defaults_problems(name: str, section: dict[str, Any], defaults: dict[str, o
     return problems
 
 
+def removed_keys(document: dict[str, Any]) -> list[str]:
+    """The keys of a parsed file that no stage reads any more.
+
+    Returns:
+        One message per key, empty when the file carries none.
+    """
+    messages: list[str] = []
+    for name, keys in REMOVED_KEYS.items():
+        section = document.get(name)
+        if isinstance(section, dict):
+            messages.extend(
+                f"[{name}] {key} has no effect, and a later version will refuse it; remove it"
+                for key in keys
+                if key in section
+            )
+    return messages
+
+
 def shipped_config_problems(document: dict[str, Any]) -> list[str]:
     """The ways a parsed file breaks the rules for a shipped configuration.
 
@@ -407,6 +431,7 @@ def shipped_config_problems(document: dict[str, Any]) -> list[str]:
     run = document.get("run")
     if isinstance(run, dict):
         problems.extend(_defaults_problems("run", run, RUN_DEFAULTS))
+    problems.extend(removed_keys(document))
     return problems
 
 
@@ -470,6 +495,19 @@ def parse_config(text: str, *, source: str = "config.toml", strict: bool = False
         msg = f"{source}: " + "; ".join(problems)
         raise ConfigError(msg)
     return config
+
+
+def removed_keys_in(path: Path) -> list[str]:
+    """The keys of a ``config.toml`` file that no stage reads any more, as ``removed_keys`` names them.
+
+    Returns:
+        One message per key, empty when the file carries none or cannot be read as TOML.
+    """
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return []
+    return removed_keys(document)
 
 
 def load_config(path: Path, *, strict: bool = False) -> ConfigT:

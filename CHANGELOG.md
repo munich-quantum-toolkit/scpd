@@ -93,6 +93,8 @@ releases may include breaking changes.
 - ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment
   ([#167]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - ⬆️ Require Python 3.11.5 or newer ([#178]) ([**@denialhaag**])
+- 🔥 Stop reading `[grid] launcher_offset_x` and `launcher_offset_y` ([#166])
+  ([**@FeldmeierMichael**])
 - 🎨 Change the output and the exit codes of the commands to the format of
   `docs/terminal_output.md` ([#166]) ([**@FeldmeierMichael**])
 - 🔧 Build the module libraries, the tests and the Python bindings with

@@ -530,7 +530,7 @@ struct Circuit {
   std::vector<double> lengths;
 };
 
-/// The Hanan-grid MILP router.
+/// The global router of the first release.
 class HananMilpRouter final : public IGlobalRouter {
 public:
   [[nodiscard]] GlobalRoutingT run(const ChipT& chip,

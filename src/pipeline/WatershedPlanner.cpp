@@ -808,7 +808,7 @@ private:
   const grid::GridMetrics* detailGrid;
 };
 
-/// The watershed capacity planner.
+/// The capacity planner of the first release.
 class WatershedPlanner final : public ICapacityPlanner {
 public:
   [[nodiscard]] CapacityPlanT run(const ChipT& chip, const ConfigT& config,

@@ -18,7 +18,7 @@
 namespace mqt::scpd::pipeline {
 
 /**
- * @brief Creates the partition A* corridor router.
+ * @brief Creates the corridor router of the first release.
  *
  * The router searches the partition graph and not the cells. The nodes are
  * the crossing slots of the partition borders, an edge joins two slots of one

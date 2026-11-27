@@ -4,11 +4,37 @@ See the [changelog](CHANGELOG.md) for the full list of changes.
 
 ## [Unreleased]
 
+- To upgrade an `SCP1` run, use its `config.toml` and `00-chip.json` with
+  `mqt-scpd plan -c <config> --chip <chip> -o <new-dir>`. This creates `SCP2`
+  artifacts with the run marker and input records.
 - The Capacity stage requires detail grid steps within 10% of each other. Set
   `[grid] capacity_cells_y` to zero to derive it from the chip aspect ratio, or
   set explicit dimensions that produce nearly square cells.
+- Remove `[grid] launcher_offset_x` and `launcher_offset_y` from existing
+  configurations. The loader accepts these keys with a warning.
+
+To plan through Assignment, set `[stages.assignment] launcher_target` to the
+number of chain ends that need a launcher on your chip. Use
+`[run] stop_after = "capacity"` for Capacity alone. `doctor` checks through the
+configured stop point, which defaults to Detail. See the
+[configuration reference](docs/configuration.md) for launcher order, ring
+counts, and solver settings.
 
 The Linux x86-64 wheels require a processor with the POPCNT instruction.
+
+Keep existing `SCP2` Capacity artifacts. Regenerate earlier `SCP2` Global and
+Assignment placeholders from the original configuration and chip. To add
+Corridor to an existing run with current artifacts, run
+`mqt-scpd plan -o <run-dir> --stage corridor`. Set `[run] stop_after = "assign"`
+to keep Assignment as the last stage of a full run. `plan` exits with code 1 if
+Corridor leaves any connection unrouted. Rerun Capacity if Corridor rejects a
+saved Capacity artifact because its grid, partitions, borders, or crossing
+budgets do not match the current run.
+
+To add Detail to an existing run with current artifacts, run
+`mqt-scpd plan -o <run-dir> --stage detail`. Set `[run] stop_after = "corridor"`
+to keep Corridor as the last stage of a full run. `plan` exits with code 1 if
+Detail leaves a wire without a path or two wires within the wire clearance.
 
 Assignment uses a sliding window to enforce the feedline utilization limit. The
 bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning

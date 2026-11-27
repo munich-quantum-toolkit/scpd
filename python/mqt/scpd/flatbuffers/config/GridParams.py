@@ -43,13 +43,13 @@ class GridParams(object):
     # Cells of the detail grid per cell of the capacity grid, along each axis.
     # GridParams
     def DetailFactor(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
+        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
         return 30
 
 def GridParamsStart(builder: flatbuffers.Builder):
-    builder.StartObject(3)
+    builder.StartObject(5)
 
 def Start(builder: flatbuffers.Builder):
     GridParamsStart(builder)
@@ -67,7 +67,7 @@ def AddCapacityCellsY(builder: flatbuffers.Builder, capacityCellsY: int):
     GridParamsAddCapacityCellsY(builder, capacityCellsY)
 
 def GridParamsAddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
-    builder.PrependUint32Slot(2, detailFactor, 30)
+    builder.PrependUint32Slot(4, detailFactor, 30)
 
 def AddDetailFactor(builder: flatbuffers.Builder, detailFactor: int):
     GridParamsAddDetailFactor(builder, detailFactor)

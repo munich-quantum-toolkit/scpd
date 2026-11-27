@@ -37,6 +37,18 @@ if TYPE_CHECKING:
     from .flatbuffers.design.Chip import ChipT
     from .planning import PlanningGeometry
 
+#: The stages the command knows, and the phase in which each arrives.
+STAGES: dict[str, str] = {
+    "layout": "phase 1",
+    "capacity": "phase 3",
+    "global": "phase 3",
+    "assign": "phase 3",
+    "corridor": "phase 3",
+    "detail": "phase 4",
+    "final": "phase 4",
+    "aligned": "phase 4",
+}
+
 #: The substrate, as the two ends of a faint diagonal gradient.
 SUBSTRATE: tuple[str, str] = ("#f7f7f6", "#efeeeb")
 #: The blocked cells of the grid a plan was cut on, under the artwork.

@@ -69,7 +69,7 @@ struct MQT_SCPD_PIPELINE_EXPORT InnerCircuit {
 innerCircuitOf(const ChipT& chip, const ConfigT& config);
 
 /**
- * @brief Creates the Hanan-grid MILP router.
+ * @brief Creates the global router of the first release.
  *
  * The router solves a flow model on the Hanan lattice of each capacity chain
  * as one mixed-integer program: a binary variable selects an arc of a lattice,

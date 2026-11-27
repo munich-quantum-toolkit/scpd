@@ -187,6 +187,15 @@ def test_read_rejects_foreign_bytes() -> None:
         read_artifact(IDENTIFIER)
 
 
+def test_read_rejects_the_previous_schema_identifier() -> None:
+    """An artifact using the previous schema must be rebuilt."""
+    data = bytearray(write_artifact(wrap(StageOutput.GlobalRouting, _global_routing())))
+    data[4:8] = b"SCP1"
+
+    with pytest.raises(ArtifactError, match=r"identifier.*SCP2"):
+        read_artifact(bytes(data))
+
+
 def test_assignment_round_trips() -> None:
     """The connections of an assignment survive with their roles."""
     assignment = AssignmentT(

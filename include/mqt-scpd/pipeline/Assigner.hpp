@@ -130,7 +130,7 @@ launcherPlacesProblem(const ChipT& chip, const ConfigT& config);
 ringCountProblem(const ChipT& chip, const ConfigT& config);
 
 /**
- * @brief Creates the ordered MILP assigner.
+ * @brief Creates the assigner of the first release.
  *
  * The assigner solves a model of the ring of outer ports that keeps the
  * feedlines from crossing, as one mixed-integer program. It refuses a

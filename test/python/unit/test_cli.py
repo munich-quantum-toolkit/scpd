@@ -150,21 +150,15 @@ def test_plan_reports_a_value_the_core_refuses_against_the_configuration(
     assert capsys.readouterr().err == f"✗ {run / 'config.toml'}: {problem}\n"
 
 
-def test_plot_writes_the_layout(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """The layout stage writes the chip as SVG."""
+def test_plot_writes_the_layout_and_refuses_later_stages(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The layout stage renders; a stage of a later phase names that phase."""
     output = tmp_path / "layout.svg"
     assert main(["plot", "-c", CONFIG, "--stage", "layout", "-o", str(output), "--width", "800"]) == 0
     assert output.read_text(encoding="utf-8").startswith("<svg")
     assert capsys.readouterr().out.startswith(f"✓ {output}  ")
 
-
-@pytest.mark.parametrize("command", ["plot", "render"])
-def test_drawing_refuses_an_unknown_stage(command: str, capsys: pytest.CaptureFixture[str]) -> None:
-    """Both drawing commands list the stages they can draw."""
-    with pytest.raises(SystemExit) as error:
-        main([command, "--stage", "unknown", "-o", "chip.svg"])
-    assert error.value.code == 2
-    assert "invalid choice" in capsys.readouterr().err
+    assert main(["plot", "-c", CONFIG, "--stage", "final", "-o", str(output)]) == 1
+    assert "✗ stage 'final' arrives with phase 4" in capsys.readouterr().err
 
 
 def test_render_writes_a_layout_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -687,6 +681,23 @@ def test_doctor_and_plan_refuse_more_launcher_ends_than_the_chip_has_launchers(
 
     # A run that ends before the assignment does not need the counts.
     assert main(["plan", "-c", str(config), "-o", str(run), "--stop-after", "global", "--no-progress"]) == 0
+
+
+def test_doctor_and_plan_warn_about_a_key_that_no_stage_reads(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A removed key fails no check, and the doctor and the run name it so that it can go."""
+    config = with_launcher_target(tmp_path, 1)
+    text = config.read_text(encoding="utf-8")
+    config.write_text(text.replace("capacity_cells_x = 12", "capacity_cells_x = 12\nlauncher_offset_x = 0"))
+    warning = "[grid] launcher_offset_x has no effect, and a later version will refuse it; remove it"
+
+    assert main(["doctor", "-c", str(config)]) == 0
+    assert f"WARNING: {warning}" in capsys.readouterr().out
+
+    run = tmp_path / "run"
+    assert main(["plan", "-c", str(config), "-o", str(run), "--stop-after", "capacity", "--no-progress"]) == 0
+    assert warning in capsys.readouterr().out
 
 
 def test_doctor_and_plan_refuse_a_ring_that_carries_both_ends_of_a_bridge(

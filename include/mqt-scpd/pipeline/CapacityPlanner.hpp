@@ -211,7 +211,7 @@ orientationProblem(const ChipT& chip);
 buildScene(const ChipT& chip, const ConfigT& config);
 
 /**
- * @brief Creates the watershed capacity planner.
+ * @brief Creates the capacity planner of the first release.
  *
  * The planner rasterizes the chip, takes the distance transform of the free
  * space, finds the bottlenecks along its medial axis, walks them outward from
