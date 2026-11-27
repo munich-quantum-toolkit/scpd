@@ -19,20 +19,19 @@ import argparse
 import contextlib
 import os
 import sys
-import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import pyscpd
 from .artifacts import ArtifactError
 from .chip import ChipError, classify_chip, decode_chip, load_chip
-from .config import ConfigError, load_config, removed_keys, removed_keys_in, write_config
+from .config import ConfigError, load_config, write_config
 from .console import Console, size, write_out
 from .doctor import run_doctor, solver_problem
 from .export import HAS_KLAYOUT
 from .inspection import InspectionError, artifact_to_json
 from .planning import PLANNING_STAGES, PlanningError, PlanningGeometry, planning_geometry
-from .plot import STAGES, PlotError, layout_svg
+from .plot import PlotError, layout_svg
 from .run import STAGE_FILES, BlockReporter, RunDirectory, RunError, input_digests, steps_until
 from .solvers import register as register_external_solver
 from .steps import STEPS
@@ -124,7 +123,6 @@ def command_plan(args: argparse.Namespace) -> int:
         steps = [args.stage]
         subject = directory.path.resolve().name
         chip = directory.classified_chip(config)
-        warnings = removed_keys_in(directory.config)
     else:
         snapshot = directory.inputs(args.config, args.chip)
         config = _validated(snapshot.config, args.config)
@@ -132,7 +130,6 @@ def command_plan(args: argparse.Namespace) -> int:
         steps = steps_until(args.stop_after if args.stop_after is not None else configured)
         subject = _subject(args.config)
         chip = classify_chip(config, snapshot.chip_text, snapshot.chip_path)
-        warnings = removed_keys(tomllib.loads(snapshot.config_text))
 
     config_bytes = write_config(config)
     problems = pyscpd.plan_problems(chip, config_bytes, steps)
@@ -142,8 +139,6 @@ def command_plan(args: argparse.Namespace) -> int:
         raise ConfigError("; ".join(problems))
     solver = pyscpd.solver_info(config_bytes)
     console.header("plan", subject, str(directory.path), [solver])
-    for warning in warnings:
-        console.warning(warning)
     staging = directory.staging(snapshot) if snapshot is not None else contextlib.nullcontext(directory)
     with staging as work:
         return _run_plan(directory, work, console, steps, config, chip, args.verbose)
@@ -215,13 +210,9 @@ def _drawn(args: argparse.Namespace) -> tuple[bytes, str, PlanningGeometry | Non
         The classified chip, the name of the chip for the caption, and the planning shapes or None.
 
     Raises:
-        PlotError: If the stage arrives with a later phase.
         RunError: If the artifact of the stage is missing from the run, or if it or an earlier
             artifact was made from inputs the run no longer holds.
     """
-    if args.stage != "layout" and args.stage not in PLANNING_STAGES:
-        msg = f"stage '{args.stage}' arrives with {STAGES[args.stage]}"
-        raise PlotError(msg)
     if args.run_dir is None:
         return load_chip(load_config(args.config), args.config, args.chip), _subject(args.config), None
     directory = RunDirectory(args.run_dir)
@@ -364,7 +355,7 @@ def _add_drawing_options(parser: argparse.ArgumentParser) -> None:
     source.add_argument("-c", "--config", type=Path, help="the config.toml of the chip")
     source.add_argument("--run-dir", type=Path, help="the run directory to draw the chip and a stage from")
     _add_chip_option(parser)
-    parser.add_argument("--stage", choices=list(STAGES), default="layout", help="the stage to draw")
+    parser.add_argument("--stage", choices=("layout", *PLANNING_STAGES), default="layout", help="the stage to draw")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -119,7 +119,7 @@ mqt-scpd plan -c planar-superconducting-pd/inputs/9q/config.toml -o runs/9q
 
 The
 [benchmark guide](https://mqt.readthedocs.io/projects/scpd/en/latest/benchmarks.html)
-describes the chips and what the current release does with them.
+describes the chips and how to plan and draw them.
 
 **Detailed documentation and examples are available at
 [ReadTheDocs](https://mqt.readthedocs.io/projects/scpd).**

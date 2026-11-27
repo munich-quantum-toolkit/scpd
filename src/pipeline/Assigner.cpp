@@ -359,7 +359,7 @@ std::string endName(const ChipT& chip,
   return port != nullptr ? chip.ports[port->index()]->label : "termination";
 }
 
-/// The assigner of the first release.
+/// The ordered MILP assigner.
 class OrderedMilpAssigner final : public IAssigner {
 public:
   [[nodiscard]] AssignmentT run(const ChipT& chip,

@@ -19,16 +19,12 @@ class RunParams(object):
         x.Init(buf, n + offset)
         return x
 
-    @classmethod
-    def GetRootAsRunParams(cls, buf, offset=0):
-        """This method is deprecated. Please switch to GetRootAs."""
-        return cls.GetRootAs(buf, offset)
     # RunParams
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)
 
-    # The last step to run: a stage, or a phase of a stage. Empty runs every
-    # step this release implements. The command line can override it.
+    # The last planning step to run. Empty runs all steps. The command line
+    # can override it.
     # RunParams
     def StopAfter(self) -> Optional[str]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))

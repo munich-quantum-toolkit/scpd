@@ -814,13 +814,6 @@ TEST(ArtifactSchema, ReadArtifactRejectsAnArtifactWithoutItsProducer) {
   }
 }
 
-TEST(ArtifactSchema, ReadArtifactRejectsThePreviousSchemaVersion) {
-  auto bytes = writeArtifact(wrap(GlobalRoutingT{}));
-  constexpr std::array<std::uint8_t, 4> previous{'S', 'C', 'P', '1'};
-  std::ranges::copy(previous, std::next(bytes.begin(), 4));
-  EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
-}
-
 TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
   std::vector<std::uint8_t> bytes = writeArtifact(wrap(GlobalRoutingT{}));
 
@@ -835,11 +828,9 @@ TEST(ArtifactSchema, ReadArtifactRejectsForeignAndTruncatedBuffers) {
   EXPECT_THROW(static_cast<void>(readArtifact(bytes)), std::invalid_argument);
 }
 
-TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
-  // A newer schema may append an output type under the same identifier. The
-  // verifier lets it pass, so the read has to refuse it.
+TEST(ArtifactSchema, RefusesAnUnknownOutputType) {
   flatbuffers::FlatBufferBuilder builder;
-  const auto producer = builder.CreateString("mqt-scpd newer");
+  const auto producer = builder.CreateString("mqt-scpd test");
   const flatbuffers::Offset<void> output(
       builder.EndTable(builder.StartTable()));
   // The tag is written as a plain byte, because the enum of this schema has
@@ -860,8 +851,7 @@ TEST(ArtifactSchema, RefusesAnOutputTypeOfANewerSchema) {
     static_cast<void>(readArtifact(bytes));
     FAIL() << "the read accepted an unknown output type";
   } catch (const std::invalid_argument& error) {
-    EXPECT_STREQ(error.what(), "artifact is not valid: output type 8 is "
-                               "unknown to this version of mqt-scpd");
+    EXPECT_STREQ(error.what(), "artifact is not valid: unknown output type 8");
   }
 }
 

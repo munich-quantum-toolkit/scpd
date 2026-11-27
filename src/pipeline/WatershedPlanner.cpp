@@ -48,7 +48,7 @@ namespace fbg = flatbuffers::geometry;
 namespace fba = flatbuffers::artifacts;
 
 /// How far the majority filter looks when it smooths a partition border, and
-/// how often it repeats. Both are the prototype's.
+/// how often it repeats.
 constexpr int SMOOTHING_RADIUS = 2;
 constexpr int SMOOTHING_ROUNDS = 5;
 
@@ -808,7 +808,7 @@ private:
   const grid::GridMetrics* detailGrid;
 };
 
-/// The capacity planner of the first release.
+/// The watershed capacity planner.
 class WatershedPlanner final : public ICapacityPlanner {
 public:
   [[nodiscard]] CapacityPlanT run(const ChipT& chip, const ConfigT& config,

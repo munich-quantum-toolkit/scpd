@@ -342,7 +342,18 @@ def schemas(session: nox.Session) -> None:
             if module.name != "__init__.py":
                 target = Path("..") / GENERATED_PYTHON_DIR / module.relative_to(generated)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(module, target)
+                # flatc 25.12.19 also removes builders used by Pack() with
+                # --python-no-type-prefix-suffix. Omit just the redundant root reader.
+                source = module.read_text(encoding="utf-8")
+                source = re.sub(
+                    rf"^    @classmethod\n    def GetRootAs{module.stem}\([^\n]+\):\n(?:        [^\n]+\n)+",
+                    "",
+                    source,
+                    flags=re.MULTILINE,
+                )
+                if f"def GetRootAs{module.stem}(" in source:
+                    session.error(f"Unexpected root reader in {module.name}")
+                target.write_text(source, encoding="utf-8", newline="\n")
 
     if check:
         status = session.run(

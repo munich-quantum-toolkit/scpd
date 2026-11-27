@@ -590,7 +590,7 @@ struct GridParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_CAPACITY_CELLS_X = 4,
     VT_CAPACITY_CELLS_Y = 6,
-    VT_DETAIL_FACTOR = 12
+    VT_DETAIL_FACTOR = 8
   };
   uint32_t capacity_cells_x() const {
     return GetField<uint32_t>(VT_CAPACITY_CELLS_X, 50);
@@ -687,9 +687,6 @@ struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// A place on the medial axis is a bottleneck only where the free radius
   /// around it is below this many wire pitches. A pitch is one wire spacing
   /// plus one obstacle spacing.
-  ///
-  /// The default gives the bottleneck count of the research prototype on the
-  /// 4-qubit and the 9-qubit chip.
   double bottleneck_clearance() const {
     return GetField<double>(VT_BOTTLENECK_CLEARANCE, 1.5);
   }
@@ -703,9 +700,6 @@ struct CapacityParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   /// cross a border closer than one pitch to the target cell or the feed of
   /// another wire. Where a wire runs inside a partition, and the clearance of
   /// the drawn wire, the later routing stages decide.
-  ///
-  /// The default is the figure of the research prototype: its wire spacing
-  /// less 20 layout units.
   double crossing_pitch() const {
     return GetField<double>(VT_CROSSING_PITCH, 165.0);
   }
@@ -1385,7 +1379,7 @@ struct StageParamsT : public ::flatbuffers::NativeTable {
   StageParamsT &operator=(StageParamsT o) FLATBUFFERS_NOEXCEPT;
 };
 
-/// The parameters of the stages that are implemented.
+/// Algorithm and solver parameters for the planning stages.
 struct StageParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef StageParamsT NativeTableType;
   typedef StageParamsBuilder Builder;
@@ -1515,8 +1509,8 @@ struct RunParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_STOP_AFTER = 4
   };
-  /// The last step to run: a stage, or a phase of a stage. Empty runs every
-  /// step this release implements. The command line can override it.
+  /// The last planning step to run. Empty runs all steps. The command line
+  /// can override it.
   const ::flatbuffers::String *stop_after() const {
     return GetPointer<const ::flatbuffers::String *>(VT_STOP_AFTER);
   }
@@ -2512,19 +2506,15 @@ inline const ::flatbuffers::TypeTable *GridParamsTypeTable() {
   static const ::flatbuffers::TypeCode type_codes[] = {
     { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_UINT, 0, -1 },
-    { ::flatbuffers::ET_UINT, 0, -1 },
     { ::flatbuffers::ET_UINT, 0, -1 }
   };
   static const char * const names[] = {
     "capacity_cells_x",
     "capacity_cells_y",
-    "launcher_offset_x",
-    "launcher_offset_y",
     "detail_factor"
   };
   static const ::flatbuffers::TypeTable tt = {
-    ::flatbuffers::ST_TABLE, 5, type_codes, nullptr, nullptr, nullptr, names
+    ::flatbuffers::ST_TABLE, 3, type_codes, nullptr, nullptr, nullptr, names
   };
   return &tt;
 }

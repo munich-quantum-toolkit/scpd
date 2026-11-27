@@ -20,10 +20,6 @@ class Connection(object):
         x.Init(buf, n + offset)
         return x
 
-    @classmethod
-    def GetRootAsConnection(cls, buf, offset=0):
-        """This method is deprecated. Please switch to GetRootAs."""
-        return cls.GetRootAs(buf, offset)
     # Connection
     def Init(self, buf: bytes, pos: int):
         self._tab = flatbuffers.table.Table(buf, pos)

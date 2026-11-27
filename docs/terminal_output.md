@@ -108,10 +108,9 @@ doctor: OK
 ```
 
 The example shortens the port lists and omits the solver availability section.
-Use `--ports` to list every port and its role. `doctor` prints deprecated keys
-as `WARNING: <warning>`. It prints input errors and preflight problems through
-`[run] stop_after` as `PROBLEM: <problem>`. The report ends with `doctor: OK` or
-`doctor: <n> problem(s)`.
+Use `--ports` to list every port and its role. `doctor` prints input errors and
+preflight problems through `[run] stop_after` as `PROBLEM: <problem>`. The
+report ends with `doctor: OK` or `doctor: <n> problem(s)`.
 
 A problem in the configuration or the chip ends the report after that line:
 
@@ -159,7 +158,6 @@ mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.16.0
 ```
 
 With `--stage`, the header shows the run directory in place of the chip name.
-Deprecated keys produce one warning each.
 
 `plan` accepts a new directory, an empty directory, or an existing run with a
 valid `.mqt-scpd-run` marker. A preflight error prints only the error line on
@@ -245,8 +243,7 @@ Each step has a mark, a plain form and a color.
 | detail   | 🧵   | `[-]`      | green   |
 
 A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and
-without a variation selector, so that every terminal draws it two cells wide. A
-step that a later release adds follows the same rule.
+without a variation selector, so that every terminal draws it two cells wide.
 
 ### Progress
 
@@ -342,9 +339,9 @@ A stage reports through the `Report` it is given and never prints.
    `STAGE_STYLES` in `python/mqt/scpd/console.py`. In `python/mqt/scpd/run.py`,
    add its artifact to `STAGE_FILES`, the configuration sections it reads to
    `STEP_INPUTS`, the artifacts it reads to `ARTIFACT_INPUTS`, and its core call
-   to `RunDirectory.run_stage`. If `plot` and `render` draw the stage, add it to
-   `STAGES` in `python/mqt/scpd/plot.py`. Set its layer visibility and style
-   there, and add new layers to `_LAYERS`. Name the artifacts the view reads in
+   to `RunDirectory.run_stage`. The drawing commands take their stage names from
+   `STAGE_FILES`. Set layer visibility and style in `python/mqt/scpd/plot.py`
+   and add new layers to `_LAYERS`. Name the artifacts the view reads in
    `planning_geometry` in `python/mqt/scpd/planning.py` and in `_drawn` in
    `python/mqt/scpd/cli.py`. Add its GDS layers to `PLANNING_LAYERS` in
    `python/mqt/scpd/export/klayout.py`.

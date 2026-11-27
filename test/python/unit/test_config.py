@@ -24,8 +24,6 @@ from mqt.scpd.config import (
     load_config,
     parse_config,
     read_config,
-    removed_keys,
-    removed_keys_in,
     shipped_config_problems,
     write_config,
 )
@@ -186,30 +184,11 @@ def test_shipped_configurations_carry_only_what_differs_from_the_defaults() -> N
         parse_config(MANUAL + "\n[grid]\ncapacity_cells_x = 50\n", strict=True)
 
 
-def test_a_removed_key_loads_and_is_named() -> None:
-    """A key that no stage reads any more still loads, and the loader names it so it can go."""
-    text = WITH_GRID.replace("capacity_cells_x = 25", "capacity_cells_x = 25\nlauncher_offset_x = 0")
-    config = parse_config(text)
-
-    assert config.grid is not None
-    assert config.grid.capacityCellsX == 25
-    message = "[grid] launcher_offset_x has no effect, and a later version will refuse it; remove it"
-    assert removed_keys({"grid": {"launcher_offset_x": 0, "capacity_cells_x": 25}}) == [message]
-    assert removed_keys({"grid": {"capacity_cells_x": 25}}) == []
-    assert shipped_config_problems({"grid": {"launcher_offset_y": 7}}) == [message.replace("_x", "_y")]
-
-
-def test_removed_keys_in_reads_the_file(tmp_path: Path) -> None:
-    """The file variant names the removed keys of a file, and nothing for a file it cannot read."""
-    path = tmp_path / "config.toml"
-    path.write_text(MANUAL + "\n[grid]\nlauncher_offset_y = 0\n", encoding="utf-8")
-    assert removed_keys_in(path) == [
-        "[grid] launcher_offset_y has no effect, and a later version will refuse it; remove it"
-    ]
-    assert removed_keys_in(tmp_path / "absent.toml") == []
-    latin = tmp_path / "latin.toml"
-    latin.write_bytes("# Gr\u00f6\u00dfe\n".encode("latin-1"))
-    assert removed_keys_in(latin) == []
+@pytest.mark.parametrize("strict", [False, True])
+def test_grid_refuses_unknown_keys(*, strict: bool) -> None:
+    """Only grid dimensions and the detail factor are accepted."""
+    with pytest.raises(ConfigError, match="unknown key 'offset'"):
+        parse_config(MANUAL + "\n[grid]\noffset = 0\n", strict=strict)
 
 
 def test_configuration_round_trips_through_the_core_bytes() -> None:
@@ -384,7 +363,7 @@ def test_shipped_stage_sections_carry_only_what_differs_from_the_defaults() -> N
 
 
 def test_the_stage_and_bridge_sections_round_trip_through_the_core_bytes() -> None:
-    """What write_config packs of the newer sections, read_config unpacks unchanged."""
+    """Bridge rules, stage parameters and the stop point survive serialization."""
     config = parse_config(WITH_BRIDGES + STAGES)
     back = read_config(write_config(config))
 

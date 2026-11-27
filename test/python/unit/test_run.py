@@ -92,9 +92,15 @@ def test_a_run_takes_the_steps_up_to_its_stop(stop_after: str | None, expected: 
 
 
 def test_a_stop_that_is_no_step_is_refused() -> None:
-    """A step name the release does not know names the ones it does."""
+    """An unknown step reports the supported planning steps."""
     with pytest.raises(RunError, match="capacity, global, assign, corridor"):
         steps_until("outer")
+
+
+def test_artifact_refuses_an_unknown_stage(tmp_path: Path) -> None:
+    """An unknown stage cannot name an artifact in the run directory."""
+    with pytest.raises(RunError, match="'unknown' is not a planning step"):
+        RunDirectory(tmp_path).artifact("unknown")
 
 
 def test_preparing_copies_the_inputs_into_the_run(tmp_path: Path) -> None:
@@ -399,7 +405,7 @@ def test_a_step_refuses_an_earlier_artifact_made_from_other_sections(
 
 
 def test_every_step_has_an_artifact_and_a_record_of_its_inputs() -> None:
-    """A step of the release that the run directory does not know could not run or be resumed."""
+    """Every planning step registers its artifact and input records."""
     assert list(STAGE_FILES) == list(STEPS)
     assert list(STEP_INPUTS) == list(STEPS)
     assert list(ARTIFACT_INPUTS) == list(STEPS)

@@ -8,8 +8,8 @@
 
 """The chip input, loaded through the core.
 
-The core parses the prototype's ``routing_config.json``, classifies the ports from the patterns of
-the configuration, and hands the classified chip back as the bytes of the ``design.fbs`` schema.
+The core reads ``routing_config.json``, classifies the ports using the configured patterns, and
+returns the chip as a ``design.fbs`` buffer.
 Those bytes are what every core function takes; ``decode_chip`` turns them into the generated
 object model when Python needs to look inside.
 """

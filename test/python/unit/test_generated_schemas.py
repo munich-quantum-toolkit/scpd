@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import flatbuffers
 
-from mqt.scpd.flatbuffers.config.GridParams import GridParamsT
+from mqt.scpd.flatbuffers.config.GridParams import GridParams, GridParamsT
 from mqt.scpd.flatbuffers.config.PortConfig import PortConfigT
 from mqt.scpd.flatbuffers.design.AssignedRole import AssignedRole
 from mqt.scpd.flatbuffers.design.Chip import ChipT
@@ -107,3 +107,11 @@ def test_config_defaults_are_the_documented_defaults() -> None:
     grid = GridParamsT()
     assert (grid.capacityCellsX, grid.capacityCellsY) == (50, 0)
     assert grid.detailFactor == 30
+
+
+def test_grid_root_reader() -> None:
+    """GetRootAs reads a packed grid configuration."""
+    builder = flatbuffers.Builder()
+    builder.Finish(GridParamsT(detailFactor=7).Pack(builder))
+    assert GridParams.GetRootAs(builder.Output()).DetailFactor() == 7
+    assert [name for name in dir(GridParams) if name.startswith("GetRootAs")] == ["GetRootAs"]
