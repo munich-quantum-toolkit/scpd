@@ -38,6 +38,7 @@
 #include <cstdint>
 #include <format>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -369,7 +370,7 @@ struct Spoken {
   }
 };
 
-/// Builds one open square partition with wire endpoints on its boundary.
+/// Builds one open square partition for the given wire endpoints.
 Planned
 planSquare(const ConfigT& config,
            const std::initializer_list<std::pair<DCoord, DCoord>> endpoints) {
@@ -459,6 +460,68 @@ TEST(DetailRouter, CountsTheWiresWithConflictingFixedEndpoints) {
   ASSERT_EQ(spoken.fails.size(), 1U);
   EXPECT_EQ(spoken.fails.front(), 2U);
   expectNoWireMeetsAnother(routing, routing.grid->width);
+}
+
+TEST(DetailRouter, KeepsDiagonalEndpointsOutsideTheClearanceDisc) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  config.rules->min_wire_spacing = 250.0;
+  const auto planned = planSquare(
+      config, {{DCoord(0, 0), DCoord(0, 1)}, {DCoord(2, 3), DCoord(2, 4)}});
+  Spoken spoken;
+
+  const auto routing = drawMini(planned, spoken.report(), config);
+
+  EXPECT_EQ(undrawnOf(routing), 0U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 0U);
+  const auto grid = buildScene(planned.chip, config).detail;
+  EXPECT_EQ(clearanceOf(config, grid), 2U);
+  expectTheClearance(routing, grid, 2U);
+}
+
+TEST(DetailRouter, CountsConflictsWhenTheClearanceSpansTheGrid) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  config.rules->min_wire_spacing = 2500.0;
+  const auto planned = planSquare(
+      config, {{DCoord(0, 0), DCoord(0, 1)}, {DCoord(12, 11), DCoord(12, 12)}});
+  Spoken spoken;
+
+  const auto routing = drawMini(planned, spoken.report(), config);
+
+  EXPECT_EQ(undrawnOf(routing), 0U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 2U);
+}
+
+TEST(DetailRouter, AcceptsALimitLargerThanTheNumberOfNeighbors) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  config.stages->detail =
+      std::make_unique<flatbuffers::config::DetailParamsT>();
+  config.stages->detail->rounds = 2;
+  const auto planned = planSquare(config, {{DCoord(0, 0), DCoord(12, 12)},
+                                           {DCoord(0, 12), DCoord(12, 0)},
+                                           {DCoord(3, 0), DCoord(4, 0)},
+                                           {DCoord(8, 12), DCoord(9, 12)}});
+  config.stages->detail->max_relaxation = 3;
+  Spoken bounded;
+  const auto reference = drawMini(planned, bounded.report(), config);
+  EXPECT_EQ(undrawnOf(reference), 1U);
+  ASSERT_EQ(bounded.fails.size(), 1U);
+  EXPECT_EQ(bounded.fails.front(), 1U);
+
+  for (const auto limit : {2U, std::numeric_limits<std::uint32_t>::max()}) {
+    config.stages->detail->max_relaxation = limit;
+    Spoken spoken;
+    const auto routing = drawMini(planned, spoken.report(), config);
+    EXPECT_EQ(routing, reference);
+    EXPECT_EQ(spoken.fails, bounded.fails);
+  }
 }
 
 TEST(DetailRouter, CountsACorridorWhoseFeedIsOutsideTheGrid) {

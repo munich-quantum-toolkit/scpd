@@ -35,6 +35,7 @@ To add Detail to an existing run with current artifacts, run
 `mqt-scpd plan -o <run-dir> --stage detail`. Set `[run] stop_after = "corridor"`
 to keep Corridor as the last stage of a full run. `plan` exits with code 1 if
 Detail leaves a wire without a path or two wires within the wire clearance.
+Detail releases each neighboring wire at most once per reroute attempt.
 
 Assignment uses a sliding window to enforce the feedline utilization limit. The
 bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning

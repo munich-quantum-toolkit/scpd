@@ -64,9 +64,10 @@ namespace mqt::scpd::pipeline {
  * `[design_rules] min_wire_spacing` to every other wire. It sweeps the wires
  * for at most `[stages.detail] rounds` rounds, alternating forward and
  * backward. A wire that finds no way may release up to
- * `[stages.detail] max_relaxation` neighbors along the sweep and then against
- * it, and searches again under a cost that keeps it between its two neighbors
- * in the ring.
+ * `[stages.detail] max_relaxation` neighbors per direction in the wire list.
+ * It releases each neighbor at most once, first along the sweep and then
+ * against it. Each release starts a search in the same band with a cost
+ * that favors the space between the wire's two ring neighbors.
  *
  * The clearance is the rule converted to whole cells: the rule spans
  * `ceil(min_wire_spacing / cell)` cells, and the router keeps one cell less

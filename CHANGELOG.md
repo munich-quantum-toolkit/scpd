@@ -86,6 +86,8 @@ releases may include breaking changes.
 
 ### Changed
 
+- ⚡️ Reduce Detail routing work by applying clearance in row spans and reusing
+  the search band when releasing neighbors ([#188]) ([**@marcelwa**])
 - ⬆️ Require KLayout 0.30.13 or later in the 0.30 series for Python 3.15 wheels
   on Linux and macOS ([#167]) ([**@marcelwa**])
 - ⚡ Use sliding windows to enforce the feedline utilization limit in Assignment

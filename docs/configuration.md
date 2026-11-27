@@ -224,7 +224,7 @@ unrouted even if a feasible route exists.
 | `router`                 | `""`    | The implementation of the step; empty takes `pixel-astar`                       |
 | `corridor_spacings`      | `4`     | How far a wire may move to either side of its path, in wire spacings            |
 | `rounds`                 | `30`    | Maximum number of sweeps under the clearance rule                               |
-| `max_relaxation`         | `30`    | Maximum number of neighboring wires a failed wire may release in a sweep        |
+| `max_relaxation`         | `30`    | Maximum seed retries per piece and neighbor releases per reroute direction      |
 | `obstacle_penalty_reach` | `185.0` | How far the cost of running beside an obstacle reaches; `0` turns it off        |
 | `obstacle_penalty`       | `10`    | The cost of a step right beside an obstacle, against 10 for a step; at most 255 |
 | `orderings`              | `16`    | How many orders of the pieces of one partition the seed tries                   |
@@ -243,9 +243,11 @@ the inner circuit included. On the detail grid, the clearance is one cell less
 than the cells that `min_wire_spacing` spans, rounded up. Detail sweeps the
 wires forward and backward and routes again each wire that comes too close to
 another, inside a band of `corridor_spacings` wire spacings around its path. A
-wire without a path there releases up to `max_relaxation` neighbors, first along
-the sweep and then against it, and searches again. Sweeps stop when every wire
-keeps the clearance.
+wire without a path there releases up to `max_relaxation` neighbors per
+direction in the wire list, first along the sweep and then against it. Each
+release starts another search in the same band. The router releases each
+neighbor at most once per attempt. Sweeps stop when every wire keeps the
+clearance.
 
 Detail counts a failure for each routed corridor or inner connection with a
 source that Detail cannot draw. It also counts each wire that comes within the

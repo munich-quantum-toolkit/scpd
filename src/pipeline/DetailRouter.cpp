@@ -36,6 +36,7 @@
 #include <optional>
 #include <queue>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -108,8 +109,7 @@ struct Tuning {
   return {};
 }
 
-/// The clearance the stage keeps between two wires, as offsets on the detail
-/// grid.
+/// The clearance between two wires, as a disc on the detail grid.
 ///
 /// `min_wire_spacing` is a length in layout units, and the router works in
 /// cells. The rule spans `ceil(spacing / cell)` cells, and the stage keeps one
@@ -122,10 +122,10 @@ struct Rule {
   double spacing = 0.0;
   /// The clearance on this grid, in cells.
   std::uint32_t pixels = 0;
-  /// Every offset within `pixels` of a cell, the cell itself included.
-  std::vector<std::pair<std::int32_t, std::int32_t>> offsets;
+  /// The half-width of each disc row, indexed by distance from the center row.
+  std::vector<std::uint32_t> halfWidths;
 
-  [[nodiscard]] bool binds() const { return !offsets.empty(); }
+  [[nodiscard]] bool binds() const { return !halfWidths.empty(); }
 };
 
 [[nodiscard]] Rule ruleOf(const ConfigT& config,
@@ -140,14 +140,19 @@ struct Rule {
     return rule;
   }
   rule.pixels = spans - 1;
-  const auto reach = static_cast<std::int32_t>(rule.pixels);
-  const auto limit = reach * reach;
-  for (std::int32_t dy = -reach; dy <= reach; ++dy) {
-    for (std::int32_t dx = -reach; dx <= reach; ++dx) {
-      if (((dx * dx) + (dy * dy)) <= limit) {
-        rule.offsets.emplace_back(dx, dy);
-      }
+  const auto radius = static_cast<std::uint64_t>(rule.pixels);
+  const auto squaredRadius = radius * radius;
+  const auto maxRow = std::min(rule.pixels, detail.height - 1);
+  auto halfWidth =
+      static_cast<std::uint64_t>(std::min(rule.pixels, detail.width - 1));
+  rule.halfWidths.reserve(static_cast<std::size_t>(maxRow) + 1);
+  for (std::uint64_t dy = 0; dy <= maxRow; ++dy) {
+    const auto squaredWidth = squaredRadius - (dy * dy);
+    // The disc narrows as the rows move away from the center.
+    while (halfWidth * halfWidth > squaredWidth) {
+      --halfWidth;
     }
+    rule.halfWidths.push_back(static_cast<std::uint32_t>(halfWidth));
   }
   return rule;
 }
@@ -406,8 +411,6 @@ public:
     }
   }
 
-  [[nodiscard]] const Rule& rule() const { return activeRule; }
-
   /// How many guarded wire cells lie within the clearance of a cell. While
   /// the wire of the cell is off the canvas, this counts the cells of other
   /// wires that are too close.
@@ -415,26 +418,27 @@ public:
     return guardCount[cell];
   }
 
-  /// Appends the wires whose clearance covers a cell.
-  ///
-  /// The rule is symmetric, so these are the wires that own a cell within
-  /// the offsets of the rule.
-  void guardsOf(const std::uint32_t cell,
-                std::vector<std::uint32_t>& into) const {
+  /// Calls `apply` with the first cell index and length of each clearance
+  /// row clipped to the grid.
+  template <class Apply>
+  void forClearanceRows(const std::uint32_t cell, const Apply& apply) const {
+    if (!activeRule.binds()) {
+      return;
+    }
     const auto width = static_cast<std::int64_t>(gridMetrics.width);
     const auto height = static_cast<std::int64_t>(gridMetrics.height);
     const auto cx = columnOf(cell);
     const auto cy = rowOf(cell);
-    for (const auto& [dx, dy] : activeRule.offsets) {
-      const auto x = cx + dx;
-      const auto y = cy + dy;
-      if (x < 0 || y < 0 || x >= width || y >= height) {
-        continue;
-      }
-      const auto near = cellOwners[static_cast<std::size_t>((y * width) + x)];
-      if (near != NO_OWNER) {
-        into.push_back(near);
-      }
+    const auto reach =
+        static_cast<std::int64_t>(activeRule.halfWidths.size() - 1);
+    const auto lastRow = std::min(height - 1, cy + reach);
+    for (auto y = std::max(std::int64_t{0}, cy - reach); y <= lastRow; ++y) {
+      const auto halfWidth =
+          activeRule.halfWidths[static_cast<std::size_t>(std::abs(y - cy))];
+      const auto left = std::max(std::int64_t{0}, cx - halfWidth);
+      const auto right = std::min(width, cx + halfWidth + 1);
+      apply(static_cast<std::size_t>((y * width) + left),
+            static_cast<std::size_t>(right - left));
     }
   }
 
@@ -475,19 +479,12 @@ private:
   /// Adds or removes the guard of one cell on every cell within its
   /// clearance.
   void stamp(const std::uint32_t cell, const int by) {
-    const auto width = static_cast<std::int64_t>(gridMetrics.width);
-    const auto height = static_cast<std::int64_t>(gridMetrics.height);
-    const auto cx = columnOf(cell);
-    const auto cy = rowOf(cell);
-    for (const auto& [dx, dy] : activeRule.offsets) {
-      const auto x = cx + dx;
-      const auto y = cy + dy;
-      if (x < 0 || y < 0 || x >= width || y >= height) {
-        continue;
-      }
-      auto& value = guardCount[static_cast<std::size_t>((y * width) + x)];
-      value = static_cast<std::uint16_t>(static_cast<int>(value) + by);
-    }
+    forClearanceRows(
+        cell, [this, by](const std::size_t first, const std::size_t length) {
+          for (auto& value : std::span{guardCount}.subspan(first, length)) {
+            value = static_cast<std::uint16_t>(static_cast<int>(value) + by);
+          }
+        });
   }
 
   /// Whether a search may enter a cell.
@@ -1584,8 +1581,7 @@ private:
   /// Each round sweeps the wires, forward and backward in turn, and leaves
   /// alone every wire that already keeps the clearance. A wire that does not
   /// is searched in a band around its path. Where that fails, it releases its
-  /// neighbors along the sweep one at a time and searches under a steering
-  /// cost instead of the band.
+  /// neighbors one at a time and searches the same band with a steering cost.
   ///
   /// The clearance holds against every wire, not only against the two
   /// neighbors in the ring. Cutting the clearance of every wire out of the
@@ -1647,45 +1643,52 @@ private:
           std::vector<std::uint8_t>& settled, const bool forward,
           const std::uint32_t ring, const std::uint32_t reach) {
     const auto original = wires[index].path;
-    // A wire without a path has no band either, and is searched over the
-    // space the other wires leave.
-    const auto band = original.empty() ? 0U : reach;
-
     lift(canvas, wires, index);
     makeWay(canvas, wires[index]);
 
-    // First search: the band around the path the wire has.
-    auto found = search(canvas, wires, index, mask, original, band, nullptr);
+    const auto& wire = wires[index];
+    Query query{.start = wire.feed,
+                .goal = wire.target,
+                .wire = index,
+                .avoidObstacles = true};
+    // All attempts use the same band. A wire without a path has no band.
+    if (!original.empty() && reach != 0) {
+      buildBand(canvas, original, reach, mask);
+      query.mask = &mask.cells;
+    }
+    auto found = canvas.search(query);
 
     // Relaxation: the wires ahead of this one in the sweep are released first,
     // one more each time. Where that is not enough, the wires behind it follow,
     // one at a time.
     std::vector<std::uint32_t> ripped;
-    if (!found.has_value()) {
+    if (!found.has_value() && tuning.maxRelaxation != 0 && wires.size() > 1) {
       steer(canvas, wires, index, original, ring, steering);
+      query.steering = &steering;
       const auto count = static_cast<std::int64_t>(wires.size());
       const auto ahead = forward ? 1 : -1;
+      const auto limit = static_cast<std::int64_t>(tuning.maxRelaxation);
+      const auto aheadLimit = std::min(limit, count - 1);
+      // Both walks wrap around the wire list. Stop before they meet.
+      const auto behindLimit = std::min(limit, count - 1 - aheadLimit);
       const auto letOneGo = [&](const std::int64_t away) {
         const auto other = static_cast<std::uint32_t>(
             (((static_cast<std::int64_t>(index) + away) % count) + count) %
             count);
-        if (other == index) {
-          return;
-        }
         // Releasing a wire removes its guard. Its cells stay until it is drawn
         // again, so this search cannot run over them.
         settled[other] = 0;
         ripped.push_back(other);
         letGo(canvas, wires[other]);
-        found = search(canvas, wires, index, mask, original, band, &steering);
+        found = canvas.search(query);
       };
-      for (std::uint32_t relax = 1;
-           relax <= tuning.maxRelaxation && !found.has_value(); ++relax) {
-        letOneGo(ahead * static_cast<std::int64_t>(relax));
+      for (std::int64_t step = 1; step <= aheadLimit && !found.has_value();
+           ++step) {
+        letOneGo(ahead * step);
       }
-      for (std::uint32_t back = 1;
-           back <= tuning.maxRelaxation && !found.has_value(); ++back) {
-        letOneGo(-ahead * static_cast<std::int64_t>(back));
+      for (std::int64_t step = 1; step <= behindLimit && !found.has_value();
+           ++step) {
+        letOneGo(-ahead * step);
       }
     }
 
@@ -1714,31 +1717,6 @@ private:
     for (const auto cell : wire.path) {
       canvas.guard(cell);
     }
-  }
-
-  /// One search for one wire, from its feed to its target.
-  ///
-  /// @param reach How far the wire may move to either side of `along`, or
-  /// zero for the whole free space.
-  [[nodiscard]] static std::optional<std::vector<std::uint32_t>>
-  search(Canvas& canvas, const std::vector<Wire>& wires,
-         const std::uint32_t index, Mask& mask,
-         const std::vector<std::uint32_t>& along, const std::uint32_t reach,
-         const std::vector<std::uint8_t>* steering) {
-    const auto& wire = wires[index];
-    if (wire.feed == NOWHERE || wire.target == NOWHERE) {
-      return std::nullopt;
-    }
-    Query query{.start = wire.feed,
-                .goal = wire.target,
-                .wire = index,
-                .avoidObstacles = true,
-                .steering = steering};
-    if (reach != 0 && !along.empty()) {
-      buildBand(canvas, along, reach, mask);
-      query.mask = &mask.cells;
-    }
-    return canvas.search(query);
   }
 
   /// Takes one wire off the canvas.
@@ -1844,9 +1822,13 @@ private:
       fillRing(canvas, corridor, steering);
     }
     // Inside the ring or not, a wire keeps off its neighbors.
-    for (const auto& path : {before, after}) {
-      for (const auto cell : path) {
-        stampDisc(canvas, cell, canvas.rule(), steering);
+    for (const auto* path : {&before, &after}) {
+      for (const auto cell : *path) {
+        canvas.forClearanceRows(cell, [&steering](const std::size_t first,
+                                                  const std::size_t length) {
+          std::ranges::fill(std::span{steering}.subspan(first, length),
+                            STEERING_PRICE);
+        });
       }
     }
   }
@@ -1894,23 +1876,6 @@ private:
           steering[static_cast<std::size_t>((row * width) + column)] = 0;
         }
       }
-    }
-  }
-
-  /// Sets the steering cost of every cell within the clearance of one cell.
-  static void stampDisc(const Canvas& canvas, const std::uint32_t center,
-                        const Rule& rule, std::vector<std::uint8_t>& steering) {
-    const auto width = static_cast<std::int64_t>(canvas.width());
-    const auto height = static_cast<std::int64_t>(canvas.height());
-    const auto cx = canvas.columnOf(center);
-    const auto cy = canvas.rowOf(center);
-    for (const auto& [dx, dy] : rule.offsets) {
-      const auto x = cx + dx;
-      const auto y = cy + dy;
-      if (x < 0 || y < 0 || x >= width || y >= height) {
-        continue;
-      }
-      steering[static_cast<std::size_t>((y * width) + x)] = STEERING_PRICE;
     }
   }
 
