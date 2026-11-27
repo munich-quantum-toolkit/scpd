@@ -645,6 +645,7 @@ TEST(DetailRouter, ReadsThePlacesOfTheCorridorInTheCornerFrame) {
   EXPECT_FALSE(cells(1e30, 0.5).has_value());
   EXPECT_FALSE(
       cells(std::numeric_limits<double>::quiet_NaN(), 0.5).has_value());
+  EXPECT_FALSE(cells(0.5, std::numeric_limits<double>::infinity()).has_value());
 }
 
 TEST(DetailRouter, RefusesAPlanMadeOnAnotherDetailGrid) {

@@ -2111,7 +2111,8 @@ cellsOfPlace(const grid::GridMetrics& detail, const fbg::Point& place) {
   const auto corner = grid::layoutToCorner(detail, place);
   const auto x = onGrid(corner.x());
   const auto y = onGrid(corner.y());
-  if (!(x >= 0 && x < detail.width && y >= 0 && y < detail.height)) {
+  if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || x >= detail.width ||
+      y < 0 || y >= detail.height) {
     return std::nullopt;
   }
   const auto column = static_cast<std::int64_t>(std::floor(x));
