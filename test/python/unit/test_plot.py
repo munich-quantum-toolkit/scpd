@@ -348,6 +348,17 @@ def test_the_detail_wires_are_waveguides_over_their_clearance() -> None:
     assert {"Clearance", "Wires", "Resonators", "Inner circuit"} <= names
 
 
+def test_a_one_cell_wire_has_round_caps_at_its_only_point() -> None:
+    """Both the waveguide and its clearance have a visible stroke at the same cell."""
+    geometry = PlanningGeometry(wires=[[(300.0, 400.0)]], clearance=160.0)
+    root = ET.fromstring(layout_svg(_mini(), stage="detail", planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+    for group in ("l-wire-signal cpw", "l-clearance"):
+        element = root.find(f".//{SVG}g[@class='{group}']/{SVG}path")
+        assert element is not None
+        start, end = (element.get("d") or "").removeprefix("M").split("L")
+        assert start == end
+
+
 def test_detail_wires_without_a_rule_have_no_clearance_band() -> None:
     """Without a clearance the wires are drawn and no band is."""
     geometry = PlanningGeometry(wires=[[(0.0, 0.0), (300.0, 0.0)]])

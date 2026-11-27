@@ -224,15 +224,21 @@ def _write_planning(layout: kdb.Layout, top: kdb.Cell, planning: PlanningGeometr
         ("inner_wires", planning.inner_wires),
     ):
         for route in routes:
-            if len(route) >= 2:
-                top.shapes(layer(name)).insert(path(route))
-                written += 1
-    # The clearance every wire keeps, as a path one clearance wide. Two wires closer than that are
-    # two of these paths that overlap, which a boolean on this layer finds.
-    if planning.clearance > 0:
-        for route in (*planning.wires, *planning.resonators, *planning.inner_wires):
-            if len(route) >= 2:
-                top.shapes(layer("clearance")).insert(kdb.DPath(list(starmap(kdb.DPoint, route)), planning.clearance))
+            if not route:
+                continue
+            points = list(starmap(kdb.DPoint, route))
+            for key, width in ((name, PLANNING_LINE_WIDTH), ("clearance", planning.clearance)):
+                if width <= 0:
+                    continue
+                radius = width / 2
+                if len(points) == 1:
+                    x, y = route[0]
+                    shape = kdb.DPolygon.ellipse(kdb.DBox(x - radius, y - radius, x + radius, y + radius), 64)
+                elif key == "clearance":
+                    shape = kdb.DPath(points, width, radius, radius, round=True)
+                else:
+                    shape = kdb.DPath(points, width)
+                top.shapes(layer(key)).insert(shape)
                 written += 1
     for x, y in planning.slots:
         top.shapes(layer("slots")).insert(square(x, y, PLANNING_MARKER_RADIUS / 3))

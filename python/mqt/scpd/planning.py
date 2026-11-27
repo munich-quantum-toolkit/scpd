@@ -739,7 +739,7 @@ def _resonator_slots(assignment: AssignmentT | None) -> set[int]:
 def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: float, resonators: set[int]) -> None:
     """Fill the layers a detail routing carries."""
     grid = routing.grid
-    if grid is None or grid.origin is None:
+    if grid is None or grid.origin is None or not grid.width or not grid.height:
         return
     geometry.clearance = _detail_clearance(wire_spacing, min(float(grid.cellWidth), float(grid.cellHeight)))
 
@@ -752,11 +752,11 @@ def _detail(routing: DetailRoutingT, geometry: PlanningGeometry, wire_spacing: f
 
     for index, wire in enumerate(_entries(routing.wires)):
         points = _bends(_entries(wire.path), to_layout)
-        if len(points) >= 2:
+        if points:
             (geometry.resonators if index in resonators else geometry.wires).append(points)
     for wire in _entries(routing.inner):
         points = _bends(_entries(wire.path), to_layout)
-        if len(points) >= 2:
+        if points:
             geometry.inner_wires.append(points)
 
 

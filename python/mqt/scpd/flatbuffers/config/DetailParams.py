@@ -51,8 +51,8 @@ class DetailParams(object):
         return 4
 
     # Sweeps over the wires under the clearance rule, alternating forward and
-    # backward. A sweep leaves alone every wire that already keeps the
-    # clearance. The stage stops early when a sweep fixes every wire.
+    # backward. After the first sweep, settled wires are skipped until a
+    # neighbor releases them.
     # DetailParams
     def Rounds(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
@@ -78,9 +78,8 @@ class DetailParams(object):
             return self._tab.Get(flatbuffers.number_types.Float64Flags, o + self._tab.Pos)
         return 185.0
 
-    # The cost of one step right beside an obstacle, against 10 for one step
-    # along an axis. It falls off linearly to zero at
-    # `obstacle_penalty_reach`.
+    # Peak obstacle cost, in axial steps. The cost decreases with distance
+    # and vanishes beyond `obstacle_penalty_reach`.
     # DetailParams
     def ObstaclePenalty(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))

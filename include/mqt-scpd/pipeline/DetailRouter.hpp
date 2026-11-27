@@ -60,10 +60,10 @@ namespace mqt::scpd::pipeline {
  *
  * The seed ignores the clearance. The router then routes every wire again
  * across the borders, inside a band of `[stages.detail] corridor_spacings`
- * wire spacings around its seed, and keeps the clearance of
- * `[design_rules] min_wire_spacing` to every other wire. It sweeps the wires
- * for at most `[stages.detail] rounds` rounds, alternating forward and
- * backward. A wire that finds no way may release up to
+ * wire spacings around its seed, and checks the discrete clearance
+ * derived from `[design_rules] min_wire_spacing` against every other wire. It
+ * sweeps the wires for at most `[stages.detail] rounds` rounds, alternating
+ * forward and backward. A wire that finds no way may release up to
  * `[stages.detail] max_relaxation` neighbors per direction in the wire list.
  * It releases each neighbor at most once, first along the sweep and then
  * against it. Each release starts a search in the same band with a cost

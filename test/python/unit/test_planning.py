@@ -708,6 +708,16 @@ def test_the_detail_picture_without_an_assignment_draws_plain_wires(run: RunDire
     assert not geometry.clearance
 
 
+def test_an_empty_detail_grid_has_no_clearance_band() -> None:
+    """An empty grid needs no conversion from layout units to cells."""
+    grid = GridExtentT(width=0, height=0, origin=PointT(0.0, 0.0), cellWidth=math.nan, cellHeight=math.nan)
+    output = DetailRoutingT(grid=grid, wires=[], inner=[])
+    data = write_artifact(ArtifactT(producer="test", outputType=StageOutput.DetailRouting, output=output))
+    geometry = planning_geometry(data, ChipT(), "detail", clearance=185.0)
+    assert geometry.is_empty()
+    assert not geometry.clearance
+
+
 def test_a_detail_wire_is_drawn_through_its_bends() -> None:
     """A run of cells in one direction is one straight line, so only the cells where it turns are kept."""
     grid = GridExtentT(width=10, height=10, origin=PointT(100.0, 200.0), cellWidth=10.0, cellHeight=10.0)
@@ -719,7 +729,7 @@ def test_a_detail_wire_is_drawn_through_its_bends() -> None:
             output=DetailRoutingT(
                 grid=grid,
                 wires=[DetailWireT(path=straight_then_diagonal), DetailWireT(path=[])],
-                inner=[DetailWireT(path=[DCoordT(5, 5), DCoordT(5, 6)])],
+                inner=[DetailWireT(path=[DCoordT(5, 5), DCoordT(5, 6)]), DetailWireT(path=[DCoordT(7, 8)])],
             ),
         )
     )
@@ -728,7 +738,7 @@ def test_a_detail_wire_is_drawn_through_its_bends() -> None:
 
     # The origin of the grid is the center of cell (0, 0).
     assert geometry.wires == [[(100.0, 200.0), (120.0, 200.0), (140.0, 220.0)]]
-    assert geometry.inner_wires == [[(150.0, 250.0), (150.0, 260.0)]]
+    assert geometry.inner_wires == [[(150.0, 250.0), (150.0, 260.0)], [(170.0, 280.0)]]
     assert not geometry.is_empty()
 
 

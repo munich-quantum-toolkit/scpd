@@ -442,6 +442,19 @@ TEST(DetailRouter, ReportsAConnectionThatWouldHaveToCrossAnotherWire) {
   expectNoWireMeetsAnother(routing, routing.grid->width);
 }
 
+TEST(DetailRouter, CountsClearanceOnlyBetweenDrawnWires) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  const auto planned = planSquare(
+      config, {{DCoord(0, 0), DCoord(12, 12)}, {DCoord(0, 1), DCoord(12, 0)}});
+  Spoken spoken;
+  const auto routing = drawMini(planned, spoken.report(), config);
+  EXPECT_EQ(undrawnOf(routing), 1U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 1U);
+}
+
 TEST(DetailRouter, CountsTheWiresWithConflictingFixedEndpoints) {
   auto config = test::miniConfig();
   config.grid->capacity_cells_x = 13;
@@ -460,6 +473,39 @@ TEST(DetailRouter, CountsTheWiresWithConflictingFixedEndpoints) {
   ASSERT_EQ(spoken.fails.size(), 1U);
   EXPECT_EQ(spoken.fails.front(), 2U);
   expectNoWireMeetsAnother(routing, routing.grid->width);
+}
+
+TEST(DetailRouter, CountsTwoConnectionsWithTheSameTerminalAsOneUnrouted) {
+  auto config = test::miniConfig();
+  config.grid->capacity_cells_x = 13;
+  config.grid->detail_factor = 1;
+  config.rules->min_wire_spacing = 0;
+  const auto planned = planSquare(
+      config, {{DCoord(0, 1), DCoord(12, 1)}, {DCoord(0, 9), DCoord(12, 1)}});
+  Spoken spoken;
+  const auto routing = drawMini(planned, spoken.report(), config);
+  ASSERT_EQ(routing.wires.size(), 2U);
+  ASSERT_FALSE(routing.wires.front()->path.empty());
+  EXPECT_EQ(routing.wires.front()->path.back(), DCoord(12, 1));
+  EXPECT_TRUE(routing.wires.back()->path.empty());
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 1U);
+}
+
+TEST(DetailRouter, AcceptsAnObstacleReachLargerThanTheGrid) {
+  auto config = test::miniConfig();
+  const auto planned = planMini(config);
+  const auto detail = buildScene(planned.chip, config).detail;
+  config.stages->detail =
+      std::make_unique<flatbuffers::config::DetailParamsT>();
+  config.stages->detail->obstacle_penalty_reach =
+      std::numeric_limits<std::uint32_t>::max() *
+      std::min(detail.cellWidth, detail.cellHeight);
+  config.stages->detail->corridor_spacings =
+      std::numeric_limits<std::uint32_t>::max();
+  const auto routing = drawMini(planned, {}, config);
+  expectFreeConnectedPaths(routing, buildScene(planned.chip, config));
+  EXPECT_EQ(undrawnOf(routing), 0U);
 }
 
 TEST(DetailRouter, KeepsDiagonalEndpointsOutsideTheClearanceDisc) {
@@ -596,6 +642,9 @@ TEST(DetailRouter, ReadsThePlacesOfTheCorridorInTheCornerFrame) {
   // A place beyond the grid names no cell.
   EXPECT_FALSE(cells(-3.0, 5.5).has_value());
   EXPECT_FALSE(cells(0.5, 300.5).has_value());
+  EXPECT_FALSE(cells(1e30, 0.5).has_value());
+  EXPECT_FALSE(
+      cells(std::numeric_limits<double>::quiet_NaN(), 0.5).has_value());
 }
 
 TEST(DetailRouter, RefusesAPlanMadeOnAnotherDetailGrid) {

@@ -263,11 +263,38 @@ TEST(ArtifactSchema, DetailRoutingRoundTrips) {
   EXPECT_EQ(read.inner[0]->path.size(), 2U);
 }
 
+TEST(ArtifactSchema, ReadsAnEmptyDetailPlaceholder) {
+  const auto artifact = readArtifact(writeArtifact(wrap(DetailRoutingT{})));
+  ASSERT_NE(artifact.output.AsDetailRouting(), nullptr);
+  EXPECT_EQ(artifact.output.AsDetailRouting()->grid, nullptr);
+}
+
+TEST(ArtifactSchema, RefusesACellOutsideTheDetailGridAndARepeatedCell) {
+  DetailRoutingT routing;
+  routing.grid = std::make_unique<GridExtentT>();
+  routing.grid->width = routing.grid->height = 2;
+  routing.grid->cell_width = routing.grid->cell_height = 1.0;
+  auto wire = std::make_unique<DetailWireT>();
+  wire->path = {DCoord(2, 1)};
+  routing.wires.push_back(std::move(wire));
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(routing)))),
+               std::invalid_argument);
+  routing.wires[0]->path = {DCoord(1, 1), DCoord(1, 1)};
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(routing)))),
+               std::invalid_argument);
+  routing.wires[0]->path.clear();
+  routing.grid->cell_width = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(routing)))),
+               std::invalid_argument);
+}
+
 TEST(ArtifactSchema, RefusesADetailWireThatSkipsACell) {
   // A wire runs over the cells of its path, so each step moves to one of the
   // eight neighboring cells.
   DetailRoutingT routing;
   routing.grid = std::make_unique<GridExtentT>();
+  routing.grid->width = routing.grid->height = 10;
+  routing.grid->cell_width = routing.grid->cell_height = 1.0;
   auto wire = std::make_unique<DetailWireT>();
   wire->path = {DCoord(3, 4), DCoord(5, 4)};
   routing.wires.push_back(std::move(wire));

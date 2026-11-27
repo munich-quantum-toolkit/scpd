@@ -1243,8 +1243,8 @@ struct DetailParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetField<uint32_t>(VT_CORRIDOR_SPACINGS, 4);
   }
   /// Sweeps over the wires under the clearance rule, alternating forward and
-  /// backward. A sweep leaves alone every wire that already keeps the
-  /// clearance. The stage stops early when a sweep fixes every wire.
+  /// backward. After the first sweep, settled wires are skipped until a
+  /// neighbor releases them.
   uint32_t rounds() const {
     return GetField<uint32_t>(VT_ROUNDS, 30);
   }
@@ -1258,9 +1258,8 @@ struct DetailParams FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   double obstacle_penalty_reach() const {
     return GetField<double>(VT_OBSTACLE_PENALTY_REACH, 185.0);
   }
-  /// The cost of one step right beside an obstacle, against 10 for one step
-  /// along an axis. It falls off linearly to zero at
-  /// `obstacle_penalty_reach`.
+  /// Peak obstacle cost, in axial steps. The cost decreases with distance
+  /// and vanishes beyond `obstacle_penalty_reach`.
   uint32_t obstacle_penalty() const {
     return GetField<uint32_t>(VT_OBSTACLE_PENALTY, 10);
   }

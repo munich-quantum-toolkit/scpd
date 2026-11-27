@@ -452,6 +452,8 @@ def _wire_layers(
         ("wire-resonator", planning.resonators),
         ("wire-inner", planning.inner_wires),
     )
+    # A zero-length segment gives a one-cell wire a visible round cap.
+    kinds = tuple((name, [wire * 2 if len(wire) == 1 else wire for wire in wires]) for name, wires in kinds)
     if planning.clearance > 0 and any(wires for _, wires in kinds):
         # A band one clearance wide around every wire, under the wires. The width is in layout
         # units, because a clearance is a length on the chip. Two wires closer than the clearance

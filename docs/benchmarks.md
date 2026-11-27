@@ -96,9 +96,11 @@ connect ring ports to their feeds. A square marks a chain termination. All views
 use the blocked cells saved by Capacity. Corridor shows routes from the exact
 feed points to the target cells, with an illustrative approach to each port. It
 also shows the available crossing slots. Detail draws every wire as a coplanar
-waveguide over a band as wide as the clearance that the stage keeps. Two bands
-that overlap mark two wires that come too close. In a browser, use the SVG's
-**Layers** panel to show or hide individual layers.
+waveguide over a band as wide as the clearance that the stage keeps. The bands
+illustrate spacing along continuous paths. Detail counts conflicts between
+discrete path cells. On rectangular cells the band width uses the smaller grid
+step. In a browser, use the SVG's **Layers** panel to show or hide individual
+layers.
 
 SVGs omit gates. The Capacity, Assignment, Corridor, and Detail views also omit
 the borders of fully enclosed partitions.

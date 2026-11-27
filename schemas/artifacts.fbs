@@ -262,10 +262,10 @@ table DetailWire {
 /// stage does not route the inner circuit, so these wires have no corridor.
 table DetailRouting {
   /// The grid the cells are counted on, so a reader can place them without
-  /// rebuilding the run.
-  grid: GridExtent (required);
-  wires: [DetailWire] (required);
-  inner: [DetailWire] (required);
+  /// rebuilding the run. Earlier empty SCP2 Detail outputs have no grid.
+  grid: GridExtent;
+  wires: [DetailWire];
+  inner: [DetailWire];
 }
 
 /// Output of the Final stage. The couplers carry the ports they create and

@@ -219,31 +219,34 @@ unrouted even if a feasible route exists.
 
 ## `[stages.detail]`
 
-| Key                      | Default | Meaning                                                                         |
-| ------------------------ | ------- | ------------------------------------------------------------------------------- |
-| `router`                 | `""`    | The implementation of the step; empty takes `pixel-astar`                       |
-| `corridor_spacings`      | `4`     | How far a wire may move to either side of its path, in wire spacings            |
-| `rounds`                 | `30`    | Maximum number of sweeps under the clearance rule                               |
-| `max_relaxation`         | `30`    | Maximum seed retries per piece and neighbor releases per reroute direction      |
-| `obstacle_penalty_reach` | `185.0` | How far the cost of running beside an obstacle reaches; `0` turns it off        |
-| `obstacle_penalty`       | `10`    | The cost of a step right beside an obstacle, against 10 for a step; at most 255 |
-| `orderings`              | `16`    | How many orders of the pieces of one partition the seed tries                   |
+| Key                      | Default | Meaning                                                                              |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------ |
+| `router`                 | `""`    | The implementation of the step; empty takes `pixel-astar`                            |
+| `corridor_spacings`      | `4`     | How far a wire may move to either side of its path, in wire spacings                 |
+| `rounds`                 | `30`    | Maximum number of sweeps under the clearance rule                                    |
+| `max_relaxation`         | `30`    | Maximum displaced wires per whole-wire seed attempt and releases per sweep direction |
+| `obstacle_penalty_reach` | `185.0` | How far the cost of running beside an obstacle reaches; `0` turns it off             |
+| `obstacle_penalty`       | `10`    | Peak obstacle cost in axial steps, at most 255                                       |
+| `orderings`              | `16`    | How many orders of the pieces of one partition the seed tries                        |
 
 Detail draws every wire as a path of eight-connected cells on the detail grid.
-No two wires share a cell or cross. It first draws a seed: each corridor is cut
-at its crossings into one piece per partition, and each piece is searched inside
-its partition. Detail tries up to `orderings` orders of the pieces of a
-partition and keeps the order that draws the most pieces. It moves the wires in
-the way of a piece without a path, and searches a wire without a path again from
-end to end. The wires of the inner circuit have no corridor. Detail searches
-them last, over the space that the ring leaves.
+Each routed ring wire starts and ends at the cell centers stored by Corridor.
+Detail can move internal crossings to nearby free cells. No two wires share a
+cell or cross. It first draws a seed: each corridor is cut at its crossings into
+one piece per partition, and each piece is searched inside its partition. Detail
+tries up to `orderings` orders of the pieces of a partition and keeps the order
+that draws the most pieces. It moves the wires in the way of a piece without a
+path, and searches a wire without a path again from end to end. The wires of the
+inner circuit have no corridor. Detail searches them last, over the space that
+the ring leaves.
 
-Detail then keeps the clearance of `min_wire_spacing` between every two wires,
-the inner circuit included. On the detail grid, the clearance is one cell less
-than the cells that `min_wire_spacing` spans, rounded up. Detail sweeps the
-wires forward and backward and routes again each wire that comes too close to
-another, inside a band of `corridor_spacings` wire spacings around its path. A
-wire without a path there releases up to `max_relaxation` neighbors per
+Detail checks the distance between the cells of different wires, including wires
+of the inner circuit. On the detail grid, the clearance is one cell less than
+the cells that `min_wire_spacing` spans, rounded up. This discrete check can
+accept a distance smaller than `min_wire_spacing` in layout units. Detail sweeps
+the wires forward and backward and routes again each wire that comes too close
+to another, inside a band of `corridor_spacings` wire spacings around its path.
+A wire without a path there releases up to `max_relaxation` neighbors per
 direction in the wire list, first along the sweep and then against it. Each
 release starts another search in the same band. The router releases each
 neighbor at most once per attempt. Sweeps stop when every wire keeps the

@@ -300,7 +300,11 @@ public:
       return std::vector<std::uint32_t>{query.start};
     }
 
-    ++generation;
+    if (++generation == 0) {
+      std::ranges::fill(searchSeen, 0);
+      std::ranges::fill(searchClosed, 0);
+      ++generation;
+    }
     const auto width = static_cast<std::int64_t>(gridMetrics.width);
     const auto height = static_cast<std::int64_t>(gridMetrics.height);
     const auto goalX = columnOf(query.goal);
@@ -313,7 +317,7 @@ public:
                                         (4 * std::min(dx, dy)));
     };
 
-    using Entry = std::pair<std::uint32_t, std::uint32_t>;
+    using Entry = std::pair<std::uint64_t, std::uint32_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
     searchCost[query.start] = 0;
     searchParent[query.start] = NOWHERE;
@@ -452,8 +456,11 @@ public:
   /// wires, or opens it again. A pinned cell counts as guarded, with or
   /// without a clearance rule.
   void pin(const std::uint32_t cell, const bool on) {
-    guardCount[cell] = static_cast<std::uint16_t>(
-        static_cast<int>(guardCount[cell]) + (on ? 1 : -1));
+    if (on) {
+      ++guardCount[cell];
+    } else {
+      --guardCount[cell];
+    }
   }
 
   /// Guards the clearance around one cell, once.
@@ -479,12 +486,13 @@ private:
   /// Adds or removes the guard of one cell on every cell within its
   /// clearance.
   void stamp(const std::uint32_t cell, const int by) {
-    forClearanceRows(
-        cell, [this, by](const std::size_t first, const std::size_t length) {
-          for (auto& value : std::span{guardCount}.subspan(first, length)) {
-            value = static_cast<std::uint16_t>(static_cast<int>(value) + by);
-          }
-        });
+    forClearanceRows(cell, [this, by](const std::size_t first,
+                                      const std::size_t length) {
+      for (auto& value : std::span{guardCount}.subspan(first, length)) {
+        value =
+            static_cast<std::uint32_t>(static_cast<std::int64_t>(value) + by);
+      }
+    });
   }
 
   /// Whether a search may enter a cell.
@@ -530,7 +538,7 @@ private:
   /// value falls off linearly over `radius` layers. The cost blocks nothing;
   /// it keeps a wire off the artwork where there is room.
   [[nodiscard]] static std::vector<std::uint8_t>
-  proximityOf(const grid::BitGrid& blocked, const std::uint32_t radius,
+  proximityOf(const grid::BitGrid& blocked, const std::uint64_t radius,
               const std::uint32_t penalty) {
     std::vector<std::uint8_t> values(blocked.size(), 0);
     if (radius == 0 || penalty == 0) {
@@ -550,9 +558,9 @@ private:
     }
     constexpr std::array<std::int64_t, 4> aroundX = {1, -1, 0, 0};
     constexpr std::array<std::int64_t, 4> aroundY = {0, 0, 1, -1};
-    for (std::uint32_t layer = 1; layer <= radius && !front.empty(); ++layer) {
-      const auto value = static_cast<std::uint8_t>(
-          std::max(1U, (penalty * (radius - layer + 1)) / (radius + 1)));
+    for (std::uint64_t layer = 1; layer <= radius && !front.empty(); ++layer) {
+      const auto value = static_cast<std::uint8_t>(std::max<std::uint64_t>(
+          1, (penalty * (radius - layer + 1)) / (radius + 1)));
       next.clear();
       for (const auto cell : front) {
         const auto x = static_cast<std::int64_t>(cell % blocked.width());
@@ -587,12 +595,12 @@ private:
   /// for each cell how many guarded wire cells lie within the clearance.
   Rule activeRule;
   std::vector<std::uint8_t> guardedCells;
-  std::vector<std::uint16_t> guardCount;
+  std::vector<std::uint32_t> guardCount;
 
   // The working arrays of the search. A cell counts as visited only while its
   // stamp equals the current generation, so no array is cleared between two
   // searches.
-  std::vector<std::uint32_t> searchCost;
+  std::vector<std::uint64_t> searchCost;
   std::vector<std::uint32_t> searchParent;
   std::vector<std::uint32_t> searchSeen;
   std::vector<std::uint32_t> searchClosed;
@@ -829,9 +837,10 @@ public:
         rule.pixels * std::min(scene.detail.cellWidth, scene.detail.cellHeight),
         rule.spacing));
     // The band is a length in wire spacings, converted to cells on this grid.
-    const auto reach =
-        std::max(1U, tuning.corridorSpacings *
-                         grid::cellsFor(rule.spacing, scene.detail));
+    const auto band = static_cast<std::uint64_t>(tuning.corridorSpacings) *
+                      grid::cellsFor(rule.spacing, scene.detail);
+    const auto reach = static_cast<std::uint32_t>(std::clamp<std::uint64_t>(
+        band, 1, std::max(canvas.width(), canvas.height())));
     const auto rounds =
         crossBoundaryRouting(canvas, wires, tuning, ring, reach, report);
     // A wire fails when it has no path or when its path comes within the
@@ -868,11 +877,10 @@ private:
   /// wires beside it, and so on. Two levels let a fan of four wires settle.
   static constexpr std::uint32_t RESCUE_CHAIN = 2;
 
-  /// How far from a place of the corridor routing the stage looks for a free
+  /// How far from a corridor crossing the stage looks for a free
   /// cell, in cells.
   ///
-  /// A resonator is fed on the segment between two launchers. Where the band
-  /// of a launcher covers that segment, the feed lands on a blocked cell.
+  /// A crossing on a crowded border may need a nearby free cell.
   static constexpr std::uint32_t PLACE_REACH = 4;
 
   /// The two cells that a place of the corridor routing lies between, or the
@@ -902,28 +910,48 @@ private:
     std::vector<Wire> wires(connections);
     for (std::uint32_t index = 0; index < connections; ++index) {
       wires[index].slot = index;
+      if (corridor.corridors[index] == nullptr) {
+        throw std::invalid_argument("corridor entry is missing");
+      }
       const auto& route = *corridor.corridors[index];
+      if ((!route.partitions.empty() || !route.crossings.empty()) &&
+          route.crossings.size() + 1 != route.partitions.size()) {
+        throw std::invalid_argument(
+            "corridor crossing count does not match its partitions");
+      }
       auto& wire = wires[index];
       wire.required = !route.partitions.empty();
       if (!wire.required || route.source == nullptr ||
           route.target == nullptr) {
         continue;
       }
+      wire.feed = cellsAt(canvas.metrics(), *route.source)[0];
+      wire.target = cellsAt(canvas.metrics(), *route.target)[0];
+      if (wire.feed == NOWHERE || wire.target == NOWHERE ||
+          !canvas.standable(wire.feed) || !canvas.standable(wire.target)) {
+        continue;
+      }
+      canvas.take(wire.feed, index);
+      canvas.take(wire.target, index);
+      wire.planned = true;
+    }
+    // Reserve every fixed terminal before choosing cells for the crossings.
+    for (std::uint32_t index = 0; index < connections; ++index) {
+      auto& wire = wires[index];
+      if (!wire.planned) {
+        continue;
+      }
+      const auto& route = *corridor.corridors[index];
       wire.partitions.reserve(route.partitions.size());
       for (const auto partition : route.partitions) {
         wire.partitions.push_back(static_cast<PartitionLabel>(partition));
       }
-      wire.feed =
-          claim(canvas, cellsAt(canvas.metrics(), *route.source), index);
-      wire.target =
-          claim(canvas, cellsAt(canvas.metrics(), *route.target), index);
       wire.crossings.reserve(route.crossings.size());
       for (const auto& crossing : route.crossings) {
         wire.crossings.push_back(
             claim(canvas, cellsAt(canvas.metrics(), crossing), index));
       }
       wire.planned =
-          wire.feed != NOWHERE && wire.target != NOWHERE &&
           std::ranges::find(wire.crossings, NOWHERE) == wire.crossings.end();
       if (!wire.planned) {
         const auto releaseClaim = [&canvas](const std::uint32_t cell) {
@@ -1114,7 +1142,12 @@ private:
         // The order just tried is no better, so the canvas gets the best
         // order back.
         undo(canvas, made);
-        best = attempt(canvas, bestOrder);
+        for (std::size_t at = 0; at < bestOrder.size(); ++at) {
+          const auto& path = best.paths[at];
+          for (std::size_t cell = 1; cell + 1 < path.size(); ++cell) {
+            canvas.take(path[cell], bestOrder[at].wire);
+          }
+        }
       }
       for (std::size_t at = 0; at < bestOrder.size(); ++at) {
         drawing.paths[bestOrder[at].wire][bestOrder[at].position] =
@@ -1394,6 +1427,7 @@ private:
       return true;
     }
     const auto left = undrawn(wires);
+    std::vector<std::vector<std::uint32_t>> saved;
     std::vector<std::uint32_t> out;
     busy.push_back(index);
 
@@ -1414,6 +1448,12 @@ private:
       if (!next.has_value()) {
         break;
       }
+      if (out.empty()) {
+        saved.reserve(wires.size());
+        for (const auto& wire : wires) {
+          saved.push_back(wire.path);
+        }
+      }
       out.push_back(*next);
       vacate(canvas, wires[*next], *next);
       if (offer(canvas, wires, index, out, left, tuning, chain, busy)) {
@@ -1422,12 +1462,22 @@ private:
       }
     }
 
-    // No swap helped. The wire comes off the canvas again, and the wires it
-    // moved are drawn again. Where they take other paths than before, the
-    // next attempt starts from another arrangement.
-    vacate(canvas, wires[index], index);
-    for (const auto other : out) {
-      static_cast<void>(drawWhole(canvas, wires, other));
+    // Restore the paths before the first displacement, including nested swaps.
+    if (!out.empty()) {
+      for (std::uint32_t i = 0; i < wires.size(); ++i) {
+        if (wires[i].planned && wires[i].path != saved[i]) {
+          vacate(canvas, wires[i], i);
+        }
+      }
+      for (std::uint32_t i = 0; i < wires.size(); ++i) {
+        if (!saved[i].empty() && !wires[i].drawn) {
+          wires[i].path = std::move(saved[i]);
+          wires[i].drawn = true;
+          for (const auto cell : wires[i].path) {
+            canvas.take(cell, i);
+          }
+        }
+      }
     }
     busy.pop_back();
     return false;
@@ -1539,8 +1589,8 @@ private:
     return owners;
   }
 
-  /// Counts, for every wire on the canvas, how many of its cells lie within
-  /// the clearance of another wire.
+  /// Counts required wires without a path and drawn wires with a clearance
+  /// conflict.
   ///
   /// The clearance of a wire covers its own cells, so the stage removes the
   /// guard of the wire before it counts and adds it again afterwards. The
@@ -1552,6 +1602,12 @@ private:
   countFailures(Canvas& canvas, const std::vector<Wire>& wires) {
     std::size_t unrouted = 0;
     std::size_t tooClose = 0;
+    // Undrawn wires reserve their endpoints during routing only.
+    for (const auto& wire : wires) {
+      if (wire.planned && !wire.drawn) {
+        makeWay(canvas, wire);
+      }
+    }
     for (const auto& wire : wires) {
       if (!wire.required) {
         continue;
@@ -1636,7 +1692,8 @@ private:
   /// neighbors released.
   ///
   /// @return Whether the wire found a path that keeps the clearance. On
-  /// failure the wire keeps the path it had.
+  /// a search without a path the wire keeps its previous path. A path found
+  /// after releasing neighbors may still need another clearance sweep.
   [[nodiscard]] static bool
   reroute(Canvas& canvas, std::vector<Wire>& wires, const std::uint32_t index,
           const Tuning& tuning, Mask& mask, std::vector<std::uint8_t>& steering,
@@ -1958,6 +2015,9 @@ private:
     }
 
     for (std::uint32_t index = 0; index < global.connections.size(); ++index) {
+      if (global.connections[index] == nullptr) {
+        throw std::invalid_argument("inner connection is missing");
+      }
       const auto& connection = *global.connections[index];
       const auto at = static_cast<std::uint32_t>(wires.size());
       auto& added = wires.emplace_back();
@@ -2051,11 +2111,11 @@ cellsOfPlace(const grid::GridMetrics& detail, const fbg::Point& place) {
   const auto corner = grid::layoutToCorner(detail, place);
   const auto x = onGrid(corner.x());
   const auto y = onGrid(corner.y());
-  const auto column = static_cast<std::int64_t>(std::floor(x));
-  const auto row = static_cast<std::int64_t>(std::floor(y));
-  if (!detail.contains(column, row)) {
+  if (!(x >= 0 && x < detail.width && y >= 0 && y < detail.height)) {
     return std::nullopt;
   }
+  const auto column = static_cast<std::int64_t>(std::floor(x));
+  const auto row = static_cast<std::int64_t>(std::floor(y));
   const fbg::DCoord here(static_cast<std::uint32_t>(column),
                          static_cast<std::uint32_t>(row));
   // A vertical edge separates the cell on its left from the one it is the

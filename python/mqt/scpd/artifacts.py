@@ -10,7 +10,8 @@
 
 The generated FlatBuffers code does not verify buffers on read or enforce required fields on write.
 The native reader checks the buffer structure and artifact contents before Python unpacks an
-artifact. The writer checks required fields before serialization.
+artifact. The writer checks required fields before serialization and validates Detail path cells
+against their grid before returning the bytes.
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ def write_artifact(artifact: ArtifactT) -> bytes:
         The bytes of the artifact, starting with the schema identifier.
 
     Raises:
-        ArtifactError: If a required field is missing.
+        ArtifactError: If a required field is missing or a Detail path or grid is invalid.
     """
     problems = _problems(artifact)
     if problems:
@@ -88,7 +89,22 @@ def write_artifact(artifact: ArtifactT) -> bytes:
         raise ArtifactError(msg)
     builder = flatbuffers.Builder()
     builder.Finish(artifact.Pack(builder), file_identifier=IDENTIFIER)
-    return bytes(builder.Output())
+    data = bytes(builder.Output())
+    if isinstance(artifact.output, DetailRoutingT):
+        _validate_artifact(data)
+    return data
+
+
+def _validate_artifact(data: bytes) -> None:
+    """Check the serialized artifact with the native reader.
+
+    Raises:
+        ArtifactError: If the buffer or artifact contents are invalid.
+    """
+    try:
+        pyscpd.validate_artifact(data)
+    except ValueError as error:
+        raise ArtifactError(str(error)) from error
 
 
 def read_artifact(data: bytes) -> ArtifactT:
@@ -103,10 +119,7 @@ def read_artifact(data: bytes) -> ArtifactT:
     Raises:
         ArtifactError: If the buffer or artifact contents are invalid.
     """
-    try:
-        pyscpd.validate_artifact(data)
-    except ValueError as error:
-        raise ArtifactError(str(error)) from error
+    _validate_artifact(data)
     try:
         return ArtifactT.InitFromPackedBuf(data)
     except (IndexError, struct.error, UnicodeDecodeError) as error:
@@ -160,12 +173,12 @@ def _problems(artifact: ArtifactT) -> list[str]:
         _check_list(output.corridors, "corridors", _corridor_problems, problems)
         _check_list(output.slots, "slots", _border_slots_problems, problems)
     elif isinstance(output, DetailRoutingT):
-        if output.grid is None:
+        if output.grid is None and (output.wires or output.inner):
             problems.append("grid is missing")
-        else:
+        elif output.grid is not None:
             problems.extend(f"grid: {problem}" for problem in _grid_problems(output.grid))
-        _check_list(output.wires, "wires", _detail_wire_problems, problems)
-        _check_list(output.inner, "inner", _detail_wire_problems, problems)
+        _check_list(output.wires or [], "wires", _detail_wire_problems, problems)
+        _check_list(output.inner or [], "inner", _detail_wire_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)

@@ -197,3 +197,17 @@ def test_the_detail_wires_and_their_clearance_are_written(tmp_path: Path) -> Non
     bands = shapes("clearance")
     assert len(bands) == 3
     assert all(shape.path_dwidth == pytest.approx(160.0) for shape in bands)
+
+
+@pytest.mark.parametrize("suffix", [".gds", ".oas"])
+def test_clearance_extends_around_wire_ends_and_one_cell_wires(tmp_path: Path, suffix: str) -> None:
+    """The clearance layer covers the area around each endpoint after export."""
+    geometry = PlanningGeometry(wires=[[(0.0, 0.0), (100.0, 0.0)], [(130.0, 0.0)]], clearance=40.0)
+    summary = write_layout(ChipT(), tmp_path / f"ends{suffix}", planning=geometry)
+    layout = kdb.Layout()
+    layout.read(str(summary.path))
+    number, datatype, _ = PLANNING_LAYERS["clearance"]
+    bands = kdb.Region(layout.top_cell().begin_shapes_rec(layout.layer(number, datatype))).merged()
+    assert bands.count() == 1
+    assert bands.bbox().left * layout.dbu == pytest.approx(-20.0, abs=0.1)
+    assert bands.bbox().right * layout.dbu == pytest.approx(150.0, abs=0.1)

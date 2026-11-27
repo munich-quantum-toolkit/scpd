@@ -38,9 +38,9 @@ using design::Problems;
  * i targets the port of ring node i, and every chain runs through one ring
  * node at least, each of them on that chain only; a corridor names one more
  * partition than it has crossings, or neither for a connection without a
- * way, and a corridor with a way has a source and a target; a detail routing
- * has a grid, and each step of a wire path moves to one of the eight
- * neighboring cells or stays on its cell.
+ * way, and a corridor with a way has a source and a target. Each Detail path
+ * stays on its grid and moves to one of the eight neighboring cells at each
+ * step. An empty SCP2 Detail placeholder can omit the grid.
  *
  * The check reads one artifact. Corridor border indices refer to the Capacity
  * plan, and Corridor entries follow the connections of the Assignment.

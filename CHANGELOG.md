@@ -13,11 +13,10 @@ releases may include breaking changes.
 ### Added
 
 - ✨ Add Detail as the default final stage. It draws every wire on the detail
-  grid, keeps the wire clearance between every two wires, and writes
-  `05-detail.fb`, which `plot` and `render` can draw. The plan reports a failure
-  for every corridor that Detail cannot draw and for every wire that comes
-  within the clearance of another ([#188]) ([**@FeldmeierMichael**],
-  [**@marcelwa**])
+  grid, checks the spacing between wire cells, and writes `05-detail.fb`, which
+  `plot` and `render` can draw. The plan reports a failure for every corridor
+  that Detail cannot draw and for every wire that comes within the clearance of
+  another ([#188]) ([**@FeldmeierMichael**], [**@marcelwa**])
 - 👷 Enable testing on Python 3.15 ([#187]) ([**@denialhaag**])
 - ✨ Add the Corridor stage. It routes connections through partition borders and
   writes `04-corridor.fb`, which `plot` and `render` can draw. The plan reports

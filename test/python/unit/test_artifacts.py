@@ -27,6 +27,8 @@ from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
 from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailWire import DetailWireT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
@@ -45,6 +47,7 @@ from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.design.Rotation import Rotation
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Arc import ArcT
+from mqt.scpd.flatbuffers.geometry.DCoord import DCoordT
 from mqt.scpd.flatbuffers.geometry.Line import LineT
 from mqt.scpd.flatbuffers.geometry.Path import PathT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
@@ -494,3 +497,13 @@ def test_read_rejects_bytes_that_do_not_decode() -> None:
     """A buffer with the identifier but a root offset outside the buffer is not an artifact."""
     with pytest.raises(ArtifactError, match="not an artifact"):
         read_artifact(b"\xff\xff\xff\xff" + IDENTIFIER)
+
+
+def test_detail_writer_checks_wire_cells_and_accepts_empty_placeholders() -> None:
+    """Earlier empty Detail outputs remain readable, and each routed cell must lie on its grid."""
+    placeholder = wrap(StageOutput.DetailRouting, DetailRoutingT())
+    assert isinstance(read_artifact(write_artifact(placeholder)).output, DetailRoutingT)
+    grid = GridExtentT(width=2, height=2, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    routing = DetailRoutingT(grid=grid, wires=[DetailWireT(path=[DCoordT(2, 1)])], inner=[])
+    with pytest.raises(ArtifactError, match="leaves the detail grid"):
+        write_artifact(wrap(StageOutput.DetailRouting, routing))

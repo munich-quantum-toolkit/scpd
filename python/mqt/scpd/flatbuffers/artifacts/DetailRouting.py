@@ -39,7 +39,7 @@ class DetailRouting(object):
         self._tab = flatbuffers.table.Table(buf, pos)
 
     # The grid the cells are counted on, so a reader can place them without
-    # rebuilding the run.
+    # rebuilding the run. Earlier empty SCP2 Detail outputs have no grid.
     # DetailRouting
     def Grid(self) -> Optional[GridExtent]:
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
