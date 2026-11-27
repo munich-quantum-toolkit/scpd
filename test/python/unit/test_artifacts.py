@@ -522,3 +522,14 @@ def test_detail_writer_checks_wire_cells() -> None:
     routing = DetailRoutingT(grid=grid, wires=[DetailWireT(path=[DCoordT(2, 1)])], inner=[])
     with pytest.raises(ArtifactError, match="leaves the detail grid"):
         write_artifact(wrap(StageOutput.DetailRouting, routing))
+
+
+def test_detail_wire_round_trips() -> None:
+    """A routed wire preserves the order of its cells."""
+    grid = GridExtentT(width=2, height=2, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    wire = DetailWireT(path=[DCoordT(0, 1), DCoordT(1, 0)])
+    routing = DetailRoutingT(grid=grid, wires=[wire], inner=[])
+    output = read_artifact(write_artifact(wrap(StageOutput.DetailRouting, routing))).output
+    assert isinstance(output, DetailRoutingT)
+    assert [(cell.x, cell.y) for cell in output.wires[0].path] == [(0, 1), (1, 0)]
+    assert not output.inner

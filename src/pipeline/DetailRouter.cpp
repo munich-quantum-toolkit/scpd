@@ -1222,8 +1222,7 @@ private:
   /// partition.
   [[nodiscard]] static std::vector<std::uint32_t>
   blockersOf(Canvas& canvas, const Drawing& drawing, const std::uint32_t wire) {
-    // More than the cost of the longest path across the grid, so no detour
-    // is worth less than crossing a wire.
+    // Scale the crossing penalty with the grid size to favor free detours.
     const auto price = 14U * (canvas.width() + canvas.height());
     std::vector<std::uint32_t> owners;
     for (std::size_t at = 0; at < drawing.pieces[wire].size(); ++at) {
