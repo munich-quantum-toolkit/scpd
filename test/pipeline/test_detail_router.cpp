@@ -15,6 +15,7 @@
 
 #include "MiniFixture.hpp"
 #include "mqt-scpd/flatbuffers/artifacts.hpp"
+#include "mqt-scpd/flatbuffers/design.hpp"
 #include "mqt-scpd/flatbuffers/geometry.hpp"
 #include "mqt-scpd/grid/GridMetrics.hpp"
 #include "mqt-scpd/grid/Partitions.hpp"
@@ -365,6 +366,42 @@ struct Spoken {
                             const std::uint64_t /*total*/) { ++progressed; }}};
   }
 };
+
+TEST(DetailRouter, CountsACorridorWhoseFeedIsOutsideTheGrid) {
+  auto planned = planMini();
+  ASSERT_FALSE(planned.corridor.corridors.empty());
+  auto& corridor = *planned.corridor.corridors.front();
+  ASSERT_FALSE(corridor.partitions.empty());
+  const auto detail = buildScene(planned.chip, test::miniConfig()).detail;
+  corridor.source = std::make_unique<flatbuffers::geometry::Point>(
+      grid::cornerToLayout(detail, -1.0, 0.5));
+  Spoken spoken;
+
+  const auto routing = drawMini(planned, spoken.report());
+
+  EXPECT_TRUE(routing.wires.front()->path.empty());
+  EXPECT_EQ(undrawnOf(routing), 1U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 1U);
+}
+
+TEST(DetailRouter, CountsAnInnerConnectionWhoseEndpointsAreOwned) {
+  auto planned = planMini();
+  ASSERT_GE(planned.assignment.connections.size(), 2U);
+  auto inner = std::make_unique<flatbuffers::design::ConnectionT>();
+  inner->source = std::make_unique<flatbuffers::design::PortRef>(
+      planned.assignment.connections[0]->target);
+  inner->target = planned.assignment.connections[1]->target;
+  planned.global.connections.push_back(std::move(inner));
+  Spoken spoken;
+
+  const auto routing = drawMini(planned, spoken.report());
+
+  EXPECT_TRUE(routing.inner.back()->path.empty());
+  EXPECT_EQ(undrawnOf(routing), 1U);
+  ASSERT_EQ(spoken.fails.size(), 1U);
+  EXPECT_EQ(spoken.fails.front(), 1U);
+}
 
 TEST(DetailRouter, ReportsItsRoundsAndItsResultOnce) {
   const auto planned = planMini();

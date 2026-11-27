@@ -614,7 +614,9 @@ struct Wire {
   std::vector<PartitionLabel> partitions;
   /// The cells of the wire, from the feed to the target.
   std::vector<std::uint32_t> path;
-  /// Whether the wire has a corridor, or both ends for an inner wire.
+  /// Whether Detail must draw this wire.
+  bool required = false;
+  /// Whether the wire has claimed the cells it needs to start routing.
   bool planned = false;
   /// Whether the wire has a path.
   bool drawn = false;
@@ -837,18 +839,14 @@ public:
         crossBoundaryRouting(canvas, wires, tuning, ring, reach, report);
     // A wire fails when it has no path or when its path comes within the
     // clearance of another wire, counted with every wire placed.
-    const auto fails = recount(canvas, wires);
-    const auto unrouted = static_cast<std::uint32_t>(
-        std::ranges::count_if(wires, [](const Wire& wire) {
-          return wire.planned && (!wire.drawn || wire.path.empty());
-        }));
+    const auto [unrouted, tooClose] = countFailures(canvas, wires);
     const auto drawn = std::ranges::count_if(
         wires, [](const Wire& wire) { return wire.drawn; });
     report.result({{.text = std::format("drawn {}/{}", drawn, wires.size())},
                    {.text = counted(rounds, "round")},
                    verdict("unrouted", unrouted),
-                   verdict("too close", fails - unrouted)},
-                  fails);
+                   verdict("too close", tooClose)},
+                  unrouted + tooClose);
 
     return artifactOf(scene.detail, wires, ring, global.connections.size());
   }
@@ -909,11 +907,11 @@ private:
       wires[index].slot = index;
       const auto& route = *corridor.corridors[index];
       auto& wire = wires[index];
-      if (route.partitions.empty() || route.source == nullptr ||
+      wire.required = !route.partitions.empty();
+      if (!wire.required || route.source == nullptr ||
           route.target == nullptr) {
         continue;
       }
-      wire.planned = true;
       wire.partitions.reserve(route.partitions.size());
       for (const auto partition : route.partitions) {
         wire.partitions.push_back(static_cast<PartitionLabel>(partition));
@@ -930,6 +928,16 @@ private:
       wire.planned =
           wire.feed != NOWHERE && wire.target != NOWHERE &&
           std::ranges::find(wire.crossings, NOWHERE) == wire.crossings.end();
+      if (!wire.planned) {
+        const auto releaseClaim = [&canvas](const std::uint32_t cell) {
+          if (cell != NOWHERE) {
+            canvas.release(cell);
+          }
+        };
+        releaseClaim(wire.feed);
+        releaseClaim(wire.target);
+        std::ranges::for_each(wire.crossings, releaseClaim);
+      }
     }
     return wires;
   }
@@ -1541,33 +1549,33 @@ private:
   /// guard of the wire before it counts and adds it again afterwards. The
   /// count then equals that of a check on the finished paths.
   ///
-  /// @return How many planned wires have no path or come too close to
-  /// another wire.
-  [[nodiscard]] static std::size_t recount(Canvas& canvas,
-                                           std::vector<Wire>& wires) {
-    std::size_t open = 0;
-    for (auto& wire : wires) {
-      if (!wire.planned) {
+  /// @return The counts of required wires without a path and wires too
+  /// close to another wire.
+  [[nodiscard]] static std::pair<std::size_t, std::size_t>
+  countFailures(Canvas& canvas, const std::vector<Wire>& wires) {
+    std::size_t unrouted = 0;
+    std::size_t tooClose = 0;
+    for (const auto& wire : wires) {
+      if (!wire.required) {
         continue;
       }
       if (!wire.drawn || wire.path.empty()) {
-        wire.conflicts = 0;
-        ++open;
+        ++unrouted;
         continue;
       }
       for (const auto cell : wire.path) {
         canvas.unguard(cell);
       }
-      wire.conflicts = 0;
-      for (const auto cell : wire.path) {
-        wire.conflicts += canvas.guardOf(cell) != 0 ? 1U : 0U;
-      }
+      const auto conflicts =
+          std::ranges::any_of(wire.path, [&canvas](const auto cell) {
+            return canvas.guardOf(cell) != 0;
+          });
       for (const auto cell : wire.path) {
         canvas.guard(cell);
       }
-      open += wire.conflicts != 0 ? 1U : 0U;
+      tooClose += conflicts ? 1U : 0U;
     }
-    return open;
+    return {unrouted, tooClose};
   }
 
   /// Routes every wire again across the partition borders and keeps the
@@ -1990,7 +1998,8 @@ private:
       auto& added = wires.emplace_back();
       added.inner = true;
       added.slot = index;
-      if (connection.source == nullptr) {
+      added.required = connection.source != nullptr;
+      if (!added.required) {
         continue;
       }
       const auto source = cellOfPort.find(connection.source->index());

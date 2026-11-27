@@ -247,9 +247,10 @@ wire without a path there releases up to `max_relaxation` neighbors, first along
 the sweep and then against it, and searches again. Sweeps stop when every wire
 keeps the clearance.
 
-Detail counts a fail for each connection with a corridor but without a path, and
-for each wire that comes within the clearance of another wire. A connection
-without a corridor gets an empty path and counts as a Corridor fail only.
+Detail counts a failure for each routed corridor or inner connection with a
+source that Detail cannot draw. It also counts each wire that comes within the
+clearance of another wire. An unrouted corridor gets an empty path and counts as
+a Corridor failure.
 
 ## `[run]`
 
