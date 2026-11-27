@@ -437,8 +437,8 @@ TEST(DetailRouter, DrawsAStraightWireInEachGridDirection) {
       }
       const DCoord middle(static_cast<std::uint32_t>(6 + dx),
                           static_cast<std::uint32_t>(6 + dy));
-      const DCoord goal(static_cast<std::uint32_t>(6 + 2 * dx),
-                        static_cast<std::uint32_t>(6 + 2 * dy));
+      const DCoord goal(static_cast<std::uint32_t>(6 + (2 * dx)),
+                        static_cast<std::uint32_t>(6 + (2 * dy)));
       const auto planned = planSquare(config, {{start, goal}});
       const auto routing = drawMini(planned, {}, config);
       ASSERT_EQ(routing.wires.size(), 1U);

@@ -530,7 +530,7 @@ private:
       const auto step = searchState[cell] & DIRECTION_MASK;
       cell = static_cast<std::uint32_t>(
           static_cast<std::int64_t>(cell) - STEP_X[step] -
-          static_cast<std::int64_t>(gridMetrics.width) * STEP_Y[step]);
+          (static_cast<std::int64_t>(gridMetrics.width) * STEP_Y[step]));
     }
     std::ranges::reverse(path);
     return path;
