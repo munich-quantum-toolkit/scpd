@@ -170,6 +170,22 @@ corridorRouters();
 selectedCorridorRouter(const ConfigT& config);
 
 /**
+ * @brief Returns the detail routers this build ships.
+ * @return The registry.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT const Registry<IDetailRouter>&
+detailRouters();
+
+/**
+ * @brief Returns the detail router a configuration selects.
+ * @param config The run configuration.
+ * @return The configured name, or the default when the configuration names
+ * none.
+ */
+[[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::string_view
+selectedDetailRouter(const ConfigT& config);
+
+/**
  * @brief Lists what would stop a run of the planning stages, before any stage
  * runs.
  *
@@ -177,8 +193,8 @@ selectedCorridorRouter(const ConfigT& config);
  * it have run. The check reads only the chip and the configuration:
  *
  * - every step names an implementation this build registers;
- * - Capacity, Assignment, and Corridor require a near-square detail grid of
- *   at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
+ * - Capacity, Assignment, Corridor, and Detail require a near-square detail
+ *   grid of at most MAX_DETAIL_CELLS cells, as detailGridProblem() checks;
  * - every routable port faces a step of that grid, as orientationProblem()
  *   checks;
  * - the chip has at least one port with a launcher slot;
@@ -195,8 +211,8 @@ selectedCorridorRouter(const ConfigT& config);
  *
  * @param chip The classified chip.
  * @param config The run configuration.
- * @param steps The steps the run takes: `capacity`, `global`, `assign` or
- * `corridor`. The check skips any other name.
+ * @param steps The steps the run takes: `capacity`, `global`, `assign`,
+ * `corridor` or `detail`. The check skips any other name.
  * @return The problems, empty when there are none.
  */
 [[nodiscard]] MQT_SCPD_PIPELINE_EXPORT std::vector<std::string>

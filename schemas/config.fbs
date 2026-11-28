@@ -164,6 +164,38 @@ table CorridorParams {
   max_relaxation: uint32 = 4;
 }
 
+/// What the Detail stage may do.
+///
+/// The clearance between two wires is not a parameter. The stage derives it
+/// from `[design_rules] min_wire_spacing` on the detail grid. Every distance
+/// here is a length or a count of wire spacings, never a cell count, so that
+/// it means the same on every grid.
+table DetailParams {
+  /// The implementation, by the name it is registered under. Empty selects
+  /// the default.
+  router: string;
+  /// How far a wire may move to either side of its current path when the
+  /// stage routes it again under the clearance rule, in wire spacings.
+  corridor_spacings: uint32 = 4;
+  /// Sweeps over the wires under the clearance rule, alternating forward and
+  /// backward. After the first sweep, settled wires are skipped until a
+  /// neighbor releases them.
+  rounds: uint32 = 30;
+  /// How many neighboring wires a failed wire may release in a sweep,
+  /// counted along the sweep direction first and then against it.
+  max_relaxation: uint32 = 30;
+  /// How far the cost of running close to an obstacle reaches, in layout
+  /// units. Zero switches the cost off.
+  obstacle_penalty_reach: double = 185.0;
+  /// Peak obstacle cost, in axial steps. The cost decreases with distance
+  /// and vanishes beyond `obstacle_penalty_reach`.
+  obstacle_penalty: uint32 = 10;
+  /// How many orders the stage tries for the pieces of one partition before
+  /// it keeps the order that draws the most of them. One routes the pieces
+  /// in the order given.
+  orderings: uint32 = 16;
+}
+
 /// The parameters of the stages that are implemented.
 table StageParams {
   capacity: CapacityParams;
@@ -171,6 +203,7 @@ table StageParams {
   assignment: AssignmentParams;
   solver: SolverParams;
   corridor: CorridorParams;
+  detail: DetailParams;
 }
 
 /// How far a run goes.

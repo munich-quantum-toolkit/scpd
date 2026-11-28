@@ -111,6 +111,53 @@ void validateWires(
   }
 }
 
+/// Checks the layout coordinates of a nonempty detail grid.
+void validateDetailGrid(const flatbuffers::artifacts::GridExtentT& grid,
+                        Problems& problems) {
+  if (grid.width != 0 && grid.height != 0 &&
+      (!(grid.cell_width > 0.0) || !(grid.cell_height > 0.0) ||
+       !std::isfinite(grid.cell_width) || !std::isfinite(grid.cell_height) ||
+       !std::isfinite(grid.origin.x()) || !std::isfinite(grid.origin.y()))) {
+    problems.emplace_back("detail grid: origin and cell steps must be "
+                          "finite, with positive steps");
+  }
+}
+
+/// A wire runs over the cells of its path, so two consecutive cells differ by
+/// at most one along each axis.
+void validateDetailWires(
+    const std::vector<std::unique_ptr<flatbuffers::artifacts::DetailWireT>>&
+        wires,
+    const flatbuffers::artifacts::GridExtentT* grid,
+    const std::string_view what, Problems& problems) {
+  for (std::size_t index = 0; index < wires.size(); ++index) {
+    if (wires[index] == nullptr) {
+      problems.push_back(std::format("{} {}: missing", what, index));
+      continue;
+    }
+    const auto& path = wires[index]->path;
+    if (grid != nullptr && std::ranges::any_of(path, [grid](const auto& cell) {
+          return cell.x() >= grid->width || cell.y() >= grid->height;
+        })) {
+      problems.push_back(
+          std::format("{} {} leaves the detail grid", what, index));
+    }
+    for (std::size_t step = 1; step < path.size(); ++step) {
+      const auto& before = path[step - 1];
+      const auto& after = path[step];
+      const auto dx =
+          std::max(before.x(), after.x()) - std::min(before.x(), after.x());
+      const auto dy =
+          std::max(before.y(), after.y()) - std::min(before.y(), after.y());
+      if (std::max(dx, dy) != 1) {
+        problems.push_back(std::format("{} {} jumps from ({}, {}) to ({}, {})",
+                                       what, index, before.x(), before.y(),
+                                       after.x(), after.y()));
+      }
+    }
+  }
+}
+
 /// The capacity chains are trees stored flat, and the later stages walk them
 /// by index. Every index has to name a node, and no walk may come back to a
 /// node it left, or the walk would not end. A target lies on one chain only,
@@ -126,13 +173,7 @@ void validateCapacityPlan(const flatbuffers::artifacts::CapacityPlanT& plan,
     constexpr std::uint64_t wordBits = 64;
     const auto& grid = *plan.detail_grid;
     const auto cells = static_cast<std::uint64_t>(grid.width) * grid.height;
-    if (cells != 0 &&
-        (grid.cell_width <= 0.0 || grid.cell_height <= 0.0 ||
-         !std::isfinite(grid.cell_width) || !std::isfinite(grid.cell_height) ||
-         !std::isfinite(grid.origin.x()) || !std::isfinite(grid.origin.y()))) {
-      problems.emplace_back("detail grid: origin and cell steps must be "
-                            "finite, with positive steps");
-    }
+    validateDetailGrid(grid, problems);
     const auto words = (cells + wordBits - 1) / wordBits;
     const auto tail = cells % wordBits;
     if (plan.blocked_words.size() != words) {
@@ -437,8 +478,18 @@ Problems validate(const ArtifactT& artifact) {
     }
     break;
   }
-  case StageOutput::DetailRouting:
+  case StageOutput::DetailRouting: {
+    const auto& routing = *artifact.output.AsDetailRouting();
+    if (routing.grid != nullptr) {
+      validateDetailGrid(*routing.grid, problems);
+    } else {
+      problems.emplace_back("grid: missing");
+    }
+    validateDetailWires(routing.wires, routing.grid.get(), "wire", problems);
+    validateDetailWires(routing.inner, routing.grid.get(), "inner wire",
+                        problems);
     break;
+  }
   }
   return problems;
 }

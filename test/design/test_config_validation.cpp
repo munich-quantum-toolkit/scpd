@@ -409,4 +409,27 @@ TEST(ConfigValidation, CorridorSweepsAtLeastOneRound) {
             (Problems{"stages.corridor: rounds must be at least one"}));
 }
 
+TEST(ConfigValidation, DetailObstaclePenaltyFitsItsRange) {
+  ConfigT config = manualConfig();
+  config.stages = std::make_unique<StageParamsT>();
+  config.stages->detail = std::make_unique<DetailParamsT>();
+  config.stages->detail->obstacle_penalty = 255;
+  config.stages->detail->obstacle_penalty_reach = 0.0;
+  EXPECT_TRUE(validate(config).empty());
+
+  config.stages->detail->obstacle_penalty = 256;
+  config.stages->detail->obstacle_penalty_reach = -1.0;
+  EXPECT_EQ(validate(config),
+            (Problems{"stages.detail: obstacle_penalty_reach must not be "
+                      "negative",
+                      "stages.detail: obstacle_penalty must be at most 255, "
+                      "not 256"}));
+
+  config.stages->detail->obstacle_penalty = 10;
+  config.stages->detail->obstacle_penalty_reach =
+      std::numeric_limits<double>::infinity();
+  EXPECT_EQ(validate(config),
+            (Problems{"stages.detail: obstacle_penalty_reach must be finite"}));
+}
+
 } // namespace

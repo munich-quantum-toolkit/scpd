@@ -24,6 +24,7 @@ not needed.
 from __future__ import annotations
 
 import json
+import math
 from itertools import pairwise, starmap
 from typing import TYPE_CHECKING
 from xml.sax.saxutils import escape
@@ -82,7 +83,21 @@ PLANNING_COLORS: dict[str, str] = {
     "ring": "#6b675f",
     "corridor": "#2b2b2e",
     "slot": "#55524b",
+    "clearance": "#5f5f65",
 }
+
+#: Every wire of the Detail stage is drawn as a coplanar waveguide: the color of its ground edges and
+#: center conductor, the total width, the width of one edge and the width of the center, in screen
+#: pixels. The keys name the groups: the plain wires and the resonators of the ring, and the wires of
+#: the inner circuit.
+CPW: dict[str, tuple[str, float, float, float]] = {
+    "wire-signal": ("#4a4a50", 5.0, 0.8, 1.2),
+    "wire-resonator": ("#8c8780", 5.0, 0.8, 1.2),
+    "wire-inner": ("#4a4a50", 5.0, 0.8, 1.2),
+}
+
+#: The color of the gaps of a coplanar waveguide: the substrate.
+CPW_GAP = "#f7f7f6"
 
 #: The stroke width of each planning layer, in screen pixels.
 _PLANNING_WIDTHS: dict[str, float] = {
@@ -106,6 +121,7 @@ _HIDDEN: dict[str, frozenset[str]] = {
     "capacity": frozenset({"bottlenecks", "partitions"}),
     "assign": frozenset({"bottlenecks", "partitions", "ring"}),
     "corridor": frozenset({"bottlenecks", "partitions"}),
+    "detail": frozenset({"bottlenecks", "partitions"}),
 }
 
 #: The stages whose picture shades every partition in the gray of its tone.
@@ -113,7 +129,9 @@ _TONED = frozenset({"capacity", "assign", "corridor"})
 
 #: The borders under the chords and the corridors are only the ground they run on, so those pictures
 #: draw them light and the dark lines stand out.
-_LIGHT_GROUND = "svg.assign g.l-border>path,svg.corridor g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
+_LIGHT_GROUND = (
+    "svg.assign g.l-border>path,svg.corridor g.l-border>path,svg.detail g.l-border>path{stroke:#c9ccd1;stroke-width:1}"
+)
 
 #: Lengths of the decoration, in layout units (micrometers).
 _HOLE_PITCH = 120.0
@@ -124,6 +142,8 @@ _INSET = 20.0
 _INSET_WIDTH = 6.0
 #: The largest radius of a turn of the approach of a wire into its port, in layout units.
 _STUB_RADIUS = 60.0
+#: How far a corner of a drawn wire is rounded, in layout units.
+_BEND_ROUNDING = 90.0
 
 
 class PlotError(ValueError):
@@ -396,11 +416,73 @@ def _planning_layers(
                 f"{terminals}{terminations}</g>"
             )
         parts.append(f'<g class="l-feedline">{"".join(chains)}</g>')
+    _wire_layers(planning, parts, polyline, to_view)
     return "".join(parts)
 
 
-def _planning_style(font: float) -> str:
+def _smooth_data(points: Sequence[tuple[float, float]], radius: float) -> str:
+    """A polyline in picture coordinates with its corners rounded.
+
+    Returns:
+        The path data.
+    """
+    if len(points) < 3:
+        return "".join(f"{'M' if i == 0 else 'L'}{_number(x)} {_number(y)}" for i, (x, y) in enumerate(points))
+    out = [f"M{_number(points[0][0])} {_number(points[0][1])}"]
+    for i in range(1, len(points) - 1):
+        (ax, ay), (bx, by), (cx, cy) = points[i - 1], points[i], points[i + 1]
+        la, lc = math.hypot(bx - ax, by - ay), math.hypot(cx - bx, cy - by)
+        r = min(radius, la / 2, lc / 2)
+        p1 = (bx + (ax - bx) * r / la, by + (ay - by) * r / la) if la else (bx, by)
+        p2 = (bx + (cx - bx) * r / lc, by + (cy - by) * r / lc) if lc else (bx, by)
+        out.append(f"L{_number(p1[0])} {_number(p1[1])}Q{_number(bx)} {_number(by)} {_number(p2[0])} {_number(p2[1])}")
+    out.append(f"L{_number(points[-1][0])} {_number(points[-1][1])}")
+    return "".join(out)
+
+
+def _wire_layers(
+    planning: PlanningGeometry,
+    parts: list[str],
+    polyline: Callable[..., str],
+    to_view: Callable[[float, float], tuple[float, float]],
+) -> None:
+    """Draw the wires of the Detail stage as coplanar waveguides, over the clearance they keep."""
+    kinds = (
+        ("wire-signal", planning.wires),
+        ("wire-resonator", planning.resonators),
+        ("wire-inner", planning.inner_wires),
+    )
+    # A zero-length segment gives a one-cell wire a visible round cap.
+    kinds = tuple((name, [wire * 2 if len(wire) == 1 else wire for wire in wires]) for name, wires in kinds)
+    if planning.clearance > 0 and any(wires for _, wires in kinds):
+        # A band one clearance wide around every wire, under the wires. The width is in layout
+        # units, because a clearance is a length on the chip. Two wires closer than the clearance
+        # are two bands that overlap, and the overlap reads darker.
+        bands = "".join(f'<path d="{polyline(wire)}"/>' for _, wires in kinds for wire in wires)
+        parts.append(f'<g class="l-clearance">{bands}</g>')
+    for name, wires in kinds:
+        if not wires:
+            continue
+        # A coplanar waveguide is three strokes: the ground edges, the gaps in the color of the
+        # substrate and the center conductor. Within one group every edge is drawn before every gap
+        # and every gap before every center, so that wires which meet merge as metal would.
+        data = [_smooth_data(list(starmap(to_view, wire)), _BEND_ROUNDING) for wire in wires]
+        parts.append(
+            f'<g class="l-{name} cpw">'
+            + "".join(f'<path class="edge" d="{d}"/>' for d in data)
+            + "".join(f'<path class="gap" d="{d}"/>' for d in data)
+            + "".join(f'<path class="core" d="{d}"/>' for d in data)
+            + "</g>"
+        )
+
+
+def _planning_style(font: float, clearance: float = 0.0) -> str:
     """The stroke of every planning layer, and the type of the gate labels.
+
+    Args:
+        font: The size of a gate label, in layout units.
+        clearance: The width of the clearance band around a wire, in layout units, or zero for no
+            band.
 
     Returns:
         The CSS rules.
@@ -426,6 +508,20 @@ def _planning_style(font: float) -> str:
         f"g.l-feedline circle,g.l-feedline rect{{fill:{FEEDLINE_COLOR};stroke:#ffffff;stroke-width:1.2;"
         "vector-effect:non-scaling-stroke}"
     )
+    style += "g.cpw>path{fill:none;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}"
+    for name, (color, total, edge, core) in CPW.items():
+        style += (
+            f"g.l-{name}>path.edge{{stroke:{color};stroke-width:{_number(total)}}}"
+            f"g.l-{name}>path.gap{{stroke:{CPW_GAP};stroke-width:{_number(total - 2 * edge)}}}"
+            f"g.l-{name}>path.core{{stroke:{color};stroke-width:{_number(core)}}}"
+        )
+    if clearance > 0:
+        # The band is translucent, so that one band reads at the zoom of a whole chip and an overlap
+        # of two reads darker.
+        style += (
+            f"g.l-clearance>path{{fill:none;stroke:{PLANNING_COLORS['clearance']};"
+            f"stroke-width:{_number(clearance)};stroke-opacity:.26;stroke-linejoin:round;stroke-linecap:round}}"
+        )
     return style
 
 
@@ -510,6 +606,10 @@ _LAYERS: tuple[tuple[str, str, str], ...] = (
     ("Assignments", ".l-assignment", PLANNING_COLORS["assignment"]),
     ("Slots", ".l-slot", PLANNING_COLORS["slot"]),
     ("Corridors", ".l-corridor", PLANNING_COLORS["corridor"]),
+    ("Clearance", ".l-clearance", PLANNING_COLORS["clearance"]),
+    ("Wires", ".l-wire-signal", CPW["wire-signal"][0]),
+    ("Resonators", ".l-wire-resonator", CPW["wire-resonator"][0]),
+    ("Inner circuit", ".l-wire-inner", CPW["wire-inner"][0]),
     ("Launcher slots", ".l-launcher", PLANNING_COLORS["launcher"]),
     ("Feedlines", ".l-feedline", FEEDLINE_COLOR),
     ("Frame", ".x-marks", MUTED),
@@ -749,7 +849,7 @@ def layout_svg(
         f"g.l-raster>path{{fill:{RASTER_FILL};stroke:none}}"
     )
     if overlay:
-        style += _planning_style(0.8 * font) + _LIGHT_GROUND
+        style += _planning_style(0.8 * font, planning.clearance if planning is not None else 0.0) + _LIGHT_GROUND
     name = escape(title)
     heading = ""
     if title:

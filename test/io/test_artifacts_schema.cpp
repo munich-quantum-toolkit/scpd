@@ -108,8 +108,6 @@ CapacityPlanT emptyPlan() {
 }
 
 TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
-  // The outputs of the stages that are not implemented yet are empty tables.
-  // Each still travels behind the Artifact root with its own tag.
   const ArtifactT capacity = readArtifact(writeArtifact(wrap(emptyPlan())));
   EXPECT_EQ(capacity.output.type, StageOutput::CapacityPlan);
   EXPECT_NE(capacity.output.AsCapacityPlan(), nullptr);
@@ -119,7 +117,9 @@ TEST(ArtifactSchema, EveryStageOutputRoundTripsThroughTheRoot) {
   EXPECT_EQ(global.output.type, StageOutput::GlobalRouting);
   EXPECT_NE(global.output.AsGlobalRouting(), nullptr);
 
-  const ArtifactT detail = readArtifact(writeArtifact(wrap(DetailRoutingT{})));
+  DetailRoutingT drawn;
+  drawn.grid = std::make_unique<GridExtentT>();
+  const ArtifactT detail = readArtifact(writeArtifact(wrap(std::move(drawn))));
   EXPECT_EQ(detail.output.type, StageOutput::DetailRouting);
   EXPECT_NE(detail.output.AsDetailRouting(), nullptr);
   EXPECT_EQ(detail.output.AsCapacityPlan(), nullptr);
@@ -228,6 +228,81 @@ TEST(ArtifactSchema, RefusesARoutedCorridorWithoutItsEnds) {
             (std::vector<std::string>{"corridor 0 has a way but no source",
                                       "corridor 0 has a way but no target",
                                       "corridor 1 has a way but no target"}));
+}
+
+TEST(ArtifactSchema, DetailRoutingRoundTrips) {
+  DetailRoutingT routing;
+  routing.grid = std::make_unique<GridExtentT>();
+  routing.grid->width = 40;
+  routing.grid->height = 30;
+  routing.grid->cell_width = 19.5;
+  routing.grid->cell_height = 19.5;
+  auto wire = std::make_unique<DetailWireT>();
+  wire->path = {DCoord(3, 4), DCoord(4, 5), DCoord(5, 5)};
+  routing.wires.push_back(std::move(wire));
+  // A connection without a path carries no cells, which is how a reader
+  // counts the failures.
+  routing.wires.push_back(std::make_unique<DetailWireT>());
+  auto inner = std::make_unique<DetailWireT>();
+  inner->path = {DCoord(10, 10), DCoord(10, 11)};
+  routing.inner.push_back(std::move(inner));
+
+  const ArtifactT back = readArtifact(writeArtifact(wrap(std::move(routing))));
+
+  ASSERT_EQ(back.output.type, StageOutput::DetailRouting);
+  const auto& read = *back.output.AsDetailRouting();
+  ASSERT_NE(read.grid, nullptr);
+  EXPECT_EQ(read.grid->width, 40U);
+  ASSERT_EQ(read.wires.size(), 2U);
+  EXPECT_EQ(read.wires[0]->path,
+            (std::vector<DCoord>{DCoord(3, 4), DCoord(4, 5), DCoord(5, 5)}));
+  EXPECT_TRUE(read.wires[1]->path.empty());
+  ASSERT_EQ(read.inner.size(), 1U);
+  EXPECT_EQ(read.inner[0]->path.size(), 2U);
+}
+
+TEST(ArtifactSchema, RequiresTheDetailGridEvenWhenThereAreNoWires) {
+  EXPECT_THROW(static_cast<void>(writeArtifact(wrap(DetailRoutingT{}))),
+               std::invalid_argument);
+}
+
+TEST(ArtifactSchema, RefusesACellOutsideTheDetailGridAndARepeatedCell) {
+  DetailRoutingT routing;
+  routing.grid = std::make_unique<GridExtentT>();
+  routing.grid->width = routing.grid->height = 2;
+  routing.grid->cell_width = routing.grid->cell_height = 1.0;
+  auto wire = std::make_unique<DetailWireT>();
+  wire->path = {DCoord(2, 1)};
+  routing.wires.push_back(std::move(wire));
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(routing)))),
+               std::invalid_argument);
+  routing.wires[0]->path = {DCoord(1, 1), DCoord(1, 1)};
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(routing)))),
+               std::invalid_argument);
+  routing.wires[0]->path.clear();
+  routing.grid->cell_width = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(static_cast<void>(readArtifact(packUnchecked(wrap(routing)))),
+               std::invalid_argument);
+}
+
+TEST(ArtifactSchema, RefusesADetailWireThatSkipsACell) {
+  // A wire runs over the cells of its path, so each step moves to one of the
+  // eight neighboring cells.
+  DetailRoutingT routing;
+  routing.grid = std::make_unique<GridExtentT>();
+  routing.grid->width = routing.grid->height = 10;
+  routing.grid->cell_width = routing.grid->cell_height = 1.0;
+  auto wire = std::make_unique<DetailWireT>();
+  wire->path = {DCoord(3, 4), DCoord(5, 4)};
+  routing.wires.push_back(std::move(wire));
+  auto inner = std::make_unique<DetailWireT>();
+  inner->path = {DCoord(1, 1), DCoord(2, 2), DCoord(2, 4)};
+  routing.inner.push_back(std::move(inner));
+
+  EXPECT_EQ(
+      validate(wrap(std::move(routing))),
+      (std::vector<std::string>{"wire 0 jumps from (3, 4) to (5, 4)",
+                                "inner wire 0 jumps from (2, 2) to (2, 4)"}));
 }
 
 /// A connection of the assignment to a resonator, with both of its roles.
@@ -513,6 +588,13 @@ TEST(ArtifactSchema, RefusesAMissingEntryOfEveryOutput) {
   EXPECT_EQ(validate(wrap(std::move(corridors))),
             (std::vector<std::string>{"border slots 0: missing",
                                       "corridor 0: missing"}));
+
+  DetailRoutingT detail;
+  detail.wires.push_back(nullptr);
+  detail.inner.push_back(nullptr);
+  EXPECT_EQ(validate(wrap(std::move(detail))),
+            (std::vector<std::string>{"grid: missing", "wire 0: missing",
+                                      "inner wire 0: missing"}));
 
   CapacityPlanT unwritable = emptyPlan();
   unwritable.bottlenecks.push_back(nullptr);

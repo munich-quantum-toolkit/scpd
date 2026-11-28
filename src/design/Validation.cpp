@@ -42,6 +42,10 @@ using flatbuffers::design::UnassignedRole;
 /// parameter Threads, and far below the largest thread count of HiGHS.
 constexpr std::uint32_t MAX_SOLVER_THREADS = 1024;
 
+/// The highest obstacle penalty of the Detail stage. The stage stores the
+/// penalty of every cell in one byte.
+constexpr std::uint32_t MAX_OBSTACLE_PENALTY = 255;
+
 void requirePositive(const double value, const std::string& what,
                      Problems& problems) {
   if (!std::isfinite(value)) {
@@ -327,6 +331,15 @@ Problems validate(const ConfigT& config) {
     }
     if (stages.corridor != nullptr && stages.corridor->rounds == 0) {
       problems.emplace_back("stages.corridor: rounds must be at least one");
+    }
+    if (stages.detail != nullptr) {
+      requireNonNegative(stages.detail->obstacle_penalty_reach,
+                         "stages.detail: obstacle_penalty_reach", problems);
+      if (stages.detail->obstacle_penalty > MAX_OBSTACLE_PENALTY) {
+        problems.push_back(std::format(
+            "stages.detail: obstacle_penalty must be at most {}, not {}",
+            MAX_OBSTACLE_PENALTY, stages.detail->obstacle_penalty));
+      }
     }
   }
   return problems;

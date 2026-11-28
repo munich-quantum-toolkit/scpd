@@ -62,8 +62,11 @@ PLAN_OUTPUT = (
     ),
     r"   routed (\d+)/\2 · \d+ rounds?",
     r"   ✓ 04-corridor\.fb  SIZE · fails 0",
+    r"🧵 detail",
+    r"   drawn (\d+)/\3 · \d+ rounds? · unrouted 0 · too close 0",
+    r"   ✓ 05-detail\.fb  SIZE · fails 0",
     r"",
-    r"✓ 4 stages · stopped after corridor · fails 0",
+    r"✓ 5 stages · stopped after detail · fails 0",
 )
 
 # Every test runs with the solver linked into the core.
@@ -426,6 +429,8 @@ def test_plan_runs_every_step_into_the_run_directory(tmp_path: Path, capsys: pyt
         "03-assign.inputs.json",
         "04-corridor.fb",
         "04-corridor.inputs.json",
+        "05-detail.fb",
+        "05-detail.inputs.json",
         "config.toml",
     ]
     output = "\n".join(untimed(capsys.readouterr().out, run))
@@ -443,12 +448,12 @@ def test_every_line_of_a_run_follows_the_format(tmp_path: Path, capfd: pytest.Ca
     forms = [
         r"mqt-scpd plan \S+ → \S+  ·  .+",
         r"",
-        r"(🧩|🔳|📌|🧭) (capacity|global|assign|corridor)",
+        r"(🧩|🔳|📌|🧭|🧵) (capacity|global|assign|corridor|detail)",
         rf"   \S.* {{2,}}{time}",
         rf"     \S.* {{2,}}{time}",
         r"     .+",
         r"   ✓ \d\d-[a-z]+\.fb  \d+(\.\d)? (B|kB|MB)( · fails \d+)?",
-        rf"✓ 4 stages · {time} · stopped after corridor · fails 0",
+        rf"✓ 5 stages · {time} · stopped after detail · fails 0",
     ]
     for line in out.splitlines():
         assert any(re.fullmatch(form, line) for form in forms), line
@@ -572,7 +577,7 @@ def test_a_step_refuses_a_run_whose_design_rules_changed(
     """A design rule edited in the run's config.toml stops every later step until the capacity step runs again."""
     run = tmp_path / "run"
     assert plan(run) == 0
-    before = {path.name: path.read_bytes() for path in run.glob("0[1-4]-*")}
+    before = {path.name: path.read_bytes() for path in run.glob("0[1-5]-*")}
     config = run / "config.toml"
     config.write_text(
         config.read_text(encoding="utf-8").replace("min_straight_length = 100.0", "min_straight_length = 300.0"),
@@ -587,7 +592,7 @@ def test_a_step_refuses_a_run_whose_design_rules_changed(
         "   ✗ [design_rules] in config.toml changed after the capacity step wrote 01-capacity.fb; "
         "run the capacity step again"
     )
-    assert {path.name: path.read_bytes() for path in run.glob("0[1-4]-*")} == before
+    assert {path.name: path.read_bytes() for path in run.glob("0[1-5]-*")} == before
 
     assert main(["plan", "-o", str(run), "--stage", "capacity", "--no-progress"]) == 0
     for step in ("global", "assign", "corridor"):
@@ -873,7 +878,9 @@ def test_publication_keeps_moves_on_the_run_filesystem(
     assert (run / "01-capacity.fb").is_file()
 
 
-@pytest.mark.parametrize("stage", ["assign", "corridor", None], ids=["assign", "corridor", "fresh-plan"])
+@pytest.mark.parametrize(
+    "stage", ["assign", "corridor", "detail", None], ids=["assign", "corridor", "detail", "fresh-plan"]
+)
 def test_planning_recovers_interrupted_publication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str | None
 ) -> None:
@@ -897,8 +904,10 @@ def test_planning_recovers_interrupted_publication(
 
     arguments = ["--stage", stage] if stage is not None else ["-c", str(run / "config.toml")]
     assert main(["plan", "-o", str(run), "--no-progress", *arguments]) == 0
-    if stage == "assign":
-        del before["04-corridor.fb"], before["04-corridor.inputs.json"]
+    # A step that runs again drops the artifacts of the steps after it.
+    later = {"assign": ("04-corridor", "05-detail"), "corridor": ("05-detail",)}
+    for name in later.get(stage or "", ()):
+        del before[f"{name}.fb"], before[f"{name}.inputs.json"]
     assert {path.name: path.read_bytes() for path in run.iterdir()} == before
 
 
@@ -1036,6 +1045,7 @@ def test_list_algorithms_names_one_line_per_stage(capsys: pytest.CaptureFixture[
         "global-router      hanan-milp",
         "assigner           ordered-milp",
         "corridor-router    partition-astar",
+        "detail-router      pixel-astar",
     ]
 
 
@@ -1062,7 +1072,7 @@ def test_plot_draws_a_planning_stage_of_a_run(tmp_path: Path, capsys: pytest.Cap
     assert '<g class="l-feedline">' in output.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("stage", ["global", "assign", "corridor"])
+@pytest.mark.parametrize("stage", ["global", "assign", "corridor", "detail"])
 def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
@@ -1089,9 +1099,10 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
         global_routing: bytes | None = None,
         *,
         assignment: bytes | None = None,
+        clearance: float = 0.0,
     ) -> PlanningGeometry:
         handed.append((capacity, global_routing, assignment))
-        return drawing(data, chip, stage, capacity, global_routing, assignment=assignment)
+        return drawing(data, chip, stage, capacity, global_routing, assignment=assignment, clearance=clearance)
 
     monkeypatch.setattr(cli, "planning_geometry", planning_geometry)
     monkeypatch.setattr(Path, "read_bytes", read_overlay)
@@ -1102,8 +1113,8 @@ def test_plot_draws_a_stage_with_the_artifacts_it_lies_over(
     assert handed == [
         (
             read_bytes(run / "01-capacity.fb"),
-            read_bytes(run / "02-global.fb") if stage in {"assign", "corridor"} else None,
-            read_bytes(run / "03-assign.fb") if stage == "corridor" else None,
+            read_bytes(run / "02-global.fb") if stage in {"assign", "corridor", "detail"} else None,
+            read_bytes(run / "03-assign.fb") if stage in {"corridor", "detail"} else None,
         )
     ]
     if stage == "global":

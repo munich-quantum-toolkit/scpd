@@ -132,8 +132,9 @@ validate(const flatbuffers::config::PortConfigT& ports);
  * a capacity stage whose bottleneck clearance or crossing pitch is not a
  * finite positive number, for a solver section with an unknown backend, a
  * time limit or relative gap that is negative or not finite, or more than
- * 1024 threads, and for a corridor stage of no rounds, empty when the
- * configuration is valid on its own.
+ * 1024 threads, for a corridor stage of no rounds, and for a detail stage
+ * whose obstacle penalty reach is negative or not finite or whose obstacle
+ * penalty exceeds 255, empty when the configuration is valid on its own.
  */
 [[nodiscard]] MQT_SCPD_DESIGN_EXPORT Problems
 validate(const flatbuffers::config::ConfigT& config);

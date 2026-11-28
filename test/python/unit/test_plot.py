@@ -313,6 +313,63 @@ def test_corridors_that_share_an_endpoint_keep_their_own_approaches() -> None:
     assert second.count("Q") == 2
 
 
+def test_the_detail_wires_are_waveguides_over_their_clearance() -> None:
+    """A detail wire is three strokes with rounded corners, over a band one clearance wide.
+
+    Plain wires, resonators and the inner circuit are groups of their own, and the detail picture
+    draws the borders light.
+    """
+    geometry = PlanningGeometry(
+        borders=[[(0.0, 50.0), (100.0, 50.0)]],
+        wires=[[(0.0, 0.0), (300.0, 0.0), (300.0, 300.0)]],
+        resonators=[[(0.0, 500.0), (400.0, 500.0)]],
+        inner_wires=[[(600.0, 0.0), (600.0, 200.0)]],
+        clearance=160.0,
+    )
+
+    svg = layout_svg(_mini(), stage="detail", planning=geometry)
+
+    root = ET.fromstring(svg)  # ruff: ignore[suspicious-xml-element-tree-usage]
+    groups = {group.get("class"): group for group in root.iter(f"{SVG}g")}
+    for name in ("l-wire-signal cpw", "l-wire-resonator cpw", "l-wire-inner cpw"):
+        paths = groups[name].findall(f"{SVG}path")
+        assert [path.get("class") for path in paths] == ["edge", "gap", "core"]
+    signal = groups["l-wire-signal cpw"].findall(f"{SVG}path")[0].get("d") or ""
+    assert signal.count("Q") == 1
+    assert len(groups["l-clearance"].findall(f"{SVG}path")) == 3
+    style = root.find(f"{SVG}style")
+    assert style is not None
+    assert style.text is not None
+    assert "g.l-clearance>path{fill:none;stroke:#5f5f65;stroke-width:160;" in style.text
+    assert "svg.detail g.l-border>path" in style.text
+    found = re.search(r"L = (\[.*?\]), f = ", svg)
+    assert found is not None
+    names = {name for name, _, _ in json.loads(found[1])}
+    assert {"Clearance", "Wires", "Resonators", "Inner circuit"} <= names
+
+
+def test_a_one_cell_wire_has_round_caps_at_its_only_point() -> None:
+    """Both the waveguide and its clearance have a visible stroke at the same cell."""
+    geometry = PlanningGeometry(wires=[[(300.0, 400.0)]], clearance=160.0)
+    root = ET.fromstring(layout_svg(_mini(), stage="detail", planning=geometry))  # ruff: ignore[suspicious-xml-element-tree-usage]
+    for group in ("l-wire-signal cpw", "l-clearance"):
+        element = root.find(f".//{SVG}g[@class='{group}']/{SVG}path")
+        assert element is not None
+        start, end = (element.get("d") or "").removeprefix("M").split("L")
+        assert start == end
+
+
+def test_detail_wires_without_a_rule_have_no_clearance_band() -> None:
+    """Without a clearance the wires are drawn and no band is."""
+    geometry = PlanningGeometry(wires=[[(0.0, 0.0), (300.0, 0.0)]])
+
+    svg = layout_svg(_mini(), stage="detail", planning=geometry)
+
+    assert 'class="l-wire-signal cpw"' in svg
+    assert 'class="l-clearance"' not in svg
+    assert "g.l-clearance>path" not in svg
+
+
 def test_the_panel_lists_the_layers_the_picture_carries() -> None:
     """The layer panel names every layer that is drawn and none that is not."""
     svg = layout_svg(_mini(), title="mini", stage="layout")

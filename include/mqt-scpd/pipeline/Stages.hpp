@@ -21,6 +21,7 @@ namespace mqt::scpd::pipeline {
 using flatbuffers::artifacts::AssignmentT;
 using flatbuffers::artifacts::CapacityPlanT;
 using flatbuffers::artifacts::CorridorRoutingT;
+using flatbuffers::artifacts::DetailRoutingT;
 using flatbuffers::artifacts::GlobalRoutingT;
 using flatbuffers::config::ConfigT;
 using flatbuffers::design::ChipT;
@@ -206,6 +207,49 @@ public:
                                              const AssignmentT& assignment,
                                              const ConfigT& config,
                                              const Report& report) const = 0;
+};
+
+/**
+ * @brief Draws every wire as a path of cells on the detail grid.
+ *
+ * The corridors give each wire of the ring a coarse way: the partitions it
+ * runs through and where it crosses each border. The wires of the inner
+ * circuit have no corridor. The router draws both kinds on one grid and keeps
+ * the clearance of `[design_rules] min_wire_spacing` between every two wires.
+ */
+class MQT_SCPD_PIPELINE_EXPORT IDetailRouter {
+public:
+  /**
+   * @brief Creates a router.
+   */
+  IDetailRouter() = default;
+  IDetailRouter(const IDetailRouter&) = delete;
+  IDetailRouter& operator=(const IDetailRouter&) = delete;
+  IDetailRouter(IDetailRouter&&) = delete;
+  IDetailRouter& operator=(IDetailRouter&&) = delete;
+  virtual ~IDetailRouter() = default;
+
+  /**
+   * @brief Draws the wires of a run as paths of cells.
+   * @param chip The classified chip.
+   * @param capacity The capacity plan of the run.
+   * @param global The global routing of the run.
+   * @param assignment The assignment of the run.
+   * @param corridor The corridor routing of the run.
+   * @param config The run configuration.
+   * @param report Where the stage reports what it does.
+   * @return One path per connection of the assignment, and one per
+   * connection of the global routing.
+   * @throws std::invalid_argument When the capacity plan was made on another
+   * detail grid or with other blocked cells than the configuration gives, or
+   * when the corridor routing has another number of corridors than the
+   * assignment has connections.
+   */
+  [[nodiscard]] virtual DetailRoutingT
+  run(const ChipT& chip, const CapacityPlanT& capacity,
+      const GlobalRoutingT& global, const AssignmentT& assignment,
+      const CorridorRoutingT& corridor, const ConfigT& config,
+      const Report& report) const = 0;
 };
 
 } // namespace mqt::scpd::pipeline

@@ -16,7 +16,7 @@ See the [changelog](CHANGELOG.md) for the full list of changes.
 To plan through Assignment, set `[stages.assignment] launcher_target` to the
 number of chain ends that need a launcher on your chip. Use
 `[run] stop_after = "capacity"` for Capacity alone. `doctor` checks through the
-configured stop point, which defaults to Corridor. See the
+configured stop point, which defaults to Detail. See the
 [configuration reference](docs/configuration.md) for launcher order, ring
 counts, and solver settings.
 
@@ -30,6 +30,11 @@ to keep Assignment as the last stage of a full run. `plan` exits with code 1 if
 Corridor leaves any connection unrouted. Rerun Capacity if Corridor rejects a
 saved Capacity artifact because its grid, partitions, borders, or crossing
 budgets do not match the current run.
+
+To add Detail to an existing run with current artifacts, run
+`mqt-scpd plan -o <run-dir> --stage detail`. Set `[run] stop_after = "corridor"`
+to keep Corridor as the last stage of a full run. `plan` exits with code 1 if
+Detail leaves a wire without a path or two wires within the wire clearance.
 
 Assignment uses a sliding window to enforce the feedline utilization limit. The
 bundled HiGHS 1.16.0 enables parallel mixed-integer search by default. Rerunning

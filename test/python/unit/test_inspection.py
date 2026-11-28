@@ -31,6 +31,7 @@ from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
 from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
 from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailWire import DetailWireT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
@@ -48,6 +49,7 @@ from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.design.Rotation import Rotation
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Arc import ArcT
+from mqt.scpd.flatbuffers.geometry.DCoord import DCoordT
 from mqt.scpd.flatbuffers.geometry.Line import LineT
 from mqt.scpd.flatbuffers.geometry.Path import PathT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
@@ -197,7 +199,26 @@ STAGE_OUTPUTS = [
         },
         id="corridor",
     ),
-    pytest.param(StageOutput.DetailRouting, DetailRoutingT(), {}, id="detail"),
+    pytest.param(
+        StageOutput.DetailRouting,
+        DetailRoutingT(
+            grid=GridExtentT(width=4, height=3, origin=PointT(1.5, -2.0), cellWidth=20.0, cellHeight=20.0),
+            wires=[DetailWireT(path=[DCoordT(1, 2), DCoordT(2, 2)]), DetailWireT(path=[])],
+            inner=[],
+        ),
+        {
+            "grid": {
+                "width": 4,
+                "height": 3,
+                "origin": {"x": 1.5, "y": -2.0},
+                "cell_width": 20.0,
+                "cell_height": 20.0,
+            },
+            "wires": [{"path": [{"x": 1, "y": 2}, {"x": 2, "y": 2}]}, {"path": []}],
+            "inner": [],
+        },
+        id="detail",
+    ),
     pytest.param(
         StageOutput.FinalRouting,
         FinalRoutingT(

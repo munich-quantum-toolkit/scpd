@@ -38,7 +38,9 @@ using design::Problems;
  * i targets the port of ring node i, and every chain runs through one ring
  * node at least, each of them on that chain only; a corridor names one more
  * partition than it has crossings, or neither for a connection without a
- * way, and a corridor with a way has a source and a target.
+ * way, and a corridor with a way has a source and a target. Each Detail path
+ * stays on its grid and moves to one of the eight neighboring cells at each
+ * step.
  *
  * The check reads one artifact. Corridor border indices refer to the Capacity
  * plan, and Corridor entries follow the connections of the Assignment.

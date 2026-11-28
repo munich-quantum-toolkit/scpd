@@ -27,6 +27,8 @@ from mqt.scpd.flatbuffers.artifacts.CapacityNode import CapacityNodeT
 from mqt.scpd.flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from mqt.scpd.flatbuffers.artifacts.Corridor import CorridorT
 from mqt.scpd.flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailRouting import DetailRoutingT
+from mqt.scpd.flatbuffers.artifacts.DetailWire import DetailWireT
 from mqt.scpd.flatbuffers.artifacts.FeedlineChain import FeedlineChainT
 from mqt.scpd.flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from mqt.scpd.flatbuffers.artifacts.Geometry import GeometryT
@@ -45,6 +47,7 @@ from mqt.scpd.flatbuffers.design.PortRef import PortRefT
 from mqt.scpd.flatbuffers.design.Rotation import Rotation
 from mqt.scpd.flatbuffers.design.UnassignedRole import UnassignedRole
 from mqt.scpd.flatbuffers.geometry.Arc import ArcT
+from mqt.scpd.flatbuffers.geometry.DCoord import DCoordT
 from mqt.scpd.flatbuffers.geometry.Line import LineT
 from mqt.scpd.flatbuffers.geometry.Path import PathT
 from mqt.scpd.flatbuffers.geometry.Point import PointT
@@ -494,3 +497,39 @@ def test_read_rejects_bytes_that_do_not_decode() -> None:
     """A buffer with the identifier but a root offset outside the buffer is not an artifact."""
     with pytest.raises(ArtifactError, match="not an artifact"):
         read_artifact(b"\xff\xff\xff\xff" + IDENTIFIER)
+
+
+def test_detail_writer_requires_the_grid_and_both_wire_lists() -> None:
+    """A Detail artifact carries its grid and both wire lists, even for an empty routing."""
+    with pytest.raises(ArtifactError, match="grid is missing; wires is missing; inner is missing"):
+        write_artifact(wrap(StageOutput.DetailRouting, DetailRoutingT()))
+
+
+@pytest.mark.parametrize("field", ["grid", "wires", "inner"])
+def test_detail_reader_checks_each_required_field(field: str) -> None:
+    """Even with no routes, the serialized artifact must contain each field."""
+    routing = DetailRoutingT(grid=GridExtentT(origin=PointT(0.0, 0.0)), wires=[], inner=[])
+    setattr(routing, field, None)
+    builder = flatbuffers.Builder()
+    builder.Finish(wrap(StageOutput.DetailRouting, routing).Pack(builder), file_identifier=IDENTIFIER)
+    with pytest.raises(ArtifactError, match="verification failed"):
+        read_artifact(bytes(builder.Output()))
+
+
+def test_detail_writer_checks_wire_cells() -> None:
+    """Every routed cell lies on its grid."""
+    grid = GridExtentT(width=2, height=2, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    routing = DetailRoutingT(grid=grid, wires=[DetailWireT(path=[DCoordT(2, 1)])], inner=[])
+    with pytest.raises(ArtifactError, match="leaves the detail grid"):
+        write_artifact(wrap(StageOutput.DetailRouting, routing))
+
+
+def test_detail_wire_round_trips() -> None:
+    """A routed wire preserves the order of its cells."""
+    grid = GridExtentT(width=2, height=2, origin=PointT(0.0, 0.0), cellWidth=1.0, cellHeight=1.0)
+    wire = DetailWireT(path=[DCoordT(0, 1), DCoordT(1, 0)])
+    routing = DetailRoutingT(grid=grid, wires=[wire], inner=[])
+    output = read_artifact(write_artifact(wrap(StageOutput.DetailRouting, routing))).output
+    assert isinstance(output, DetailRoutingT)
+    assert [(cell.x, cell.y) for cell in output.wires[0].path] == [(0, 1), (1, 0)]
+    assert not output.inner

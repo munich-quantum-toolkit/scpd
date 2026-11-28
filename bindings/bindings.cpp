@@ -161,6 +161,16 @@ assignmentOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
   return *output;
 }
 
+/// The corridor routing an artifact carries.
+const mqt::scpd::flatbuffers::artifacts::CorridorRoutingT&
+corridorOf(const mqt::scpd::flatbuffers::artifacts::ArtifactT& artifact) {
+  const auto* output = artifact.output.AsCorridorRouting();
+  if (output == nullptr) {
+    throw std::invalid_argument("the artifact is not a corridor routing");
+  }
+  return *output;
+}
+
 /// The name of a tone, as the Python side spells it.
 const char* toneName(const mqt::scpd::pipeline::Tone tone) {
   switch (tone) {
@@ -413,6 +423,39 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
       "plan_capacity. Returns 04-corridor.fb as bytes.");
 
   m.def(
+      "route_detail",
+      [](const nb::bytes& chip, const nb::bytes& capacity,
+         const nb::bytes& globalRouting, const nb::bytes& assignment,
+         const nb::bytes& corridor, const nb::bytes& config,
+         const std::string_view producer, const nb::object& reporter,
+         const int verbosity) {
+        const auto configuration = mqt::scpd::io::readConfig(asSpan(config));
+        const auto design = mqt::scpd::io::readChip(asSpan(chip));
+        const auto plan = fittingArtifact(capacity, design);
+        const auto routing = fittingArtifact(globalRouting, design);
+        const auto assigned = fittingArtifact(assignment, design);
+        const auto routed = fittingArtifact(corridor, design);
+        const auto report = reportTo(reporter, verbosity);
+        const auto router = mqt::scpd::pipeline::detailRouters().make(
+            mqt::scpd::pipeline::selectedDetailRouter(configuration));
+        mqt::scpd::flatbuffers::artifacts::DetailRoutingT drawn;
+        {
+          const nb::gil_scoped_release release;
+          drawn = router->run(design, capacityOf(plan), globalOf(routing),
+                              assignmentOf(assigned), corridorOf(routed),
+                              configuration, report);
+        }
+        return asArtifact(std::move(drawn), producer);
+      },
+      "chip"_a, "capacity"_a, "global_routing"_a, "assignment"_a, "corridor"_a,
+      "config"_a, "producer"_a, "reporter"_a.none() = nb::none(),
+      "verbosity"_a = 0,
+      "Run the Detail stage on a classified chip, its 01-capacity.fb, its "
+      "02-global.fb, its 03-assign.fb and its 04-corridor.fb. The reporter "
+      "receives what the stage reports, as for plan_capacity. Returns "
+      "05-detail.fb as bytes.");
+
+  m.def(
       "algorithms",
       [] {
         std::vector<std::pair<std::string, std::vector<std::string>>>
@@ -426,6 +469,8 @@ NB_MODULE(MQT_SCPD_MODULE_NAME, m) {
                                 mqt::scpd::pipeline::assigners().names());
         registered.emplace_back("corridor-router",
                                 mqt::scpd::pipeline::corridorRouters().names());
+        registered.emplace_back("detail-router",
+                                mqt::scpd::pipeline::detailRouters().names());
         return registered;
       },
       "The implementations this build ships, as (stage, names) pairs in "

@@ -10,7 +10,8 @@
 
 The generated FlatBuffers code does not verify buffers on read or enforce required fields on write.
 The native reader checks the buffer structure and artifact contents before Python unpacks an
-artifact. The writer checks required fields before serialization.
+artifact. The writer checks required fields before serialization and validates Detail path cells
+against their grid before returning the bytes.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .flatbuffers.artifacts.Artifact import ArtifactT
 from .flatbuffers.artifacts.Assignment import AssignmentT
 from .flatbuffers.artifacts.CapacityPlan import CapacityPlanT
 from .flatbuffers.artifacts.CorridorRouting import CorridorRoutingT
+from .flatbuffers.artifacts.DetailRouting import DetailRoutingT
 from .flatbuffers.artifacts.FinalRouting import FinalRoutingT
 from .flatbuffers.artifacts.Geometry import GeometryT
 from .flatbuffers.artifacts.GlobalRouting import GlobalRoutingT
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
     from .flatbuffers.artifacts.Bottleneck import BottleneckT
     from .flatbuffers.artifacts.CapacityNode import CapacityNodeT
     from .flatbuffers.artifacts.Corridor import CorridorT
+    from .flatbuffers.artifacts.DetailWire import DetailWireT
     from .flatbuffers.artifacts.FeedlineChain import FeedlineChainT
     from .flatbuffers.artifacts.GridExtent import GridExtentT
     from .flatbuffers.artifacts.Lattice import LatticeT
@@ -58,6 +61,7 @@ _OUTPUT_TYPES: dict[int, type] = {
     StageOutput.GlobalRouting: GlobalRoutingT,
     StageOutput.Assignment: AssignmentT,
     StageOutput.CorridorRouting: CorridorRoutingT,
+    StageOutput.DetailRouting: DetailRoutingT,
     StageOutput.FinalRouting: FinalRoutingT,
     StageOutput.Geometry: GeometryT,
 }
@@ -77,7 +81,7 @@ def write_artifact(artifact: ArtifactT) -> bytes:
         The bytes of the artifact, starting with the schema identifier.
 
     Raises:
-        ArtifactError: If a required field is missing.
+        ArtifactError: If a required field is missing or a Detail path or grid is invalid.
     """
     problems = _problems(artifact)
     if problems:
@@ -85,7 +89,22 @@ def write_artifact(artifact: ArtifactT) -> bytes:
         raise ArtifactError(msg)
     builder = flatbuffers.Builder()
     builder.Finish(artifact.Pack(builder), file_identifier=IDENTIFIER)
-    return bytes(builder.Output())
+    data = bytes(builder.Output())
+    if isinstance(artifact.output, DetailRoutingT):
+        _validate_artifact(data)
+    return data
+
+
+def _validate_artifact(data: bytes) -> None:
+    """Check the serialized artifact with the native reader.
+
+    Raises:
+        ArtifactError: If the buffer or artifact contents are invalid.
+    """
+    try:
+        pyscpd.validate_artifact(data)
+    except ValueError as error:
+        raise ArtifactError(str(error)) from error
 
 
 def read_artifact(data: bytes) -> ArtifactT:
@@ -100,10 +119,7 @@ def read_artifact(data: bytes) -> ArtifactT:
     Raises:
         ArtifactError: If the buffer or artifact contents are invalid.
     """
-    try:
-        pyscpd.validate_artifact(data)
-    except ValueError as error:
-        raise ArtifactError(str(error)) from error
+    _validate_artifact(data)
     try:
         return ArtifactT.InitFromPackedBuf(data)
     except (IndexError, struct.error, UnicodeDecodeError) as error:
@@ -156,6 +172,13 @@ def _problems(artifact: ArtifactT) -> list[str]:
     elif isinstance(output, CorridorRoutingT):
         _check_list(output.corridors, "corridors", _corridor_problems, problems)
         _check_list(output.slots, "slots", _border_slots_problems, problems)
+    elif isinstance(output, DetailRoutingT):
+        if output.grid is None:
+            problems.append("grid is missing")
+        else:
+            problems.extend(f"grid: {problem}" for problem in _grid_problems(output.grid))
+        _check_list(output.wires, "wires", _detail_wire_problems, problems)
+        _check_list(output.inner, "inner", _detail_wire_problems, problems)
     elif isinstance(artifact.output, FinalRoutingT):
         _check_list(artifact.output.couplers, "couplers", _coupler_problems, problems)
         _check_list(artifact.output.bridges, "bridges", _bridge_problems, problems)
@@ -261,6 +284,10 @@ def _corridor_problems(corridor: CorridorT) -> list[str]:
 
 def _border_slots_problems(slots: BorderSlotsT) -> list[str]:
     return _missing(slots, (("positions", "positions"),))
+
+
+def _detail_wire_problems(wire: DetailWireT) -> list[str]:
+    return _missing(wire, (("path", "path"),))
 
 
 def _check_list(items: list | None, name: str, check, problems: list[str]) -> None:  # ruff: ignore[missing-type-function-argument]

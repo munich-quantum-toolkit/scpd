@@ -66,9 +66,8 @@ Every design rule is required. Every length must be positive.
 | `max_feedline_utilization`   | —       | The most resonators that one feedline chain feeds; at least one                                      |
 | `feedline_terminations`      | —       | How many feedline chain ends stop at a termination instead of a launcher                             |
 
-The planning steps of this release do not read `min_bend_radius`,
-`target_resonator_length` and `resonator_length_tolerance`. The routing stages
-of a later release read them.
+Planning through Detail does not use `min_bend_radius`,
+`target_resonator_length` and `resonator_length_tolerance`.
 
 ## `[grid]`
 
@@ -217,11 +216,51 @@ Corridor checks wire intersections with straight segments inside each partition.
 This check is exact for convex partitions. Routing can leave a connection
 unrouted even if a feasible route exists.
 
+## `[stages.detail]`
+
+| Key                      | Default | Meaning                                                                              |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------ |
+| `router`                 | `""`    | The implementation of the step; empty takes `pixel-astar`                            |
+| `corridor_spacings`      | `4`     | How far a wire may move to either side of its path, in wire spacings                 |
+| `rounds`                 | `30`    | Maximum number of sweeps under the clearance rule                                    |
+| `max_relaxation`         | `30`    | Maximum displaced wires per whole-wire seed attempt and releases per sweep direction |
+| `obstacle_penalty_reach` | `185.0` | How far the cost of running beside an obstacle reaches; `0` turns it off             |
+| `obstacle_penalty`       | `10`    | Peak obstacle cost in axial steps, at most 255                                       |
+| `orderings`              | `16`    | How many orders of the pieces of one partition the seed tries                        |
+
+Detail draws every wire as a path of eight-connected cells on the detail grid.
+Each routed ring wire starts and ends at the cell centers stored by Corridor.
+Detail can move internal crossings to nearby free cells. No two wires share a
+cell or cross. It first draws a seed: each corridor is cut at its crossings into
+one piece per partition, and each piece is searched inside its partition. Detail
+tries up to `orderings` orders of the pieces of a partition and keeps the order
+that draws the most pieces. It moves the wires in the way of a piece without a
+path, and searches a wire without a path again from end to end. The wires of the
+inner circuit have no corridor. Detail searches them last, over the space that
+the ring leaves.
+
+Detail checks the distance between the cells of different wires, including wires
+of the inner circuit. On the detail grid, the clearance is one cell less than
+the cells that `min_wire_spacing` spans, rounded up. This discrete check can
+accept a distance smaller than `min_wire_spacing` in layout units. Detail sweeps
+the wires forward and backward and routes again each wire that comes too close
+to another, inside a band of `corridor_spacings` wire spacings around its path.
+A wire without a path there releases up to `max_relaxation` neighbors per
+direction in the wire list, first along the sweep and then against it. Each
+release starts another search in the same band. The router releases each
+neighbor at most once per attempt. Sweeps stop when every wire keeps the
+clearance.
+
+Detail counts a failure for each routed corridor or inner connection with a
+source that Detail cannot draw. It also counts each wire that comes within the
+clearance of another wire. An unrouted corridor gets an empty path and counts as
+a Corridor failure.
+
 ## `[run]`
 
-| Key          | Default | Meaning                                                                                   |
-| ------------ | ------- | ----------------------------------------------------------------------------------------- |
-| `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign` or `corridor`; empty runs them all |
+| Key          | Default | Meaning                                                                                             |
+| ------------ | ------- | --------------------------------------------------------------------------------------------------- |
+| `stop_after` | `""`    | The last step of a run: `capacity`, `global`, `assign`, `corridor` or `detail`; empty runs them all |
 
 `mqt-scpd list-algorithms` names the implementations that a build ships for each
 step. `--stop-after` replaces `stop_after` for one run.

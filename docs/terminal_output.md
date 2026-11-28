@@ -151,8 +151,11 @@ mqt-scpd plan 17q → runs/17q  ·  HiGHS 1.16.0
    round 2 backward   routed 58/58 · fails 0                       0.09s
    routed 58/58 · 2 rounds                                         0.09s
    ✓ 04-corridor.fb  58.7 kB · fails 0
+🧵 detail
+   drawn 72/72 · 7 rounds · unrouted 0 · too close 0               0.33s
+   ✓ 05-detail.fb  76.8 kB · fails 0
 
-✓ 4 stages · 3.47s · stopped after corridor · fails 0
+✓ 5 stages · 3.80s · stopped after detail · fails 0
 ```
 
 With `--stage`, the header shows the run directory in place of the chip name.
@@ -224,7 +227,10 @@ Global counts unreachable inner ports, ring ports without gate capacity, and
 non-bridge ring ports cut off from a launcher. The {doc}`configuration`
 reference explains the gate checks. Assignment either assigns every ring port
 and shows `fails 0`, or stops with an error. Corridor counts connections it
-could not route through the partitions.
+could not route through the partitions. Detail counts connections with a
+corridor but without a path, and wires that come within the wire clearance of
+another wire. The result of Detail shows the two counts as `unrouted` and
+`too close`.
 
 ### Stage Marks
 
@@ -236,6 +242,7 @@ Each step has a mark, a plain form and a color.
 | global   | 🔳   | `[+]`      | blue    |
 | assign   | 📌   | `[>]`      | magenta |
 | corridor | 🧭   | `[~]`      | yellow  |
+| detail   | 🧵   | `[-]`      | green   |
 
 A mark is one emoji with the Unicode property `Emoji_Presentation=Yes` and
 without a variation selector, so that every terminal draws it two cells wide. A
